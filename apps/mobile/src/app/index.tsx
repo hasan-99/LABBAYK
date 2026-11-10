@@ -303,6 +303,14 @@ function CustomerHome({ onSignOut, userId, inviteToken }: { onSignOut: () => voi
   const draftDirty = useRef(false);
   useEffect(() => { if (inviteToken) setTab('profile'); }, [inviteToken]);
   useEffect(() => {
+    if (!supabase) return;
+    let active = true;
+    void supabase.from('driver_profiles').select('user_id').eq('user_id', userId).maybeSingle().then(({ data }) => {
+      if (active && data) setTab((current) => current === 'home' ? 'profile' : current);
+    });
+    return () => { active = false; };
+  }, [userId]);
+  useEffect(() => {
     let active = true;
     draftDirty.current = false;
     setDraftReady(false);
