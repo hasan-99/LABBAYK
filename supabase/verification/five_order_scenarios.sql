@@ -50,7 +50,7 @@ begin
   perform set_config('request.jwt.claim.sub',v_driver::text,true);
   update public.driver_profiles set is_online=true where user_id=v_driver;
   insert into public.addresses(user_id,zone_id,label,governorate,city,neighborhood,street,contact_phone,is_default)
-  values(v_customer,v_zone,'QA rollback','اختبار','اختبار','QA rollback zone','شارع التجربة','0990000000',true)
+  values(v_customer,v_zone,'QA rollback','اختبار','اختبار','QA rollback zone','شارع التجربة','0990000000',false)
   returning id into v_address;
 
   perform set_config('request.jwt.claims',jsonb_build_object('sub',v_admin::text,'role','authenticated')::text,true);
