@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
+import type { Database } from '@labbayk/shared/database.types';
 
 export type CustomerOrderDraft = {
   request: string;
@@ -9,7 +10,11 @@ export type CustomerOrderDraft = {
   idempotencyKey: string;
 };
 
+type OrderSummary = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'category'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'budget_ceiling_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'>;
+export type CustomerOrderSnapshot = { orders: OrderSummary[]; syncedAt: string };
+
 const storageKey = (userId: string) => `labbayk:customer-order-draft:${userId}`;
+const snapshotKey = (userId: string) => `labbayk:customer-orders-snapshot:${userId}`;
 let storageQueue: Promise<void> = Promise.resolve();
 
 const enqueue = <T,>(operation: () => Promise<T>): Promise<T> => {
@@ -50,4 +55,41 @@ export const saveCustomerOrderDraft = (userId: string, draft: CustomerOrderDraft
 
 export const clearCustomerOrderDraft = (userId: string) => enqueue(async () => {
   await removeItem(storageKey(userId));
+});
+
+const activeOrderStatuses = new Set(['requested','quoted','searching','accepted','assigned','shopping','awaiting_approval','purchased','delivering','delivered','disputed']);
+const summaryFields: (keyof OrderSummary)[] = ['id','status','category','delivery_fee_minor','delivery_quote_set_at','delivery_quote_approved_at','budget_ceiling_minor','purchase_amount_minor','purchase_approved_at','created_at'];
+
+export const saveCustomerOrdersSnapshot = (userId: string, orders: OrderSummary[]) => enqueue(async () => {
+  const snapshot: CustomerOrderSnapshot = {
+    syncedAt: new Date().toISOString(),
+    orders: orders.filter((order) => activeOrderStatuses.has(order.status)).slice(0, 30).map((order) =>
+      Object.fromEntries(summaryFields.map((field) => [field, order[field]])) as OrderSummary),
+  };
+  await setItem(snapshotKey(userId), JSON.stringify(snapshot));
+  return snapshot;
+});
+
+export const loadCustomerOrdersSnapshot = (userId: string) => enqueue(async (): Promise<CustomerOrderSnapshot | null> => {
+  try {
+    const raw = await getItem(snapshotKey(userId));
+    if (!raw) return null;
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== 'object') return null;
+    const snapshot = value as Partial<CustomerOrderSnapshot>;
+    const syncedAt = typeof snapshot.syncedAt === 'string' ? Date.parse(snapshot.syncedAt) : NaN;
+    if (!Number.isFinite(syncedAt) || Date.now() - syncedAt > 30 * 24 * 60 * 60 * 1000 || !Array.isArray(snapshot.orders)) return null;
+    const orders = snapshot.orders.filter((order): order is OrderSummary => !!order && typeof order === 'object'
+      && typeof order.id === 'string' && /^[a-f0-9-]{36}$/i.test(order.id)
+      && typeof order.status === 'string' && activeOrderStatuses.has(order.status)
+      && typeof order.category === 'string' && typeof order.created_at === 'string'
+      && Number.isSafeInteger(order.delivery_fee_minor) && Number.isSafeInteger(order.budget_ceiling_minor)
+      && (order.purchase_amount_minor === null || Number.isSafeInteger(order.purchase_amount_minor))
+      && (order.delivery_quote_set_at === null || typeof order.delivery_quote_set_at === 'string')
+      && (order.delivery_quote_approved_at === null || typeof order.delivery_quote_approved_at === 'string')
+      && (order.purchase_approved_at === null || typeof order.purchase_approved_at === 'string'));
+    return { orders: orders.slice(0, 30), syncedAt: new Date(syncedAt).toISOString() };
+  } catch {
+    return null;
+  }
 });
