@@ -93,3 +93,7 @@ export const loadCustomerOrdersSnapshot = (userId: string) => enqueue(async (): 
     return null;
   }
 });
+
+export const clearCustomerOrdersSnapshot = (userId: string) => enqueue(async () => {
+  await removeItem(snapshotKey(userId));
+});

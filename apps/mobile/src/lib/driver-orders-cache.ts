@@ -21,11 +21,18 @@ const getItem = (name: string) => Platform.OS === 'web'
 const setItem = (name: string, value: string) => Platform.OS === 'web'
   ? Promise.resolve().then(() => { if (typeof window !== 'undefined') window.localStorage.setItem(name, value); })
   : AsyncStorage.setItem(name, value);
+const removeItem = (name: string) => Platform.OS === 'web'
+  ? Promise.resolve().then(() => { if (typeof window !== 'undefined') window.localStorage.removeItem(name); })
+  : AsyncStorage.removeItem(name);
 
 export const saveDriverOrdersSnapshot = (userId: string, orders: DriverOrder[]) => enqueue(async () => {
   const snapshot = { syncedAt: new Date().toISOString(), orders: orders.filter((order) => activeStatuses.has(order.status)).slice(0, 20) };
   await setItem(key(userId), JSON.stringify(snapshot));
   return snapshot;
+});
+
+export const clearDriverOrdersSnapshot = (userId: string) => enqueue(async () => {
+  await removeItem(key(userId));
 });
 
 export const loadDriverOrdersSnapshot = (userId: string) => enqueue(async (): Promise<DriverOrdersSnapshot | null> => {
