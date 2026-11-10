@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import type { Metadata } from 'expo-router/server';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useNetworkState } from 'expo-network';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -13,6 +14,9 @@ import { AppText as Text } from '@/components/AppText';
 
 const c = tokens.color;
 const categories = ['خضرة', 'لحمة', 'أغراض البيت', 'غيره'];
+export function generateMetadata(): Metadata {
+  return { title: 'لَبّيك | اطلب، والباقي علينا.', description: 'خدمة يومك تبدأ من هون. احتياجاتك، بطلب واحد.' };
+}
 type Address = Database['public']['Tables']['addresses']['Row'];
 type ServiceZone = Pick<Database['public']['Tables']['service_zones']['Row'], 'id'|'name'|'governorate'|'city'|'neighborhood'|'delivery_surcharge_minor'|'currency'>;
 type CustomerOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'category'|'request_text'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'budget_ceiling_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'>;
