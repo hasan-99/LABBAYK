@@ -75,8 +75,12 @@ function AddressBook({ userId, onBack }: { userId: string; onBack: () => void })
   const remove = async (id: string) => {
     if (!supabase) return;
     const { error } = await supabase.from('addresses').delete().eq('id', id);
-    setMessage(error ? 'ما قدرنا نحذف العنوان.' : 'انحذف العنوان.');
-    if (!error) await refresh();
+    if (error) {
+      setMessage(error.code === '23503' ? 'ما فينا نحذف عنوان مرتبط بطلب سابق حتى يبقى سجل الطلب محفوظاً.' : 'ما قدرنا نحذف العنوان.');
+      return;
+    }
+    setMessage('انحذف العنوان.');
+    await refresh();
   };
 
   return <View style={s.addressPage}>
