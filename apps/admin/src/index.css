@@ -1,0 +1,9 @@
+@import '../../../packages/design-tokens/src/tokens.css';
+@font-face{font-family:Tajawal;src:url('/fonts/Tajawal-Regular.ttf') format('truetype');font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:Tajawal;src:url('/fonts/Tajawal-Medium.ttf') format('truetype');font-weight:500;font-style:normal;font-display:swap}
+@font-face{font-family:Tajawal;src:url('/fonts/Tajawal-Bold.ttf') format('truetype');font-weight:700;font-style:normal;font-display:swap}
+@font-face{font-family:Tajawal;src:url('/fonts/Tajawal-ExtraBold.ttf') format('truetype');font-weight:800;font-style:normal;font-display:swap}
+@font-face{font-family:Inter;src:url('/fonts/Inter-Regular.ttf') format('truetype');font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:Inter;src:url('/fonts/Inter-Medium.ttf') format('truetype');font-weight:500;font-style:normal;font-display:swap}
+@font-face{font-family:Inter;src:url('/fonts/Inter-Bold.ttf') format('truetype');font-weight:700;font-style:normal;font-display:swap}
+:root{font-family:var(--font-arabic);font-synthesis:none;text-rendering:optimizeLegibility;font-optical-sizing:auto;font-weight:400;color:var(--color-text);background:var(--color-bg);font-size:16px}*{box-sizing:border-box}body{margin:0;min-width:320px;min-height:100vh}button,a{font:inherit}button{cursor:pointer;min-width:44px;min-height:44px}button:focus-visible,a:focus-visible{outline:3px solid var(--color-primary);outline-offset:3px}::selection{background:var(--color-primary);color:var(--color-bg)}

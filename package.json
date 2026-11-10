@@ -1,0 +1,16 @@
+{
+  "name": "labbayk",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "dev:web": "pnpm --filter @labbayk/mobile web",
+    "dev:admin": "pnpm --filter @labbayk/admin dev",
+    "build:web": "pnpm --filter @labbayk/mobile exec expo export --platform web",
+    "build:admin": "pnpm --filter @labbayk/admin build",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "supabase": "3.1.0"
+  }
+}

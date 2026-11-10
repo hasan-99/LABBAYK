@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.expo/
+build/
+.env
+.env.*
+!.env.example
+supabase/.temp/
+coverage/
+*.tsbuildinfo
+playwright-report/
+test-results/
+.playwright-mcp/
+artifacts/

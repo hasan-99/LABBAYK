@@ -1,0 +1,14 @@
+.wallet-ledger-panel{margin-top:18px}
+.wallet-ledger-panel .audit-entry{align-items:center;gap:12px}
+.wallet-ledger-panel .audit-entry>div{min-width:0}
+.wallet-ledger-panel .audit-entry small{overflow-wrap:anywhere}
+.reversal-button{min-height:34px;padding:0 12px;border:1px solid #775045;border-radius:8px;background:#2a201c;color:#ffd1bd;font:inherit;font-size:10px;font-weight:700;white-space:nowrap}
+.reversal-button:hover:not(:disabled){background:#3a2922}
+.reversal-button:disabled{opacity:.55;cursor:wait}
+.wallet-adjustment{margin:20px 0;padding:16px;border:1px solid #39473a;border-radius:12px;background:#111b15}
+.wallet-adjustment h3{margin:0 0 6px;color:#e5eee8;font-size:14px}
+.wallet-adjustment>p{margin:0 0 12px;color:#a1b2a7;font-size:11px;line-height:1.7}
+.wallet-adjustment .zone-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.wallet-adjustment .zone-form button{grid-column:1/-1;justify-self:start;min-height:44px}
+@media(max-width:520px){.wallet-ledger-panel .audit-entry{align-items:flex-start;flex-wrap:wrap}.reversal-button{margin-right:auto}}
+@media(max-width:620px){.wallet-adjustment .zone-form{grid-template-columns:minmax(0,1fr)}.wallet-adjustment .zone-form button{grid-column:auto;justify-self:stretch}}

@@ -1,0 +1,25 @@
+.user-directory-panel{margin-top:20px}
+.user-search{display:grid;gap:7px;margin:18px 0 12px;color:#c2d0c7;font-size:11px}
+.user-search input{height:42px;border:1px solid #35473b;border-radius:9px;background:#101a14;color:#edf3ee;padding:0 12px;font:inherit;direction:ltr;text-align:left}
+.user-search input:focus{outline:2px solid #b7ff30;outline-offset:2px}
+.user-directory-list{display:grid}
+.user-directory-entry{padding:15px 0;border-top:1px solid #293b30}
+.user-directory-main{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;min-width:0}
+.user-directory-main strong{font-size:13px;color:#e5eee8}
+.user-directory-main p{margin:4px 0 0;color:#a1b2a7;font-size:11px;direction:ltr;text-align:right;overflow-wrap:anywhere}
+.user-id{color:#819489;font:10px Inter,monospace;white-space:nowrap}
+.user-directory-meta{display:flex;align-items:center;flex-wrap:wrap;gap:7px 13px;margin-top:11px;color:#9eafa4;font-size:10px}
+.user-roles{display:flex;flex-wrap:wrap;gap:5px}
+.user-role{border:1px solid #40543f;border-radius:20px;padding:3px 8px;background:#1b2a1e;color:#d7edb6}
+.user-result-count{margin:14px 0 0;color:#819489;font-size:10px}
+.user-edit-button{min-height:38px;margin-top:13px}
+.user-access-button{min-height:38px;margin-top:10px;border-color:#765248;color:#ffd1bd}
+.user-access-button:hover:not(:disabled){background:#32241f}
+.user-access-button:disabled{opacity:.55;cursor:wait}
+.user-edit-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px;padding:14px;border:1px solid #304438;border-radius:12px;background:#111b15}
+.user-edit-form label{display:grid;gap:6px;color:#c2d0c7;font-size:11px}
+.user-edit-form input{min-width:0;height:40px;border:1px solid #35473b;border-radius:9px;background:#0b1411;color:#edf3ee;padding:0 10px;font:inherit}
+.user-edit-form input:focus-visible{outline:2px solid #b7ff30;outline-offset:2px}
+.user-edit-form button{align-self:end;min-height:40px}
+@media(max-width:450px){.user-directory-meta{gap:8px}.user-directory-main{flex-wrap:wrap}}
+@media(max-width:620px){.user-edit-form{grid-template-columns:minmax(0,1fr)}}

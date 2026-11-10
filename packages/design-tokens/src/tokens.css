@@ -1,0 +1,18 @@
+:root {
+  color-scheme: dark;
+  --color-bg: #0B1411;
+  --color-surface: #1D2B24;
+  --color-raised: #25382E;
+  --color-border: #30443A;
+  --color-primary: #B7FF30;
+  --color-accent: #52D5A0;
+  --color-text: #FFFFFF;
+  --color-muted: #A9B9B0;
+  --color-danger: #FF6B6B;
+  --font-arabic: 'Tajawal', Arial, sans-serif;
+  --font-latin: 'Inter', Arial, sans-serif;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+}
