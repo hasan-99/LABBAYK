@@ -217,7 +217,7 @@ function DriverOperations({ userId }: { userId: string }) {
     if (!supabase || !online) return;
     const channel = supabase.channel(`driver-orders-${userId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'order_offers', filter: `driver_id=eq.${userId}` }, () => { void refresh(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `driver_id=eq.${userId}` }, () => { void refresh(); })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_events' }, () => { void refresh(); })
       .subscribe();
     return () => { void supabase?.removeChannel(channel); };
   }, [online, refresh, userId]);
@@ -419,7 +419,7 @@ function CustomerHome({ onSignOut, userId, inviteToken }: { onSignOut: () => voi
     };
     void refresh();
     if (!online || !supabase) return () => { active = false; };
-    const channel = supabase.channel(`customer-orders-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `customer_id=eq.${userId}` }, () => { void refresh(); }).subscribe();
+    const channel = supabase.channel(`customer-orders-${userId}`).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_events' }, () => { void refresh(); }).subscribe();
     return () => { active = false; void supabase?.removeChannel(channel); };
   }, [online, tab, userId, fetchCustomerOrders, applyCustomerOrders]);
   const submitOrder = async () => {
