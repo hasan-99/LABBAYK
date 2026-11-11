@@ -1,14 +1,42 @@
-const CACHE_NAME = 'labbayk-static-v1';
+const CACHE_NAME = 'labbayk-static-v2';
 const APP_SHELL = new URL('/', self.location.origin).href;
 const STATIC_DESTINATIONS = new Set(['script', 'style', 'font', 'image', 'manifest']);
 const SUPABASE_PATH = /^\/(?:auth|rest|storage|functions|realtime)\/v1(?:\/|$)/;
+
+async function cacheSameOriginAsset(cache, value) {
+  const url = new URL(value, APP_SHELL);
+  if (url.origin !== self.location.origin || SUPABASE_PATH.test(url.pathname)) return;
+  try {
+    const response = await fetch(url.href, { credentials: 'omit' });
+    if (response.ok && response.type === 'basic') await cache.put(url.href, response);
+  } catch {
+    // The app shell can still install if an optional asset is unavailable.
+  }
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE_NAME);
     const response = await fetch(APP_SHELL, { cache: 'reload', credentials: 'omit' });
     if (!response.ok) throw new Error('Could not cache the LABBAYK app shell.');
+    const html = await response.clone().text();
     await cache.put(APP_SHELL, response);
+
+    const assets = new Set([...html.matchAll(/(?:src|href)=["']([^"']+)["']/g)].map((match) => match[1]));
+    await Promise.all([...assets].map((asset) => cacheSameOriginAsset(cache, asset)));
+
+    const manifestUrl = [...assets].find((asset) => new URL(asset, APP_SHELL).pathname.endsWith('/manifest.json'));
+    if (manifestUrl) {
+      const manifestResponse = await cache.match(new URL(manifestUrl, APP_SHELL).href);
+      if (manifestResponse) {
+        try {
+          const manifest = await manifestResponse.json();
+          await Promise.all((manifest.icons ?? []).map((icon) => cacheSameOriginAsset(cache, icon.src)));
+        } catch {
+          // A malformed optional manifest does not prevent the app from opening.
+        }
+      }
+    }
     await self.skipWaiting();
   })());
 });
