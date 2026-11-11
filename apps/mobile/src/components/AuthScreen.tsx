@@ -19,7 +19,7 @@ export function PasswordRecoveryScreen({ onDone }: { onDone: () => void }) {
     if (error) { setMessage('ما قدرنا نحدّث كلمة السر. اطلب رابط استعادة جديد.'); return; }
     onDone();
   };
-  return <SafeAreaView style={s.safe}><View style={s.content}><View style={s.formCard}><Text style={s.title}>كلمة سر جديدة</Text><Text style={s.copy}>اختر كلمة سر من 8 أحرف على الأقل.</Text><Text style={s.label}>كلمة السر</Text><TextInput value={password} onChangeText={setPassword} secureTextEntry autoComplete="new-password" style={s.input} accessibilityLabel="كلمة السر الجديدة"/><Pressable accessibilityRole="button" disabled={busy} onPress={() => void save()} style={[s.button,busy&&s.disabled]}>{busy?<ActivityIndicator color="#0B1411"/>:<Text style={s.buttonText}>حفظ كلمة السر</Text>}</Pressable>{message ? <Text accessibilityRole="alert" style={s.message}>{message}</Text> : null}</View></View></SafeAreaView>;
+  return <SafeAreaView style={s.safe}><View accessibilityRole="main" style={{flex:1}}><View style={s.content}><View style={s.formCard}><Text style={s.title}>كلمة سر جديدة</Text><Text style={s.copy}>اختر كلمة سر من 8 أحرف على الأقل.</Text><Text style={s.label}>كلمة السر</Text><TextInput value={password} onChangeText={setPassword} secureTextEntry autoComplete="new-password" style={s.input} accessibilityLabel="كلمة السر الجديدة"/><Pressable accessibilityRole="button" disabled={busy} onPress={() => void save()} style={[s.button,busy&&s.disabled]}>{busy?<ActivityIndicator color="#0B1411"/>:<Text style={s.buttonText}>حفظ كلمة السر</Text>}</Pressable>{message ? <Text accessibilityRole="alert" style={s.message}>{message}</Text> : null}</View></View></View></SafeAreaView>;
 }
 
 export function AuthScreen({ inviteToken }: { inviteToken?: string }) {
@@ -73,7 +73,7 @@ export function AuthScreen({ inviteToken }: { inviteToken?: string }) {
   };
 
   const title = mode === 'login' ? 'أهلاً فيك' : mode === 'signup' ? 'حساب جديد' : mode === 'code' ? 'تأكيد البريد' : 'نسيت كلمة السر؟';
-  return <SafeAreaView style={s.safe}><View style={s.content}>
+  return <SafeAreaView style={s.safe}><View accessibilityRole="main" style={{flex:1}}><View style={s.content}>
     <View style={s.topline}><View style={s.mark}><Text style={s.markText}>ل</Text></View><View style={s.brandCopy}><Text style={s.brand}>لَبّيك</Text><Text style={s.tag}>اطلب، والباقي علينا.</Text></View><View style={s.topChip}><View style={s.statusDot}/><Text style={s.topChipText}>دخول آمن</Text></View></View>
     <View style={s.hero}><View style={s.heroText}><Text style={s.eyebrow}>خدمة يومك تبدأ من هون</Text><Text style={s.heroTitle}>احتياجاتك،{'\n'}بطلب واحد.</Text><Text style={s.heroCopy}>اكتب طلبك وخلي علينا الباقي.</Text></View><View style={s.art} accessibilityElementsHidden><View style={s.artOrbit}><View style={s.artTile}><Text style={s.artLetter}>ل</Text></View><View style={s.artPin}><Text style={s.artPinGlyph}>⌖</Text></View><View style={s.artSpark}/></View></View></View>
     <View style={s.formCard}><Text style={s.title}>{title}</Text><Text style={s.copy}>{mode === 'login' ? 'سجّل دخولك بالبريد وكلمة السر.' : mode === 'signup' ? 'أنشئ حسابك. رح نطلب رمز البريد مرة واحدة لتأكيده.' : mode === 'code' ? `أدخل الرمز اللي وصل إلى ${normalized}.` : 'أدخل بريدك لنرسل لك رابط تغيير كلمة السر.'}</Text>
@@ -87,7 +87,7 @@ export function AuthScreen({ inviteToken }: { inviteToken?: string }) {
     {(mode === 'signup' || mode === 'reset' || mode === 'code') && <Pressable accessibilityRole="button" onPress={() => { setMode('login'); setMessage(''); }} style={s.back}><Text style={s.backText}>رجوع لتسجيل الدخول</Text></Pressable>}
     {message ? <Text accessibilityRole="alert" style={s.message}>{message}</Text> : null}
     </View><Text style={s.legal}>رمز البريد مطلوب عند إنشاء الحساب فقط.</Text>
-  </View></SafeAreaView>;
+  </View></View></SafeAreaView>;
 }
 
 const s=StyleSheet.create({
