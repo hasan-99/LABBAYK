@@ -1,0 +1,19 @@
+{
+  "name": "لَبّيك | اطلب، والباقي علينا.",
+  "short_name": "لَبّيك",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0B1411",
+  "theme_color": "#0B1411",
+  "icons": [
+    {
+      "src": "/pwa-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
