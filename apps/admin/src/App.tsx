@@ -29,6 +29,15 @@ function App() {
   const [passwordRecovery, setPasswordRecovery] = useState(false)
   const [authBusy, setAuthBusy] = useState(false)
   const [authMessage, setAuthMessage] = useState('')
+  const [authMessageTone, setAuthMessageTone] = useState<'success' | 'error'>('success')
+  const [authCooldown, setAuthCooldown] = useState(0)
+  const authRequestInFlight = useRef(false)
+
+  useEffect(() => {
+    if (authCooldown <= 0) return
+    const timer = window.setTimeout(() => setAuthCooldown((seconds) => Math.max(0, seconds - 1)), 1000)
+    return () => window.clearTimeout(timer)
+  }, [authCooldown])
 
   useEffect(() => {
     if (!supabase) return
@@ -48,29 +57,50 @@ function App() {
   }, [])
 
   const signInAdmin = async (event: FormEvent) => {
-    event.preventDefault(); if (!supabase) return
+    event.preventDefault()
+    if (!supabase) { setAuthMessageTone('error'); setAuthMessage('إعداد الاتصال بخدمة الدخول ناقص.'); return }
     const normalized = email.trim().toLowerCase()
-    if (!/^\S+@\S+\.\S+$/.test(normalized)) { setAuthMessage('أدخل بريد المدير أولاً.'); return }
+    if (!/^\S+@\S+\.\S+$/.test(normalized)) { setAuthMessageTone('error'); setAuthMessage('أدخل بريد المدير أولاً.'); return }
+    if (authCooldown > 0 || authRequestInFlight.current) return
+    authRequestInFlight.current = true
     setAuthBusy(true); setAuthMessage('')
-    const { error } = await supabase.auth.signInWithOtp({
-      email: normalized,
-      options: { emailRedirectTo: window.location.origin, shouldCreateUser: false },
-    })
-    setAuthBusy(false)
-    setAuthMessage(error ? 'ما قدرنا نبعت رابط الدخول. تأكد من البريد وإعدادات الرسائل وجرب مرة ثانية.' : 'إذا كان البريد مرتبطاً بحساب إدارة، رح يوصلك رابط دخول صالح لفترة محدودة.')
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: normalized,
+        options: { emailRedirectTo: window.location.origin, shouldCreateUser: false },
+      })
+      if (error) {
+        const rateLimited = error.status === 429 || error.code?.includes('rate_limit')
+        setAuthMessageTone('error')
+        setAuthMessage(rateLimited
+          ? 'انطلب رابط دخول قبل شوي. افتح أحدث رسالة من لَبّيك، أو انتظر دقيقة قبل إعادة الإرسال.'
+          : 'ما قدرنا نبعت رابط الدخول. تأكد من الاتصال والبريد وجرب لاحقاً.')
+        if (rateLimited) setAuthCooldown(60)
+        return
+      }
+      setAuthMessageTone('success')
+      setAuthMessage('طلبنا رابط الدخول. افتح أحدث رسالة من لَبّيك في بريدك؛ وإذا ما وصل، تفقد الرسائل غير المرغوبة. انتظر دقيقة قبل طلب رابط آخر.')
+      setAuthCooldown(60)
+    } catch {
+      setAuthMessageTone('error')
+      setAuthMessage('صار خلل بالاتصال أثناء طلب رابط الدخول. تحقق من الإنترنت وحاول لاحقاً.')
+    } finally {
+      authRequestInFlight.current = false
+      setAuthBusy(false)
+    }
   }
   const saveNewPassword = async (event: FormEvent) => {
     event.preventDefault(); if (!supabase) return
-    if (newPassword.length < 8) { setAuthMessage('كلمة السر لازم تكون 8 أحرف على الأقل.'); return }
+    if (newPassword.length < 8) { setAuthMessageTone('error'); setAuthMessage('كلمة السر لازم تكون 8 أحرف على الأقل.'); return }
     setAuthBusy(true); setAuthMessage('')
     const { error } = await supabase.auth.updateUser({ password: newPassword })
     setAuthBusy(false)
-    if (error) { setAuthMessage('ما قدرنا نحدّث كلمة السر. افتح رابط استعادة جديد وجرب.'); return }
-    setPasswordRecovery(false); setAuthMessage('تم تغيير كلمة السر.');
+    if (error) { setAuthMessageTone('error'); setAuthMessage('ما قدرنا نحدّث كلمة السر. افتح رابط استعادة جديد وجرب.'); return }
+    setPasswordRecovery(false); setAuthMessageTone('success'); setAuthMessage('تم تغيير كلمة السر.');
   }
   if (passwordRecovery || access !== 'admin') return <div className="gate" dir="rtl">
     <div className="gate-card"><a className="brand gate-brand" href="#home"><span className="brand-mark">ل</span><span>لَبّيك<small>مساحة فريق التشغيل</small></span></a>
-      {!supabaseConfigured ? <GateNotice title="إعداد الاتصال ناقص" detail="أضف إعدادات Supabase المحلية حتى نقدر نفتح جلسة آمنة." /> : passwordRecovery ? <><div className="gate-icon">↗</div><h1>كلمة سر جديدة</h1><p>اختر كلمة سر من 8 أحرف على الأقل.</p><form className="auth-form" onSubmit={saveNewPassword}><label>كلمة السر الجديدة<input value={newPassword} onChange={(event) => setNewPassword(event.target.value)} autoComplete="new-password" type="password" minLength={8} required /></label><button className="primary-button full-button" disabled={authBusy}>{authBusy ? 'عم نحفظ…' : 'حفظ كلمة السر'}</button></form>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}</> : access === 'loading' ? <GateNotice title="عم نتحقق من صلاحية الحساب" detail="لحظة واحدة، عم نتأكد من الجلسة ودور الحساب." /> : access === 'unauthorized' ? <><div className="gate-icon">⌁</div><h1>الحساب ما عنده صلاحية إدارة</h1><p>تم تسجيل الدخول، بس هاللوحة مخصصة لحساب مدير لَبّيك.</p><button className="secondary-button full-button" onClick={() => void supabase?.auth.signOut()}>تسجيل الخروج</button></> : <><div className="gate-icon">↗</div><h1>دخول فريق الإدارة</h1><p>أدخل بريد المدير لنرسل له رابط دخول آمن.</p><form className="auth-form" onSubmit={signInAdmin}><label>البريد الإلكتروني<input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" autoComplete="email" type="email" required /></label><button className="primary-button full-button" disabled={authBusy}>{authBusy ? 'عم نبعت الرابط…' : 'إرسال رابط الدخول ←'}</button></form>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}</>}
+      {!supabaseConfigured ? <GateNotice title="إعداد الاتصال ناقص" detail="أضف إعدادات Supabase المحلية حتى نقدر نفتح جلسة آمنة." /> : passwordRecovery ? <><div className="gate-icon">↗</div><h1>كلمة سر جديدة</h1><p>اختر كلمة سر من 8 أحرف على الأقل.</p><form className="auth-form" onSubmit={saveNewPassword}><label>كلمة السر الجديدة<input value={newPassword} onChange={(event) => setNewPassword(event.target.value)} autoComplete="new-password" type="password" minLength={8} required /></label><button className="primary-button full-button" disabled={authBusy}>{authBusy ? 'عم نحفظ…' : 'حفظ كلمة السر'}</button></form>{authMessage && <p className={`auth-message ${authMessageTone}`} role={authMessageTone === 'error' ? 'alert' : 'status'} aria-live={authMessageTone === 'error' ? 'assertive' : 'polite'}>{authMessage}</p>}</> : access === 'loading' ? <GateNotice title="عم نتحقق من صلاحية الحساب" detail="لحظة واحدة، عم نتأكد من الجلسة ودور الحساب." /> : access === 'unauthorized' ? <><div className="gate-icon">⌁</div><h1>الحساب ما عنده صلاحية إدارة</h1><p>تم تسجيل الدخول، بس هاللوحة مخصصة لحساب مدير لَبّيك.</p><button className="secondary-button full-button" onClick={() => void supabase?.auth.signOut()}>تسجيل الخروج</button></> : <><div className="gate-icon">↗</div><h1>دخول فريق الإدارة</h1><p>أدخل بريد المدير لنرسل له رابط دخول آمن.</p><form className="auth-form" onSubmit={signInAdmin}><label>البريد الإلكتروني<input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" autoComplete="email" type="email" required /></label><button className="primary-button full-button" disabled={authBusy || authCooldown > 0}>{authBusy ? 'عم نبعت الرابط…' : authCooldown > 0 ? `افتح بريدك · إعادة الإرسال بعد ${authCooldown}ث` : 'إرسال رابط الدخول ←'}</button></form>{authMessage && <p className={`auth-message ${authMessageTone}`} role={authMessageTone === 'error' ? 'alert' : 'status'} aria-live={authMessageTone === 'error' ? 'assertive' : 'polite'}>{authMessage}</p>}</>}
     </div>
   </div>
 

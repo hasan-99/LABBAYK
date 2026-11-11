@@ -28,7 +28,12 @@
 .auth-form input::placeholder { color: #91a197; }
 .primary-button.full-button { width: 100%; min-height: 48px; height: auto; font-size: 14px; }
 .text-button { min-height: 44px; margin-top: 10px; }
-.auth-message { margin: 14px 0 0; color: #ffd58a; font-size: 13px; line-height: 1.7; }
+.auth-message { display: flex; align-items: flex-start; gap: 9px; margin: 14px 0 0; padding: 11px 13px; border: 1px solid; border-radius: 11px; font-size: 13px; line-height: 1.7; }
+.auth-message::before { flex: 0 0 auto; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; font-size: 12px; font-weight: 800; line-height: 1; }
+.auth-message.success { border-color: rgba(183, 255, 48, .34); background: rgba(183, 255, 48, .08); color: #d9ff9a; }
+.auth-message.success::before { content: '✓'; background: rgba(183, 255, 48, .18); color: #d9ff9a; }
+.auth-message.error { border-color: rgba(248, 113, 113, .46); background: rgba(127, 29, 29, .22); color: #fecaca; }
+.auth-message.error::before { content: '!'; background: rgba(248, 113, 113, .2); color: #fecaca; }
 
 @media (max-width: 480px) {
   .gate { padding: 16px; }
