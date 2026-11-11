@@ -599,7 +599,7 @@ export default function HomeScreen() {
         ? <PasswordRecoveryScreen onDone={() => setPasswordRecovery(false)} />
       : !session
         ? <AuthScreen inviteToken={inviteToken || undefined} />
-        : <CustomerHome userId={session.user.id} inviteToken={inviteToken || undefined} onSignOut={async () => { await Promise.all([clearCustomerOrdersSnapshot(session.user.id), clearDriverOrdersSnapshot(session.user.id)]); await supabase?.auth.signOut(); }} />;
+        : <CustomerHome userId={session.user.id} inviteToken={inviteToken || undefined} onSignOut={async () => { await Promise.allSettled([clearCustomerOrderDraft(session.user.id), clearCustomerOrdersSnapshot(session.user.id), clearDriverOrdersSnapshot(session.user.id)]); await supabase?.auth.signOut(); }} />;
   return <View style={{ flex: 1, backgroundColor: c.background }}><NetworkStatusBanner />{screen}</View>;
 }
 

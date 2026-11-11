@@ -1,6 +1,5 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
 import type { Database } from '@labbayk/shared/database.types';
+import { getOfflineItem, removeOfflineItem, setOfflineItem } from './offline-storage';
 
 export type CustomerOrderDraft = {
   request: string;
@@ -23,19 +22,9 @@ const enqueue = <T,>(operation: () => Promise<T>): Promise<T> => {
   return result;
 };
 
-const getItem = (key: string) => Platform.OS === 'web'
-  ? Promise.resolve(typeof window === 'undefined' ? null : window.localStorage.getItem(key))
-  : AsyncStorage.getItem(key);
-const setItem = (key: string, value: string) => Platform.OS === 'web'
-  ? Promise.resolve().then(() => { if (typeof window !== 'undefined') window.localStorage.setItem(key, value); })
-  : AsyncStorage.setItem(key, value);
-const removeItem = (key: string) => Platform.OS === 'web'
-  ? Promise.resolve().then(() => { if (typeof window !== 'undefined') window.localStorage.removeItem(key); })
-  : AsyncStorage.removeItem(key);
-
 export const loadCustomerOrderDraft = (userId: string) => enqueue(async (): Promise<CustomerOrderDraft | null> => {
   try {
-    const raw = await getItem(storageKey(userId));
+    const raw = await getOfflineItem(storageKey(userId));
     if (!raw) return null;
     const value: unknown = JSON.parse(raw);
     if (!value || typeof value !== 'object') return null;
@@ -50,11 +39,11 @@ export const loadCustomerOrderDraft = (userId: string) => enqueue(async (): Prom
 });
 
 export const saveCustomerOrderDraft = (userId: string, draft: CustomerOrderDraft) => enqueue(async () => {
-  await setItem(storageKey(userId), JSON.stringify(draft));
+  await setOfflineItem(storageKey(userId), JSON.stringify(draft));
 });
 
 export const clearCustomerOrderDraft = (userId: string) => enqueue(async () => {
-  await removeItem(storageKey(userId));
+  await removeOfflineItem(storageKey(userId));
 });
 
 const activeOrderStatuses = new Set(['requested','quoted','searching','accepted','assigned','shopping','awaiting_approval','purchased','delivering','delivered','disputed']);
@@ -66,13 +55,13 @@ export const saveCustomerOrdersSnapshot = (userId: string, orders: OrderSummary[
     orders: orders.filter((order) => activeOrderStatuses.has(order.status)).slice(0, 30).map((order) =>
       Object.fromEntries(summaryFields.map((field) => [field, order[field]])) as OrderSummary),
   };
-  await setItem(snapshotKey(userId), JSON.stringify(snapshot));
+  await setOfflineItem(snapshotKey(userId), JSON.stringify(snapshot));
   return snapshot;
 });
 
 export const loadCustomerOrdersSnapshot = (userId: string) => enqueue(async (): Promise<CustomerOrderSnapshot | null> => {
   try {
-    const raw = await getItem(snapshotKey(userId));
+    const raw = await getOfflineItem(snapshotKey(userId));
     if (!raw) return null;
     const value: unknown = JSON.parse(raw);
     if (!value || typeof value !== 'object') return null;
@@ -95,5 +84,5 @@ export const loadCustomerOrdersSnapshot = (userId: string) => enqueue(async (): 
 });
 
 export const clearCustomerOrdersSnapshot = (userId: string) => enqueue(async () => {
-  await removeItem(snapshotKey(userId));
+  await removeOfflineItem(snapshotKey(userId));
 });
