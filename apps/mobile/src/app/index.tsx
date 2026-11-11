@@ -511,7 +511,7 @@ function CustomerHome({ onSignOut, userId, inviteToken }: { onSignOut: () => voi
   return <SafeAreaView style={s.safe}>
     <View accessibilityRole="main" style={{flex:1}}>
     <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-      <View style={s.header}><View style={s.brand}><View style={s.brandMark}><Text style={s.brandMarkText}>ل</Text></View><View><Text style={s.brandName}>لَبّيك</Text><Text style={s.brandTag}>اطلب، والباقي علينا.</Text></View></View><View style={s.bell}><Text style={s.bellText}>♧</Text></View></View>
+      <View style={s.header}><View style={s.brand}><View style={s.brandMark}><Text style={s.brandMarkText}>ل</Text></View><View><Text style={s.brandName}>لَبّيك</Text><Text style={s.brandTag}>اطلب، والباقي علينا.</Text></View></View><View style={s.bell} accessibilityElementsHidden aria-hidden><Text style={s.bellText}>♧</Text></View></View>
       {tab === 'addresses' ? <AddressBook userId={userId} onBack={() => setTab('profile')} /> : tab === 'home' ? <>
       <Pressable style={s.address} onPress={() => setTab('addresses')} accessibilityRole="button"><Text style={s.pin}>⌖</Text><View style={s.addressCopy}><Text style={s.muted}>عنوان التوصيل</Text><Text style={s.addressName}>{addressSummary}</Text><Text style={s.addressHint}>إدارة العناوين المحفوظة</Text></View><Text style={s.addressChevron}>←</Text></Pressable>
       <View style={s.hero}>
