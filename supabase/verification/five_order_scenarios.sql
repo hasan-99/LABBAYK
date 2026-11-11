@@ -7,6 +7,7 @@ declare
   v_admin uuid;
   v_customer uuid;
   v_driver uuid;
+  v_driver_review_status text;
   v_zone uuid;
   v_address uuid;
   v_order uuid;
@@ -25,19 +26,24 @@ declare
   v_reconciliation record;
 begin
   select ur.user_id into v_admin
-  from public.user_roles ur where ur.role='super_admin' order by ur.created_at limit 1;
+  from public.user_roles ur join auth.users u on u.id=ur.user_id
+  where ur.role='super_admin' and u.email='hasan.cy99@gmail.com'
+  limit 1;
   select ur.user_id into v_customer
-  from public.user_roles ur
+  from public.user_roles ur join auth.users u on u.id=ur.user_id
   where ur.role='customer'
+    and u.email='hasan.cy99+labbayk-qa-customer@gmail.com'
     and not exists(select 1 from public.user_roles a where a.user_id=ur.user_id and a.role='super_admin')
     and not exists(select 1 from public.driver_profiles d where d.user_id=ur.user_id)
-  order by ur.created_at desc limit 1;
-  select dp.user_id into v_driver
-  from public.driver_profiles dp
-  where dp.review_status='pending'
-  order by dp.created_at desc limit 1;
+  limit 1;
+  select dp.user_id,dp.review_status into v_driver,v_driver_review_status
+  from public.driver_profiles dp join auth.users u on u.id=dp.user_id
+  where u.email='hasan.cy99+labbayk-qa-driver@gmail.com';
   if v_admin is null or v_customer is null or v_driver is null then
-    raise exception 'QA prerequisites missing: expected one admin, customer-only account, and pending driver';
+    raise exception 'QA prerequisites missing: expected the dedicated admin, customer, and driver accounts';
+  end if;
+  if v_driver_review_status not in ('pending','approved') then
+    raise exception 'QA driver must be pending or approved before scenario tests';
   end if;
 
   insert into public.service_zones(name,governorate,city,active,delivery_surcharge_minor,currency)
@@ -45,7 +51,9 @@ begin
   update public.driver_profiles set service_zone_id=v_zone where user_id=v_driver;
   perform set_config('request.jwt.claims',jsonb_build_object('sub',v_admin::text,'role','authenticated')::text,true);
   perform set_config('request.jwt.claim.sub',v_admin::text,true);
-  perform public.review_driver_application(v_driver,true);
+  if v_driver_review_status='pending' then
+    perform public.review_driver_application(v_driver,true);
+  end if;
   perform set_config('request.jwt.claims',jsonb_build_object('sub',v_driver::text,'role','authenticated')::text,true);
   perform set_config('request.jwt.claim.sub',v_driver::text,true);
   update public.driver_profiles set is_online=true where user_id=v_driver;
