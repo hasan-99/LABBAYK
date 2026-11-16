@@ -732,6 +732,7 @@ function DriverApplicationFlow({ userId, initialToken }: { userId: string; initi
 type DriverProfileDraft = { name: string; phone: string; age: string; avatarPath: string | null; avatarUrl: string | null; avatarDraft: ProfileAvatarDraft | null };
 function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { userId: string; email: string; onSignOut: () => void; theme: 'dark' | 'light'; onToggleTheme: () => void }) {
   const { colors: c, styles: s } = useMobileTheme();
+  const network = useNetworkState();
   const online = useInternetAvailable();
   const [tab, setTab] = useState<'home' | 'orders' | 'notifications' | 'profile'>('home');
   const [notificationCount,setNotificationCount]=useState(0);
@@ -743,17 +744,33 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
   const [avatarDraft, setAvatarDraft] = useState<ProfileAvatarDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [profileLoadError, setProfileLoadError] = useState('');
+  const profileLoaded = useRef(false);
+  const [profileRefreshKey, setProfileRefreshKey] = useState(0);
   const [, setMessage] = useToastMessage();
   const [tabScale] = useState(() => new Animated.Value(1));
   const [activeTabAnimation, setActiveTabAnimation] = useState<'home' | 'orders' | 'notifications' | 'profile'>('home');
   useEffect(() => {
-    if (!supabase || !online) { setLoading(false); return; }
+    if (!supabase) { setLoading(false); setProfileLoadError('تعذر الاتصال بالخادم.'); return; }
+    if (!online) {
+      // Network state starts unknown on mobile. Keep the page skeleton until it
+      // resolves so an empty profile is never mistaken for an incomplete one.
+      if (typeof network.isConnected !== 'boolean') return;
+      if (!profileLoaded.current) {
+        setLoading(false);
+        setProfileLoadError('تعذر تحميل ملف السائق. تحقق من اتصال الإنترنت؛ ستظهر بياناتك عند عودته.');
+      }
+      return;
+    }
     let active = true;
+    setLoading(true);
+    setProfileLoadError('');
     void Promise.all([
       supabase.from('profiles').select('display_name,avatar_path').eq('id', userId).maybeSingle(),
       supabase.from('driver_profiles').select('phone_e164,age').eq('user_id', userId).maybeSingle(),
     ]).then(async ([account, driver]) => {
       if (!active) return;
+      if (account.error || driver.error) throw account.error ?? driver.error;
       const avatarPath = account.data?.avatar_path ?? null;
       const avatar = avatarPath ? await supabase!.storage.from('profile-avatars').createSignedUrl(avatarPath, 60 * 60 * 24 * 30) : null;
       if (!active) return;
@@ -766,9 +783,10 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
         avatarDraft: null,
       };
       setProfile(loaded); setName(loaded.name); setPhone(loaded.phone); setAge(loaded.age);
-    }).catch(() => setMessage('ما قدرنا نحمّل بيانات الملف. أعد المحاولة.')).finally(() => { if (active) setLoading(false); });
+      profileLoaded.current = true;
+    }).catch(() => { if (active && !profileLoaded.current) setProfileLoadError('ما قدرنا نحمّل بيانات الملف. أعد المحاولة.'); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [online, userId, setMessage]);
+  }, [online, network.isConnected, profileRefreshKey, userId]);
   const profileComplete = profile.name.trim().length >= 2 && /^9\d{8}$/.test(profile.phone) && Number(profile.age) >= 18 && Number(profile.age) <= 80;
   const goTab = (next: 'home' | 'orders' | 'notifications' | 'profile') => {
     setTab(next); setActiveTabAnimation(next); tabScale.setValue(0.84);
@@ -832,7 +850,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
       <ScrollView style={s.bodyScroll} contentContainerStyle={s.driverContent} keyboardShouldPersistTaps="handled">
         <StaggeredSections transitionKey={`${tab}-${loading ? 'loading' : 'ready'}`} animateSingle>
         {tab === 'home' ? <>
-          {loading ? <View accessibilityRole="progressbar" accessibilityLabel="تحميل ملف السائق" style={[s.driverProfileLoading,{padding:16}]}><View style={[s.driverSkeletonLine,{width:'46%'}]}/><View style={[s.driverSkeletonLine,{width:'76%'}]}/><View style={[s.driverSkeletonLine,{width:'58%',marginBottom:0}]}/></View> : !profileComplete ? <View style={s.driverOnboardingCard}>
+          {loading ? <View accessibilityRole="progressbar" accessibilityLabel="تحميل ملف السائق" style={{gap:12}}><View style={[s.driverOnboardingCard,{minHeight:230,justifyContent:'center',gap:16}]}><SkeletonBlock width={54} height={54} style={{alignSelf:'flex-end',borderRadius:17}}/><SkeletonBlock width="43%" height={12}/><SkeletonBlock width="66%" height={25}/><SkeletonBlock width="91%" height={12}/><SkeletonBlock width="76%" height={12}/><SkeletonBlock width="100%" height={48} style={{alignSelf:'auto',borderRadius:13,marginTop:5}}/></View><View style={s.driverStatsRow}><View style={[s.driverStat,{minHeight:68}]}><SkeletonBlock width="48%" height={13}/></View><View style={[s.driverStat,{minHeight:68}]}><SkeletonBlock width="48%" height={13}/></View></View></View> : profileLoadError ? <View style={s.driverOnboardingCard}><Text style={s.driverOnboardingTitle}>ما قدرنا نحمّل ملفك</Text><Text style={s.driverOnboardingCopy}>{profileLoadError}</Text><Pressable disabled={!online} onPress={() => { setLoading(true); setProfileRefreshKey((value) => value + 1); }} style={[s.driverOnboardingButton,!online&&s.disabled]} accessibilityRole="button"><Text style={s.driverOnboardingButtonText}>{online?'إعادة المحاولة':'بانتظار الاتصال'}</Text></Pressable></View> : !profileComplete ? <View style={s.driverOnboardingCard}>
             <View style={s.driverOnboardingIcon}><SymbolView name={{ ios: 'person.text.rectangle.fill', android: 'badge', web: 'badge' }} tintColor="#0B1411" size={27}/></View>
             <Text style={s.driverOnboardingStep}>الخطوة الأولى · قبل استقبال الطلبات</Text>
             <Text style={s.driverOnboardingTitle}>كمّل ملف السائق</Text>
@@ -844,10 +862,12 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
           </>}
         </> : tab === 'orders' ? <>
           <View style={s.driverPageIntro}><Text style={s.driverHeroEyebrow}>تشغيلك اليومي</Text><Text style={s.accountPageTitle}>الطلبات</Text><Text style={s.accountPageSubtitle}>العروض الجديدة والطلبات اللي عم توصلها.</Text></View>
+          {loading && <View accessibilityRole="progressbar" accessibilityLabel="تحميل الطلبات" style={{gap:12}}>{[0,1].map((item)=><View key={item} style={[s.driverOrdersSkeleton,{minHeight:140,marginBottom:0}]}><View style={s.driverSkeletonTop}><View style={s.driverSkeletonPill}/><View style={s.driverSkeletonLine}/></View><View style={[s.driverSkeletonLine,{width:'88%'}]}/><View style={[s.driverSkeletonLine,{width:'61%'}]}/><View style={[s.driverSkeletonButton,{alignSelf:'flex-end'}]}/></View>)}</View>}
+          {profileLoadError && <View style={[s.driverOnboardingCard,{marginTop:12}]}><Text style={s.driverOnboardingTitle}>ما قدرنا نحمّل بياناتك</Text><Text style={s.driverOnboardingCopy}>{profileLoadError}</Text><Pressable disabled={!online} onPress={() => { setLoading(true); setProfileRefreshKey((value) => value + 1); }} style={[s.driverOnboardingButton,!online&&s.disabled]} accessibilityRole="button"><Text style={s.driverOnboardingButtonText}>{online?'إعادة المحاولة':'بانتظار الاتصال'}</Text></Pressable></View>}
         </> : tab === 'profile' ? <>
           <View style={s.driverPageIntro}><Text style={s.driverHeroEyebrow}>بياناتك الأساسية</Text><Text style={s.accountPageTitle}>ملف السائق</Text><Text style={s.accountPageSubtitle}>الزبون وفريق لَبّيك بيستخدموا هالمعلومات للتواصل.</Text></View>
           <View style={s.driverProfileCard}>
-            {editingProfile ? <>
+            {loading ? <View accessibilityRole="progressbar" accessibilityLabel="تحميل الملف الشخصي" style={{gap:15,paddingVertical:8}}><SkeletonBlock width={94} height={94} style={{alignSelf:'center',borderRadius:47}}/><SkeletonBlock width="37%" height={13}/><SkeletonBlock width="100%" height={48} style={{alignSelf:'auto',borderRadius:12}}/><SkeletonBlock width="31%" height={13}/><SkeletonBlock width="100%" height={48} style={{alignSelf:'auto',borderRadius:12}}/><SkeletonBlock width="100%" height={48} style={{alignSelf:'auto',borderRadius:12}}/></View> : profileLoadError ? <View><Text style={s.driverIdentityName}>ما قدرنا نحمّل ملفك</Text><Text style={[s.driverOnboardingCopy,{marginTop:8}]}>{profileLoadError}</Text><Pressable disabled={!online} onPress={() => { setLoading(true); setProfileRefreshKey((value) => value + 1); }} style={[s.driverOnboardingButton,{marginTop:14},!online&&s.disabled]} accessibilityRole="button"><Text style={s.driverOnboardingButtonText}>{online?'إعادة المحاولة':'بانتظار الاتصال'}</Text></Pressable></View> : editingProfile ? <>
               <Pressable onPress={() => { setName(profile.name); setPhone(profile.phone); setAge(profile.age); setAvatarDraft(null); setEditingProfile(false); }} style={s.backNavigation} accessibilityRole="button"><Text style={s.backNavigationText}>→ العودة إلى الملف الشخصي</Text></Pressable>
               <Text style={s.profileSectionTitle}>تعديل ملف السائق</Text>
               <View style={s.driverPhotoRing}>{avatar ? <Image source={{ uri: avatar }} cachePolicy="none" style={s.driverPhotoImage} contentFit="cover" accessibilityLabel="صورة السائق"/> : <Text style={s.driverPhotoInitial}>{initial}</Text>}</View>
@@ -873,11 +893,11 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
           </>}
         </> : null}
         </StaggeredSections>
-        <View style={loading || (tab === 'home' && !profileComplete) || (tab !== 'home' && tab !== 'orders') ? s.hidden : undefined}>
+        {(tab === 'home' || tab === 'orders') && !loading && !profileLoadError && ((tab !== 'home') || profileComplete) && <View>
           <DriverOperations key={userId} userId={userId} screen={tab === 'home' ? 'home' : 'orders'} profileComplete={profileComplete} onCompleteProfile={() => goTab('profile')} onOpenOrders={() => goTab('orders')}/>
-        </View>
+        </View>}
         {tab === 'notifications' && <View style={s.driverPageIntro}><Text style={s.driverHeroEyebrow}>تحديثات طلباتك</Text><Text style={s.accountPageTitle}>التنبيهات</Text><Text style={s.accountPageSubtitle}>كل تنبيه لحاله مع وقت وصوله ورقم الطلب. اضغط عليه لتفتح الطلب.</Text></View>}
-        <View style={tab === 'notifications' ? undefined : s.hidden}><EntranceSection transitionKey={tab === 'notifications' ? 'notifications-visible' : 'notifications-hidden'}><NotificationInbox userId={userId} standalone onUnreadCountChange={setNotificationCount} onOpenOrder={() => goTab('orders')}/></EntranceSection></View>
+        {tab === 'notifications' && <EntranceSection transitionKey="notifications-visible"><NotificationInbox userId={userId} standalone onUnreadCountChange={setNotificationCount} onOpenOrder={() => goTab('orders')}/></EntranceSection>}
       </ScrollView>
       <View style={s.driverFooter}>{([{ key: 'home', label: 'الرئيسية', ios: 'house.fill', android: 'home' }, { key: 'orders', label: 'الطلبات', ios: 'shippingbox.fill', android: 'local_shipping' }, { key: 'notifications', label: 'التنبيهات', ios: 'bell.fill', android: 'notifications' }, { key: 'profile', label: 'حسابي', ios: 'person.crop.circle.fill', android: 'person' }] as const).map(({ key, label, ios, android }) => <Pressable key={key} accessibilityRole="button" accessibilityLabel={key === 'notifications' && notificationCount > 0 ? `${label}، ${notificationCount} تنبيه غير مقروء` : label} accessibilityState={{ selected: tab === key }} onPress={() => goTab(key)} style={[s.driverFooterButton, tab === key && s.driverFooterButtonActive]}><View style={s.driverFooterIconWrap}><Animated.View style={[s.footerIcon, { transform: [{ scale: activeTabAnimation === key ? tabScale : 1 }] }]}><SymbolView name={{ ios, android, web: android }} tintColor={tab === key ? (theme === 'light' ? '#17210F' : c.background) : c.muted} size={20}/></Animated.View>{key==='notifications'&&notificationCount>0?<View style={s.driverTabBadge}><Text style={s.driverTabBadgeText}>{notificationCount>99?'99+':notificationCount}</Text></View>:null}</View><Text style={[s.driverFooterLabel, tab === key && s.driverFooterLabelActive]}>{label}</Text></Pressable>)}</View>
     </View>
