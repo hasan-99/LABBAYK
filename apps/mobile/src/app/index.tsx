@@ -851,21 +851,87 @@ function SignedInHome({ userId, email, inviteToken, openOrderId, onSignOut, them
   const { styles: s } = useMobileTheme();
   const online = useInternetAvailable();
   const [reviewStatus, setReviewStatus] = useState<string | null>(null);
+  const [roles, setRoles] = useState<string[]>([]);
   const [checked, setChecked] = useState(false);
   useEffect(() => {
     if (!supabase || !online) return;
     let active = true;
     void (async () => {
       try {
-        const { data } = await supabase!.from('driver_profiles').select('review_status').eq('user_id', userId).maybeSingle();
-        if (active) setReviewStatus(data?.review_status ?? null);
+        const [{ data: driver }, { data: roleRows }] = await Promise.all([
+          supabase!.from('driver_profiles').select('review_status').eq('user_id', userId).maybeSingle(),
+          supabase!.from('user_roles').select('role').eq('user_id', userId),
+        ]);
+        if (active) { setReviewStatus(driver?.review_status ?? null); setRoles(roleRows?.map((row) => row.role) ?? []); }
       } finally { if (active) setChecked(true); }
     })();
     return () => { active = false; };
   }, [online, userId]);
   if (supabase && online && !checked) return <SafeAreaView style={s.safe}><View accessibilityRole="progressbar" accessibilityLabel="تحميل مساحة حسابك" style={{ flex: 1, justifyContent: 'center', padding: 24, gap: 18 }}><View style={[s.brand, { alignSelf: 'flex-end' }]}><View style={s.brandMark}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={s.brandLogo} contentFit="contain" accessibilityLabel="شعار لَبّيك" /></View><View><Text style={s.brandName}>لَبّيك</Text><Text style={s.brandTag}>عم نجهّز مساحتك</Text></View></View><View style={[s.formCard, { minHeight: 164, justifyContent: 'center', gap: 16 }]}><SkeletonBlock width="46%" height={22} /><SkeletonBlock width="88%" height={12} /><SkeletonBlock width="67%" height={12} /></View><View style={[s.formCard, { minHeight: 92, justifyContent: 'center', gap: 14 }]}><SkeletonBlock width="62%" height={13} /><SkeletonBlock width="82%" height={11} /></View></View></SafeAreaView>;
+  if (roles.includes('super_admin')) return <AdminWorkspace userId={userId} email={email} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
   if (reviewStatus !== 'approved') return <CustomerHome key={inviteToken ?? 'customer-home'} userId={userId} email={email} inviteToken={inviteToken} openOrderId={openOrderId} showDriverFlow={!!inviteToken || !!reviewStatus} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
   return <DriverWorkspace userId={userId} email={email} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
+}
+
+type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'customer_id'|'category'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'budget_ceiling_minor'|'created_at'>;
+type AdminMobileDriver = Pick<Database['public']['Tables']['driver_profiles']['Row'], 'user_id'|'vehicle_description'>;
+
+function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { userId: string; email: string; onSignOut: () => void; theme: 'dark'|'light'; onToggleTheme: () => void }) {
+  const { colors: color, styles: style } = useMobileTheme();
+  const online = useInternetAvailable();
+  const [orders, setOrders] = useState<AdminMobileOrder[]>([]);
+  const [drivers, setDrivers] = useState<AdminMobileDriver[]>([]);
+  const [fees, setFees] = useState<Record<string,string>>({});
+  const [reasons, setReasons] = useState<Record<string,string>>({});
+  const [selected, setSelected] = useState<Record<string,string>>({});
+  const [loading, setLoading] = useState(true);
+  const [busyOrder, setBusyOrder] = useState('');
+  const [message, setMessage] = useState('');
+
+  const refresh = useCallback(async () => {
+    if (!supabase) return;
+    const [orderResult, driverResult] = await Promise.all([
+      supabase.from('orders').select('id,customer_id,category,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,budget_ceiling_minor,created_at').order('created_at',{ascending:false}).limit(40),
+      supabase.from('driver_profiles').select('user_id,vehicle_description').eq('review_status','approved').eq('is_online',true).order('created_at'),
+    ]);
+    if (orderResult.error || driverResult.error) setMessage('تعذر تحميل الطلبات أو السائقين. حدّث الصفحة عند عودة الاتصال.');
+    else { setOrders(orderResult.data ?? []); setDrivers(driverResult.data ?? []); }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { if (online) void refresh(); }, [online, refresh]);
+  useEffect(() => {
+    if (!supabase) return;
+    const channel=supabase.channel(`admin-mobile-orders-${userId}`).on('postgres_changes',{event:'*',schema:'public',table:'orders'},()=>void refresh()).on('postgres_changes',{event:'*',schema:'public',table:'driver_profiles'},()=>void refresh()).subscribe();
+    return () => { void supabase?.removeChannel(channel); };
+  }, [refresh,userId]);
+
+  const priceAndRoute = async (order: AdminMobileOrder) => {
+    if (!supabase) return;
+    const fee=Number(fees[order.id]); const reason=(reasons[order.id]??'').trim(); const driverId=selected[order.id]||null;
+    if (!Number.isSafeInteger(fee)||fee<0||fee>100000000||reason.length<5) { setMessage('أدخل أجرة صحيحة وسبباً من 5 أحرف على الأقل.'); return; }
+    setBusyOrder(order.id); setMessage('');
+    const {data,error}=await supabase.rpc('admin_price_and_dispatch_order',{p_order_id:order.id,p_fee_minor:fee,p_driver_id:driverId,p_reason:reason});
+    setBusyOrder('');
+    if(error){setMessage('ما قدرنا نحفظ الأجرة أو نرسل الطلب. تأكد من توفر السائق وحاول مرة ثانية.');return;}
+    await refresh();
+    setMessage(driverId?'تم تحديد الأجرة وإسناد الطلب للسائق المحدد.':data?`تم إرسال العرض إلى ${data} سائق متاح؛ أول من يقبل يحصل على الطلب.`:'تم حفظ الأجرة، ولا يوجد سائق متاح حالياً. أعد الإرسال عند توفر سائق.');
+  };
+
+  const card={backgroundColor:color.surface,borderColor:color.border,borderWidth:1,borderRadius:18,padding:15,marginBottom:12} as const;
+  const input={minHeight:46,paddingHorizontal:12,borderRadius:12,borderWidth:1,borderColor:color.border,backgroundColor:color.raised,color:color.text,textAlign:'right' as const,fontSize:14} as const;
+  const button=(active=false)=>({minHeight:44,alignItems:'center' as const,justifyContent:'center' as const,paddingHorizontal:12,borderRadius:12,backgroundColor:active?color.primary:color.raised,borderWidth:1,borderColor:active?color.primary:color.border});
+  return <SafeAreaView style={[style.safe,{flex:1}]}><View style={{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,paddingVertical:10,borderBottomWidth:1,borderBottomColor:color.border}}><View><Text style={{color:color.text,fontSize:20,fontWeight:'900',textAlign:'right'}}>لَبّيك · الإدارة</Text><Text style={{color:color.muted,fontSize:11,textAlign:'right',marginTop:3}}>{email}</Text></View><View style={{flexDirection:'row',gap:8}}><Pressable onPress={onToggleTheme} style={button()}><Text style={{color:color.text,fontSize:12}}>الوضع</Text></Pressable><Pressable onPress={onSignOut} style={button()}><Text style={{color:color.text,fontSize:12}}>خروج</Text></Pressable></View></View>
+    <ScrollView contentContainerStyle={{padding:16,paddingBottom:40}}><View style={[card,{backgroundColor:color.raised}]}><Text style={{color:color.text,fontSize:19,fontWeight:'900',textAlign:'right'}}>طلبات الإدارة</Text><Text style={{color:color.muted,fontSize:12,lineHeight:20,textAlign:'right',marginTop:6}}>حدد أجرة التوصيل ثم اسند الطلب لسائق بعينه أو أرسله للجميع. أول سائق يقبل العرض العام يحصل عليه.</Text><Pressable onPress={()=>void refresh()} style={[button(),{marginTop:11}]}><Text style={{color:color.text,fontWeight:'800'}}>تحديث القائمة</Text></Pressable></View>
+      {message?<Text accessibilityRole="alert" style={{color:color.primary,textAlign:'right',marginBottom:12}}>{message}</Text>:null}
+      {loading?<ActivityIndicator color={color.primary}/>:orders.length?orders.map(order=><View key={order.id} style={card}><View style={{flexDirection:'row-reverse',justifyContent:'space-between',alignItems:'center'}}><Text style={{color:color.text,fontSize:15,fontWeight:'900'}}>{order.category}</Text><Text style={{color:color.muted,fontSize:10}}>#{order.id.slice(0,8)}</Text></View><Text style={{color:color.text,fontSize:13,lineHeight:21,textAlign:'right',marginTop:7}}>{order.request_text}</Text><Text style={{color:color.muted,fontSize:10,textAlign:'right',marginTop:6}}>العميل {order.customer_id?.slice(0,8)??'محذوف'} · ميزانية الشراء {numberFormatter.format(order.budget_ceiling_minor)} ل.س</Text>
+        {order.driver_id?<Text style={{color:color.primary,textAlign:'right',marginTop:10}}>أجرة التوصيل {numberFormatter.format(order.delivery_fee_minor)} ل.س · السائق {order.driver_id.slice(0,8)}</Text>:<><Text style={{color:color.muted,fontSize:11,textAlign:'right',marginTop:10}}>{order.delivery_quote_set_at?`الأجرة المحددة ${numberFormatter.format(order.delivery_fee_minor)} ل.س`:'بانتظار تحديد أجرة التوصيل'}</Text>{['requested','quoted','searching'].includes(order.status)&&<><TextInput value={fees[order.id]??(order.delivery_quote_set_at?String(order.delivery_fee_minor):'')} onChangeText={value=>setFees(v=>({...v,[order.id]:value}))} keyboardType="number-pad" placeholder="أجرة التوصيل · ل.س" placeholderTextColor={color.muted} style={[input,{marginTop:10}]} accessibilityLabel="أجرة التوصيل"/><TextInput value={reasons[order.id]??''} onChangeText={value=>setReasons(v=>({...v,[order.id]:value}))} placeholder="سبب التسعير" placeholderTextColor={color.muted} style={[input,{marginTop:8}]} accessibilityLabel="سبب التسعير"/>
+          <Pressable onPress={()=>setSelected(v=>({...v,[order.id]:''}))} style={[button(!selected[order.id]),{marginTop:10}]}><Text style={{color:!selected[order.id]?color.background:color.text,fontSize:12,fontWeight:'800'}}>إرسال لكل السائقين المتاحين</Text></Pressable>
+          {drivers.map(driver=><Pressable key={driver.user_id} onPress={()=>setSelected(v=>({...v,[order.id]:driver.user_id}))} style={[button(selected[order.id]===driver.user_id),{marginTop:7}]}><Text style={{color:selected[order.id]===driver.user_id?color.background:color.text,fontSize:12,fontWeight:'800'}}>إسناد إلى {driver.vehicle_description||'سائق'} · {driver.user_id.slice(0,8)}</Text></Pressable>)}
+          <Pressable disabled={busyOrder===order.id||!online} onPress={()=>void priceAndRoute(order)} style={[button(true),{marginTop:10,opacity:busyOrder===order.id||!online?0.55:1}]}><Text style={{color:color.background,fontSize:13,fontWeight:'900'}}>{busyOrder===order.id?'عم نحفظ ونرسل…':selected[order.id]?'تحديد الأجرة وإسناد السائق':'تحديد الأجرة وإرسال العرض'}</Text></Pressable></>}</>}
+        </View>):<Text style={{color:color.muted,textAlign:'center',padding:25}}>ما في طلبات حالياً.</Text>}
+    </ScrollView>
+  </SafeAreaView>;
 }
 
 function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, showDriverFlow, theme, onToggleTheme }: { onSignOut: () => void; userId: string; email: string; inviteToken?: string; openOrderId?: string; showDriverFlow: boolean; theme: 'dark' | 'light'; onToggleTheme: () => void }) {
