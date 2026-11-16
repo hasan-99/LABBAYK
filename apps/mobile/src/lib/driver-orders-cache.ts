@@ -4,7 +4,7 @@ import { getOfflineItem, removeOfflineItem, setOfflineItem } from './offline-sto
 type DriverOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'category'|'request_text'|'delivery_fee_minor'|'budget_ceiling_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'address_id'> & {
   address: Pick<Database['public']['Tables']['addresses']['Row'], 'id'|'label'|'street'|'city'|'neighborhood'|'contact_phone'|'building'|'landmark'> | null;
 };
-export type DriverOrdersSnapshot = { orders: DriverOrder[]; syncedAt: string };
+export type DriverOrdersSnapshot = { schemaVersion: 1; orders: DriverOrder[]; syncedAt: string };
 
 const key = (userId: string) => `labbayk:driver-orders-snapshot:${userId}`;
 const activeStatuses = new Set(['accepted','assigned','shopping','awaiting_approval','purchased','delivering','disputed']);
@@ -15,7 +15,11 @@ const enqueue = <T,>(operation: () => Promise<T>) => {
   return result;
 };
 export const saveDriverOrdersSnapshot = (userId: string, orders: DriverOrder[]) => enqueue(async () => {
-  const snapshot = { syncedAt: new Date().toISOString(), orders: orders.filter((order) => activeStatuses.has(order.status)).slice(0, 20) };
+  const snapshot: DriverOrdersSnapshot = {
+    schemaVersion: 1,
+    syncedAt: new Date().toISOString(),
+    orders: orders.filter((order) => activeStatuses.has(order.status)).slice(0, 20).map((order) => ({ ...order, request_text: '', address_id: null, address: null, delivery_fee_minor: 0, budget_ceiling_minor: 0, purchase_amount_minor: null, purchase_approved_at: null })),
+  };
   await setOfflineItem(key(userId), JSON.stringify(snapshot));
   return snapshot;
 });
@@ -32,23 +36,21 @@ export const loadDriverOrdersSnapshot = (userId: string) => enqueue(async (): Pr
     if (!value || typeof value !== 'object') return null;
     const snapshot = value as Partial<DriverOrdersSnapshot>;
     const syncedAt = typeof snapshot.syncedAt === 'string' ? Date.parse(snapshot.syncedAt) : NaN;
-    if (!Number.isFinite(syncedAt) || Date.now() - syncedAt > 30 * 24 * 60 * 60 * 1000 || !Array.isArray(snapshot.orders)) return null;
+    if (!Number.isFinite(syncedAt) || Date.now() - syncedAt > 7 * 24 * 60 * 60 * 1000 || !Array.isArray(snapshot.orders)) { await removeOfflineItem(key(userId)); return null; }
     const orders = snapshot.orders.filter((order): order is DriverOrder => !!order && typeof order === 'object'
       && typeof order.id === 'string' && /^[a-f0-9-]{36}$/i.test(order.id)
-      && typeof order.address_id === 'string' && /^[a-f0-9-]{36}$/i.test(order.address_id)
       && typeof order.status === 'string' && activeStatuses.has(order.status)
       && typeof order.category === 'string' && typeof order.request_text === 'string' && typeof order.created_at === 'string'
       && Number.isSafeInteger(order.delivery_fee_minor) && Number.isSafeInteger(order.budget_ceiling_minor)
       && (order.purchase_amount_minor === null || Number.isSafeInteger(order.purchase_amount_minor))
-      && (order.purchase_approved_at === null || typeof order.purchase_approved_at === 'string')
-      && (order.address === null || (!!order.address && typeof order.address === 'object'
-        && typeof order.address.id === 'string' && typeof order.address.label === 'string'
-        && typeof order.address.street === 'string' && typeof order.address.city === 'string'
-        && typeof order.address.neighborhood === 'string' && typeof order.address.contact_phone === 'string'
-        && (order.address.building === null || typeof order.address.building === 'string')
-        && (order.address.landmark === null || typeof order.address.landmark === 'string'))));
-    return { orders: orders.slice(0, 20), syncedAt: new Date(syncedAt).toISOString() };
+      && (order.purchase_approved_at === null || typeof order.purchase_approved_at === 'string'));
+    const sanitized = orders.slice(0, 20).map((order) => ({ ...order, request_text: '', address_id: null, address: null, delivery_fee_minor: 0, budget_ceiling_minor: 0, purchase_amount_minor: null, purchase_approved_at: null }));
+    const result: DriverOrdersSnapshot = { schemaVersion: 1, orders: sanitized, syncedAt: new Date(syncedAt).toISOString() };
+    const hadSensitiveFields = snapshot.schemaVersion !== 1 || orders.some((order) => order.request_text !== '' || order.address_id !== null || order.address !== null || order.delivery_fee_minor !== 0 || order.budget_ceiling_minor !== 0 || order.purchase_amount_minor !== null || order.purchase_approved_at !== null);
+    if (hadSensitiveFields) await setOfflineItem(key(userId), JSON.stringify(result));
+    return result;
   } catch {
+    await removeOfflineItem(key(userId)).catch(() => {});
     return null;
   }
 });

@@ -13,7 +13,8 @@ import { tokens } from '@labbayk/design-tokens';
 import type { Session } from '@supabase/supabase-js';
 import type { Database } from '@labbayk/shared/database.types';
 import { supabase, supabaseConfigured } from '@/lib/supabase';
-import { clearCustomerOrderDraft, clearCustomerOrdersSnapshot, loadCustomerOrderDraft, loadCustomerOrdersSnapshot, saveCustomerOrderDraft, saveCustomerOrdersSnapshot, type CustomerOrderSnapshot } from '@/lib/customer-order-draft';
+import { getBackendHealth, subscribeBackendHealth, type BackendHealth } from '@/lib/network-health';
+import { clearCustomerOrderDraft, clearCustomerOrdersSnapshot, loadCustomerOrderDraft, loadCustomerOrdersSnapshot, saveCustomerOrderDraft, saveCustomerOrdersSnapshot, type CustomerOrderImageDraft, type CustomerOrderSnapshot } from '@/lib/customer-order-draft';
 import { clearDriverOrdersSnapshot, loadDriverOrdersSnapshot, saveDriverOrdersSnapshot } from '@/lib/driver-orders-cache';
 import { enablePushNotifications, hasRegisteredPushToken, unregisterPushNotifications } from '@/lib/push-notifications';
 import { AuthScreen, PasswordRecoveryScreen } from '@/components/AuthScreen';
@@ -140,7 +141,7 @@ type CustomerOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'s
 type DriverOfferCard = { id: string; expires_at: string; order: Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'category'|'request_text'|'delivery_fee_minor'|'budget_ceiling_minor'> };
 type DriverActiveOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'category'|'request_text'|'delivery_fee_minor'|'budget_ceiling_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'address_id'> & { address: Pick<Address, 'id'|'label'|'street'|'city'|'neighborhood'|'contact_phone'|'building'|'landmark'> | null };
 const newRequestKey = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => { const value = Math.random() * 16 | 0; return (char === 'x' ? value : (value & 3 | 8)).toString(16); });
-type OrderImage = { id: string; uri: string; mimeType: string; extension: string; uploaded: boolean };
+type OrderImage = CustomerOrderImageDraft & { uri: string };
 type ProfileAvatarDraft = { uri: string; mimeType: string; extension: string };
 const orderStatus: Record<string, string> = { requested:'بانتظار التوزيع', quoted:'أجرة التوصيل جاهزة', searching:'عم ندور على سائق', accepted:'قبل السائق الطلب', assigned:'تم تعيين سائق', shopping:'عم نجهز طلبك', awaiting_approval:'بانتظار موافقتك', purchased:'تم الشراء', delivering:'بالطريق لعندك', delivered:'تم التوصيل', settled:'تمت التسوية', disputed:'قيد مراجعة الدعم', cancelled:'ملغي' };
 
@@ -483,6 +484,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
   const [offers, setOffers] = useState<DriverOfferCard[]>([]);
   const [activeOrders, setActiveOrders] = useState<DriverActiveOrder[]>([]);
   const [operationsAreStale, setOperationsAreStale] = useState(false);
+  const [ordersSyncedAt, setOrdersSyncedAt] = useState('');
   const [purchaseDrafts, setPurchaseDrafts] = useState<Record<string,string>>({});
   const [deliveryDrafts, setDeliveryDrafts] = useState<Record<string,string>>({});
   const [loading, setLoading] = useState(true);
@@ -501,10 +503,15 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
   const refresh = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
     try {
+    const cachedSnapshot = await loadDriverOrdersSnapshot(userId);
+    if (cachedSnapshot) {
+      setActiveOrders(cachedSnapshot.orders);
+      setOrdersSyncedAt(cachedSnapshot.syncedAt);
+      setOperationsAreStale(true);
+      setLoading(false);
+    }
     if (!online) {
-      const snapshot = await loadDriverOrdersSnapshot(userId);
-      if (snapshot) setActiveOrders(snapshot.orders);
-      else setActiveOrders([]);
+      if (!cachedSnapshot) setActiveOrders([]);
       setOperationsAreStale(true); setLoading(false); return;
     }
     const [driver, offerRows, assigned, wallet] = await Promise.all([
@@ -538,7 +545,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     } else currentOrders = [];
     if (currentOrders) {
       setActiveOrders(currentOrders);
-      void saveDriverOrdersSnapshot(userId, currentOrders).catch(() => {});
+      void saveDriverOrdersSnapshot(userId, currentOrders).then((snapshot) => setOrdersSyncedAt(snapshot.syncedAt)).catch(() => {});
     }
     if (offerRows.data?.length) {
       const { data: orderRows, error } = offerOrderResult!;
@@ -550,10 +557,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     const syncFailed = !!driver.error || !!offerRows.error || !!assigned.error || addressError || !!offerOrderResult?.error;
     setOperationsAreStale(syncFailed);
     if (!syncFailed) setMessage('');
-    if (syncFailed) {
-      const snapshot = await loadDriverOrdersSnapshot(userId);
-      if (snapshot && !currentOrders) setActiveOrders(snapshot.orders);
-    }
+    if (syncFailed && !currentOrders && cachedSnapshot) setActiveOrders(cachedSnapshot.orders);
     } catch {
       setOperationsAreStale(true);
     } finally {
@@ -644,6 +648,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     setMessage('تأكد التسليم من السيرفر.'); await refresh();
   };
   return <View style={[s.driverPanel,screen==='home'&&s.driverHomePanel]}><View style={s.driverPanelTop}><View><Text style={s.driverApplyTitle}>{screen==='home'?'استقبال الطلبات':'ملخص الطلبات'}</Text><Text style={s.driverApplyCopy}>{screen==='home'?'بدّل حالتك من هون لتبدأ أو توقف استقبال العروض.':'العروض والطلبات المفتوحة بتظهر تحت.'}</Text></View><Pressable disabled={busy} onPress={() => void refresh()} style={s.driverRefresh} accessibilityRole="button" accessibilityLabel="تحديث طلبات السائق"><Text style={s.driverRefreshGlyph}>↻</Text></Pressable></View>
+      {operationsAreStale && <Text style={s.driverAvailabilityOffline}>{ordersSyncedAt ? 'طلبات محفوظة وقديمة · آخر مزامنة ' + shortDateTimeFormatter.format(new Date(ordersSyncedAt)) + ' · لا تظهر عناوين العملاء أو المبالغ دون اتصال.' : 'تعذرت مزامنة الخادم. الإجراءات والعروض تحتاج اتصالاً.'}</Text>}
     {loading ? showInitialSkeleton ? <View accessibilityRole="progressbar" accessibilityLabel="مزامنة بيانات السائق" style={{gap:12,marginTop:8}}><View style={[s.driverOrdersSkeleton,{minHeight:screen==='home'?142:106,marginBottom:0}]}><View style={s.driverSkeletonTop}><View style={s.driverSkeletonPill}/><View style={s.driverSkeletonLine}/></View><View style={[s.driverSkeletonLine,{width:'88%'}]}/><View style={[s.driverSkeletonLine,{width:'61%'}]}/></View><View style={s.driverStatsRow}><View style={[s.driverStat,{minHeight:68}]}><View style={[s.driverSkeletonLine,{width:'65%',marginBottom:0}]}/></View><View style={[s.driverStat,{minHeight:68}]}><View style={[s.driverSkeletonLine,{width:'65%',marginBottom:0}]}/></View></View>{screen==='home'&&<View style={[s.driverOrdersSkeleton,{minHeight:72,marginBottom:0}]}><View style={[s.driverSkeletonLine,{width:'42%'}]}/><View style={[s.driverSkeletonLine,{width:'72%',marginBottom:0}]}/></View>}</View> : <View style={{minHeight:screen==='home'?340:250}}/> : <StaggeredSections transitionKey={`${screen}-${loading ? 'loading' : 'ready'}`}><>
     {screen==='home'&&<View style={[s.driverAvailabilityHero,profile.is_online&&s.driverAvailabilityHeroOn]}>
       <View style={s.driverAvailabilityHeroTop}><View style={[s.driverAvailabilityHeroIcon,profile.is_online&&s.driverAvailabilityHeroIconOn]}><SymbolView name={{ios:profile.is_online?'checkmark':'pause.fill',android:profile.is_online?'check':'pause',web:profile.is_online?'check':'pause'}} tintColor={profile.is_online?'#0B1411':c.muted} size={22}/></View><View style={s.driverAvailabilityHeroCopy}><Text style={[s.driverAvailabilityState,profile.is_online&&s.driverAvailabilityStateOn]}>{profile.is_online?'متاح لاستقبال الطلبات':'متوقف عن استقبال الطلبات'}</Text><Text style={s.driverAvailabilityHint}>{profile.is_online?'العروض الجديدة توصلك فوراً':'فعّل التوفر وقت ما تكون جاهز للشغل'}</Text></View></View>
@@ -655,7 +660,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     {screen === 'home' && <Pressable onPress={onOpenOrders} style={s.driverOrdersShortcut} accessibilityRole="button"><View style={s.driverShortcutIcon}><SymbolView name={{ ios: 'shippingbox.fill', android: 'local_shipping', web: 'local_shipping' }} tintColor={c.primary} size={20}/></View><View style={{flex:1,alignItems:'flex-start'}}><Text style={s.driverShortcutTitle}>طلباتك وعروضك</Text><Text style={s.driverShortcutCopy}>افتح قائمة المتابعة وقبول الطلبات</Text></View><Text style={s.appearanceArrow}>←</Text></Pressable>}
     {screen === 'orders' && <><View style={s.driverOffersHead}><Text style={s.sectionTitle}>عروض قريبة منك</Text><Text style={s.offerCount}>{offers.length}</Text></View>
     {offers.length ? offers.map((offer) => <View key={offer.id} style={s.offerCard}><View style={s.orderTop}><Text style={s.orderCategory}>{offer.order.category}</Text><Text style={s.orderFee}>{numberFormatter.format(offer.order.delivery_fee_minor)} ل.س توصيل</Text></View><Text style={s.orderRequest}>{offer.order.request_text}</Text><Text style={s.offerExpiry}>انتهاؤه {shortTimeFormatter.format(new Date(offer.expires_at))}</Text><Pressable disabled={busy || !profile.is_online || !online || operationsAreStale} onPress={() => void accept(offer.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>قبول الطلب <Text style={s.submitArrow}>←</Text></Text></Pressable><Pressable disabled={busy || !online || operationsAreStale} onPress={() => void decline(offer.id)} style={[s.declineOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.declineOfferText}>اعتذار عن العرض</Text></Pressable></View>) : <View style={s.noOffers}><Text style={s.noOffersGlyph}>⌁</Text><Text style={s.noOffersTitle}>ما في عروض حالياً</Text><Text style={s.noOffersCopy}>لما يوصلك عرض جديد بيظهر هون. فيك تحدّث القائمة بأي وقت.</Text></View>}
-    {!!activeOrders.length && <><Text style={s.sectionTitle}>طلباتك النشطة</Text>{activeOrders.map((order) => <View key={order.id} style={s.offerCard}><Text style={s.orderCategory}>{order.category} · {orderStatus[order.status] ?? order.status}</Text><Text style={s.orderRequest}>{order.request_text}</Text><OrderImageGallery orderId={order.id}/><Text style={s.offerExpiry}>ميزانية الزبون: {numberFormatter.format(order.budget_ceiling_minor)} ل.س</Text><SupportIssueForm orderId={order.id} status={order.status} disabled={operationsAreStale}/>{order.address && <View style={s.dropoff}><Text style={s.dropoffTitle}>عنوان التوصيل</Text><Text style={s.dropoffText}>{order.address.label} · {order.address.street}{order.address.building ? `، بناء ${order.address.building}` : ''}</Text><Text style={s.dropoffText}>{order.address.neighborhood}، {order.address.city}{order.address.landmark ? ` · ${order.address.landmark}` : ''}</Text><Text style={s.dropoffPhone} selectable>{order.address.contact_phone}</Text></View>}{['accepted','assigned'].includes(order.status) && <Pressable disabled={busy || !online || operationsAreStale} onPress={() => void startShopping(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>بدء التسوق ←</Text></Pressable>}{order.status === 'shopping' && <><Text style={s.label}>المبلغ المتوقع عند الصندوق · ل.س</Text><TextInput value={purchaseDrafts[order.id] ?? ''} onChangeText={(value) => setPurchaseDrafts((current) => ({...current,[order.id]:value}))} keyboardType="number-pad" textAlign="left" placeholder="مثال: 25000" placeholderTextColor="#839188" style={s.field} accessibilityLabel="قيمة المشتريات"/><Pressable disabled={busy || !online || operationsAreStale} onPress={() => void recordPurchase(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>تسجيل قيمة المشتريات ←</Text></Pressable>{order.purchase_amount_minor !== null && (order.purchase_amount_minor <= order.budget_ceiling_minor || order.purchase_approved_at !== null) && <Pressable disabled={busy || !online || operationsAreStale} onPress={() => void confirmPurchase(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>تأكيد الشراء بعد الدفع ←</Text></Pressable>}</>}{order.status === 'awaiting_approval' && <Text style={s.offerExpiry}>المبلغ المقترح {numberFormatter.format(order.purchase_amount_minor ?? 0)} ل.س · ناطرين موافقة الزبون.</Text>}{order.status === 'purchased' && <><Text style={s.offerExpiry}>مشتريات: {numberFormatter.format(order.purchase_amount_minor ?? 0)} ل.س</Text><Pressable disabled={busy || !online || operationsAreStale} onPress={() => void startDelivery(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>بدء التوصيل ←</Text></Pressable></>}{order.status === 'delivering' && <><Text style={s.label}>رمز التأكيد من الزبون · 8 أرقام</Text><TextInput value={deliveryDrafts[order.id] ?? ''} onChangeText={(value) => setDeliveryDrafts((current) => ({...current,[order.id]:value.replace(/\D/g,'').slice(0,8)}))} keyboardType="number-pad" textAlign="left" maxLength={8} placeholder="••••••••" placeholderTextColor="#839188" style={s.field} accessibilityLabel="رمز تأكيد التسليم"/><Pressable disabled={busy || !online || operationsAreStale || (deliveryDrafts[order.id] ?? '').length !== 8} onPress={() => void confirmDelivery(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>تأكيد التسليم ←</Text></Pressable></>}</View>)}</>}</>}
+    {!!activeOrders.length && <><Text style={s.sectionTitle}>طلباتك النشطة</Text>{activeOrders.map((order) => <View key={order.id} style={s.offerCard}><Text style={s.orderCategory}>{order.category} · {orderStatus[order.status] ?? order.status}</Text><Text style={s.orderRequest}>{order.request_text}</Text><OrderImageGallery orderId={order.id}/><Text style={s.offerExpiry}>ميزانية الزبون: {operationsAreStale ? 'تظهر عند الاتصال' : numberFormatter.format(order.budget_ceiling_minor) + ' ل.س'}</Text><SupportIssueForm orderId={order.id} status={order.status} disabled={operationsAreStale}/>{order.address && <View style={s.dropoff}><Text style={s.dropoffTitle}>عنوان التوصيل</Text><Text style={s.dropoffText}>{order.address.label} · {order.address.street}{order.address.building ? `، بناء ${order.address.building}` : ''}</Text><Text style={s.dropoffText}>{order.address.neighborhood}، {order.address.city}{order.address.landmark ? ` · ${order.address.landmark}` : ''}</Text><Text style={s.dropoffPhone} selectable>{order.address.contact_phone}</Text></View>}{['accepted','assigned'].includes(order.status) && <Pressable disabled={busy || !online || operationsAreStale} onPress={() => void startShopping(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>بدء التسوق ←</Text></Pressable>}{order.status === 'shopping' && <><Text style={s.label}>المبلغ المتوقع عند الصندوق · ل.س</Text><TextInput value={purchaseDrafts[order.id] ?? ''} onChangeText={(value) => setPurchaseDrafts((current) => ({...current,[order.id]:value}))} keyboardType="number-pad" textAlign="left" placeholder="مثال: 25000" placeholderTextColor="#839188" style={s.field} accessibilityLabel="قيمة المشتريات"/><Pressable disabled={busy || !online || operationsAreStale} onPress={() => void recordPurchase(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>تسجيل قيمة المشتريات ←</Text></Pressable>{order.purchase_amount_minor !== null && (order.purchase_amount_minor <= order.budget_ceiling_minor || order.purchase_approved_at !== null) && <Pressable disabled={busy || !online || operationsAreStale} onPress={() => void confirmPurchase(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>تأكيد الشراء بعد الدفع ←</Text></Pressable>}</>}{!operationsAreStale && order.status === 'awaiting_approval' && <Text style={s.offerExpiry}>المبلغ المقترح {numberFormatter.format(order.purchase_amount_minor ?? 0)} ل.س · ناطرين موافقة الزبون.</Text>}{!operationsAreStale && order.status === 'purchased' && <><Text style={s.offerExpiry}>مشتريات: {numberFormatter.format(order.purchase_amount_minor ?? 0)} ل.س</Text><Pressable disabled={busy || !online || operationsAreStale} onPress={() => void startDelivery(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>بدء التوصيل ←</Text></Pressable></>}{order.status === 'delivering' && <><Text style={s.label}>رمز التأكيد من الزبون · 8 أرقام</Text><TextInput value={deliveryDrafts[order.id] ?? ''} onChangeText={(value) => setDeliveryDrafts((current) => ({...current,[order.id]:value.replace(/\D/g,'').slice(0,8)}))} keyboardType="number-pad" textAlign="left" maxLength={8} placeholder="••••••••" placeholderTextColor="#839188" style={s.field} accessibilityLabel="رمز تأكيد التسليم"/><Pressable disabled={busy || !online || operationsAreStale || (deliveryDrafts[order.id] ?? '').length !== 8} onPress={() => void confirmDelivery(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>تأكيد التسليم ←</Text></Pressable></>}</View>)}</>}</>}
     </></StaggeredSections>}
   </View>;
 }
@@ -782,7 +787,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
     <View accessibilityRole="main" style={{ flex: 1 }}>
       <View style={s.header}>
         <Pressable onPress={() => goTab('profile')} accessibilityRole="button" accessibilityLabel="فتح الملف الشخصي للسائق" style={s.driverHeaderProfile}>
-          <View style={s.driverHeaderAvatar}>{avatar ? <Image source={{ uri: avatar }} style={s.avatarImage} contentFit="cover"/> : <Text style={s.accountAvatarLargeText}>{initial}</Text>}</View>
+          <View style={s.driverHeaderAvatar}>{avatar ? <Image source={{ uri: avatar }} cachePolicy="none" style={s.avatarImage} contentFit="cover"/> : <Text style={s.accountAvatarLargeText}>{initial}</Text>}</View>
           <Text style={s.driverHeaderHint}>حسابي</Text>
         </Pressable>
         <View style={s.brand}><View style={s.brandMark}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={s.brandLogo} contentFit="contain" accessibilityLabel="شعار لَبّيك"/></View><View><Text style={s.brandName}>لَبّيك</Text><Text style={s.brandTag}>مساحة السائق</Text></View></View>
@@ -805,7 +810,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
         </> : tab === 'profile' ? <>
           <View style={s.driverPageIntro}><Text style={s.driverHeroEyebrow}>بياناتك الأساسية</Text><Text style={s.accountPageTitle}>ملف السائق</Text><Text style={s.accountPageSubtitle}>الزبون وفريق لَبّيك بيستخدموا هالمعلومات للتواصل.</Text></View>
           <View style={s.driverProfileCard}>
-            <View style={s.driverPhotoRing}>{avatar ? <Image source={{ uri: avatar }} style={s.driverPhotoImage} contentFit="cover" accessibilityLabel="صورة السائق"/> : <Text style={s.driverPhotoInitial}>{initial}</Text>}</View>
+            <View style={s.driverPhotoRing}>{avatar ? <Image source={{ uri: avatar }} cachePolicy="none" style={s.driverPhotoImage} contentFit="cover" accessibilityLabel="صورة السائق"/> : <Text style={s.driverPhotoInitial}>{initial}</Text>}</View>
             <Pressable onPress={() => void choosePhoto()} disabled={busy} style={s.driverPhotoButton} accessibilityRole="button"><SymbolView name={{ ios: 'camera.fill', android: 'photo_camera', web: 'photo_camera' }} tintColor={c.primary} size={16}/><Text style={s.driverPhotoButtonText}>{avatar ? 'تغيير الصورة' : 'إضافة صورة شخصية'}</Text></Pressable>
             <Text style={s.label}>الاسم الكامل</Text><TextInput value={name} onChangeText={setName} maxLength={120} textAlign="right" placeholder="الاسم كما يظهر للزبائن" placeholderTextColor={c.muted} style={s.driverInput} accessibilityLabel="الاسم الكامل للسائق"/>
             <Text style={[s.label,s.driverRightText]}>البريد الإلكتروني</Text><View style={[s.driverReadOnlyField,s.driverRightContent]}><Text selectable style={s.driverEmailText}>{email}</Text><Text style={s.driverFieldHint}>مرتبط بحسابك وما بيتغيّر من هون</Text></View>
@@ -925,6 +930,8 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
         addressIdRef.current = draft.addressId;
         setAddressId(draft.addressId);
         requestKey.current = draft.idempotencyKey;
+        setPendingOrderId(draft.pendingOrderId ?? '');
+        setOrderImages((draft.images ?? []).map((image) => ({ ...image, uri: '' })));
       }
       setDraftLoadedFor(userId);
     });
@@ -933,12 +940,12 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   useEffect(() => {
     if (!draftReady) return;
     const timeout = setTimeout(() => {
-      void saveCustomerOrderDraft(userId, { request, category, budgetCeiling, addressId, idempotencyKey: requestKey.current })
+      void saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, category, budgetCeiling, addressId, idempotencyKey: requestKey.current, pendingOrderId: pendingOrderId || undefined, images: orderImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) })
         .then(() => setDraftSaveError(false))
         .catch(() => setDraftSaveError(true));
     }, 250);
     return () => clearTimeout(timeout);
-  }, [userId, draftReady, request, category, budgetCeiling, addressId]);
+  }, [userId, draftReady, request, category, budgetCeiling, addressId, pendingOrderId, orderImages]);
   useEffect(() => {
     if (!draftReady || tab !== 'home' || !supabase || !online) return;
     let active = true;
@@ -1032,11 +1039,12 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     void loadCustomerOrdersSnapshot(userId).then((snapshot: CustomerOrderSnapshot | null) => {
       if (!active) return;
       if (!snapshot) { if (!online) { setOrdersAreStale(true); ordersLoaded.current = true; setOrdersLoading(false); } return; }
-      if (hasServerOrders || online) return;
+      if (hasServerOrders) return;
       setOrders(snapshot.orders.map((order) => ({ ...order, request_text: '' })));
       setOrdersSyncedAt(snapshot.syncedAt);
       setOrdersAreStale(true);
-      if (!online) { ordersLoaded.current = true; setOrdersLoading(false); }
+      ordersLoaded.current = true;
+      setOrdersLoading(false);
     });
     const refresh = async () => {
       const rows = await fetchCustomerOrders();
@@ -1062,9 +1070,11 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     if (!draftReady) { setRequestMessage('عم نسترجع مسودتك المحفوظة. جرّب بعد لحظة.'); return; }
     if (!online) { setRequestMessage('إرسال الطلب يحتاج اتصالاً. مسودتك محفوظة على هالجهاز.'); return; }
     if (!supabase) return;
+    if (orderImages.some((image) => !image.uploaded && !image.uri)) { setRequestMessage('أعد اختيار الصور التي تحتاج رفعاً، ثم أرسل الطلب لإكماله.'); return; }
     if (!pendingOrderId && !addressReadyForOrder) { setRequestMessage('أضف عنوان تسليم بدمشق أو ريف دمشق حتى نكمل الطلب.'); return; }
     if (!pendingOrderId && (!addressId || !category || !request.trim())) { setRequestMessage('اختار العنوان والقسم واكتب تفاصيل طلبك.'); return; }
     if (!pendingOrderId && (!Number.isSafeInteger(budget) || budget < 1 || budget > 100000000)) { setRequestMessage('حدد سقف ميزانية صحيح بالليرة السورية حتى ما يضطر السائق يدفع مبلغ غير متفق عليه.'); return; }
+    await saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, category, budgetCeiling, addressId, idempotencyKey: requestKey.current, pendingOrderId: pendingOrderId || undefined, images: orderImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) }).catch(() => setDraftSaveError(true));
     setSending(true); setRequestMessage('');
     let orderId = pendingOrderId;
     if (!orderId) {
@@ -1076,15 +1086,37 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       }
       orderId = data;
       setPendingOrderId(orderId);
+      await saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, category, budgetCeiling, addressId, idempotencyKey: requestKey.current, pendingOrderId: orderId, images: orderImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) }).catch(() => setDraftSaveError(true));
+    }
+    let existingImageNames = new Set<string>();
+    if (orderImages.length) {
+      const { data: files, error } = await supabase.storage.from('order-images').list(orderId, { limit: 3, sortBy: { column: 'name', order: 'asc' } });
+      if (error) {
+        setSending(false);
+        setRequestMessage('وصل طلبك، بس ما قدرنا نتحقق من الصور المرفوعة. اضغط إرسال الطلب مرة ثانية للمتابعة بأمان.');
+        return;
+      }
+      existingImageNames = new Set((files ?? []).map((file) => file.name));
     }
     for (const image of orderImages) {
       if (image.uploaded) continue;
       try {
+        const imageName = `${image.id}.${image.extension}`;
+        if (existingImageNames.has(imageName)) {
+          const uploadedImage = { ...image, uploaded: true };
+          const updatedImages = orderImages.map((item) => item.id === image.id ? uploadedImage : item);
+          setOrderImages(updatedImages);
+          await saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, category, budgetCeiling, addressId, idempotencyKey: requestKey.current, pendingOrderId: orderId, images: updatedImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) }).catch(() => setDraftSaveError(true));
+          continue;
+        }
         const body = await fetch(image.uri).then((response) => response.arrayBuffer());
-        const { error } = await supabase.storage.from('order-images').upload(`${orderId}/${image.id}.${image.extension}`, body, { contentType: image.mimeType, cacheControl: '3600', upsert: false });
+        const { error } = await supabase.storage.from('order-images').upload(`${orderId}/${imageName}`, body, { contentType: image.mimeType, cacheControl: '3600', upsert: false });
         if (error) throw error;
+        existingImageNames.add(imageName);
         const uploadedImage = { ...image, uploaded: true };
-        setOrderImages((current) => current.map((item) => item.id === image.id ? uploadedImage : item));
+        const updatedImages = orderImages.map((item) => item.id === image.id ? uploadedImage : item);
+        setOrderImages(updatedImages);
+        await saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, category, budgetCeiling, addressId, idempotencyKey: requestKey.current, pendingOrderId: orderId, images: updatedImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) }).catch(() => setDraftSaveError(true));
       } catch {
         setSending(false);
         setRequestMessage('وصل طلبك، بس ما قدرنا نرفع كل الصور. اضغط إرسال الطلب مرة ثانية لنكمل الرفع بدون إنشاء طلب جديد.');
@@ -1096,7 +1128,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     requestKey.current = newRequestKey(); setRequest(''); setCategory(''); setBudgetCeiling(''); setOrderImages([]); setPendingOrderId(''); setRequestMessage('وصلنا طلبك! الإدارة رح تقدّر أجرة الطريق وتبعتها إلك للموافقة قبل توزيع السائق.'); navigate('orders');
   };
   const pickOrderImages = async () => {
-    if (pendingOrderId || sending) return;
+    if (sending) return;
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, selectionLimit: 3 - orderImages.length, quality: 0.8, exif: false });
     if (result.canceled) return;
     const accepted = result.assets.flatMap((asset) => {
@@ -1109,13 +1141,15 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     else if (accepted.length) setRequestMessage('انضافت الصور لطلبك. فيك تبدّلها أو تحذفها قبل الإرسال.');
   };
   const replaceOrderImage = async (imageId: string) => {
-    if (pendingOrderId || sending) return;
+    if (sending) return;
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: false, quality: 0.8, exif: false });
     if (result.canceled || !result.assets[0]) return;
     const asset = result.assets[0];
     const mimeType = asset.mimeType?.toLowerCase() ?? 'image/jpeg';
     const extension = ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic', 'image/heif': 'heif' } as Record<string, string>)[mimeType];
     if (!extension) { setRequestMessage('اختار صورة JPEG أو PNG أو WebP أو HEIC.'); return; }
+    const existingImage = orderImages.find((image) => image.id === imageId);
+    if (pendingOrderId && existingImage && existingImage.extension !== extension) { setRequestMessage('اختار صورة بنفس صيغة الملف الأصلي حتى نكمل الرفع دون تكرار الصورة.'); return; }
     setOrderImages((current) => current.map((image) => image.id === imageId ? { ...image, uri: asset.uri, mimeType, extension, uploaded: false } : image));
     setRequestMessage('تبدّلت الصورة.');
   };
@@ -1165,7 +1199,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   const accountInitial = (profileName.trim()[0] || email.trim()[0] || 'ح').toLocaleUpperCase('ar');
   return <SafeAreaView style={s.safe}>
     <View accessibilityRole="main" style={{flex:1}}>
-      <View style={s.header}><View style={s.brand}><View style={s.brandMark}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={s.brandLogo} contentFit="contain" accessibilityLabel="شعار لَبّيك"/></View><View><Text style={s.brandName}>لَبّيك</Text><Text style={s.brandTag}>اطلب، والباقي علينا.</Text></View></View><View style={s.headerActions}><Pressable onPress={() => navigate('profile')} style={s.accountAvatar} accessibilityRole="button" accessibilityLabel="فتح حسابي">{profileAvatarUrl ? <Image source={{uri:profileAvatarUrl}} style={s.avatarImage} contentFit="cover" accessibilityLabel="صورة الحساب"/> : <Text style={s.accountAvatarText}>{accountInitial}</Text>}</Pressable></View></View>
+      <View style={s.header}><View style={s.brand}><View style={s.brandMark}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={s.brandLogo} contentFit="contain" accessibilityLabel="شعار لَبّيك"/></View><View><Text style={s.brandName}>لَبّيك</Text><Text style={s.brandTag}>اطلب، والباقي علينا.</Text></View></View><View style={s.headerActions}><Pressable onPress={() => navigate('profile')} style={s.accountAvatar} accessibilityRole="button" accessibilityLabel="فتح حسابي">{profileAvatarUrl ? <Image source={{uri:profileAvatarUrl}} cachePolicy="none" style={s.avatarImage} contentFit="cover" accessibilityLabel="صورة الحساب"/> : <Text style={s.accountAvatarText}>{accountInitial}</Text>}</Pressable></View></View>
       <ScrollView style={s.bodyScroll} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
       <StaggeredSections transitionKey={`${tab}-${tab === 'orders' && ordersLoading ? 'loading' : 'ready'}`}>
       {tab === 'addresses' ? <EntranceSection transitionKey={tab}><AddressBook userId={userId} onBack={goBack} backLabel={`العودة إلى ${tabHistory[tabHistory.length - 1] === 'profile' ? 'حسابي' : 'الرئيسية'}`} onAddressSaved={(address) => { addressIdRef.current = address.id; setAddressId(address.id); setAddressSummary(`${address.label} · ${address.neighborhood}`); setSelectedAddress(address); }} /></EntranceSection> : tab === 'home' ? <>
@@ -1176,12 +1210,12 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
         <View style={s.heroFoot}><View style={s.heroDash}/><Text style={s.heroFootText}>من حارتك لباب بيتك</Text></View>
       </View>
       <View style={s.formCard}><View style={s.formHeader}><View style={s.formStep}><Text style={s.formStepText}>01</Text></View><View style={s.formHeaderCopy}><Text style={s.formTitle}>شو بدك نجيبلك؟</Text><Text style={s.formSubtitle}>اكتب طلبك بالتفصيل، والصورة بتساعدنا نفهمك أسرع.</Text></View><View style={s.cashBadge}><Text style={s.cashBadgeText}>دفع كاش</Text></View></View>{draftSaveError ? <Text style={s.formMessage}>تعذّر حفظ المسودة على هذا الجهاز.</Text> : null}
-        <View style={s.formSection}><Text style={s.label}>تفاصيل الطلب</Text><TextInput editable={draftReady && !pendingOrderId} value={request} onChangeText={(value) => { draftDirty.current = true; setRequest(value); }} multiline textAlignVertical="top" placeholder="مثال: جرة غاز ممتلئة مع توصيلها للبيت..." placeholderTextColor="#809087" style={[s.input,s.orderRequestInput]} accessibilityLabel="اكتب تفاصيل طلبك" /></View>
+        <View style={s.formSection}><Text style={s.label}>تفاصيل الطلب</Text><TextInput editable={draftReady && !pendingOrderId} value={request} onChangeText={(value) => { draftDirty.current = true; setRequest(value); }} maxLength={4000} multiline textAlignVertical="top" placeholder="مثال: جرة غاز ممتلئة مع توصيلها للبيت..." placeholderTextColor="#809087" style={[s.input,s.orderRequestInput]} accessibilityLabel="اكتب تفاصيل طلبك" /></View>
         <View style={s.formSection}><View style={s.sectionHead}><Text style={s.label}>اختار القسم</Text><Text style={s.sectionHint}>بيساعدنا نجهّز طلبك</Text></View><View style={[s.chips,s.categoryChips]}>{categories.map((item) => <Pressable key={item} disabled={!draftReady || !!pendingOrderId} onPress={() => { draftDirty.current = true; setCategory(item); if (!request) setRequest(item + ': '); }} style={[s.chip, category === item && s.chipActive]} accessibilityRole="button" accessibilityState={{ selected: category === item, disabled: !draftReady || !!pendingOrderId }}><Text style={[s.chipText, category === item && s.chipTextActive]}>{category === item ? '✓  ' : ''}{item}</Text></Pressable>)}</View></View>
         <View style={s.formSection}><View style={s.sectionHead}><Text style={s.label}>أعلى ميزانية للمشتريات</Text><Text style={s.sectionHint}>حتى يضلّ السعر بإيدك</Text></View><View style={s.moneyField}><TextInput editable={draftReady && !pendingOrderId} value={budgetCeiling ? numberFormatter.format(Number(budgetCeiling)) : ''} onChangeText={(value) => { draftDirty.current = true; setBudgetCeiling(normalizeDigits(value)); }} keyboardType="number-pad" textAlign="left" placeholder="100,000" placeholderTextColor="#809087" style={s.moneyInput} accessibilityLabel="سقف الميزانية بالليرة السورية"/><View style={s.currencyBadge}><Text style={s.currencyBadgeText}>ل.س</Text></View></View><Text style={s.budgetHint}>مثال: 100,000 ليرة سورية</Text></View>
         <View style={s.photoSection}><View style={s.photoHead}><View><Text style={s.label}>صور تساعدنا نفهم طلبك</Text><Text style={s.sectionHint}>اختياري · حتى 3 صور</Text></View><Text style={s.photoCount}>{orderImages.length}/3</Text></View>
-          {!!orderImages.length && <View style={s.uploadedPhotoList}>{orderImages.map((image, index) => <View key={image.id} style={s.uploadedPhotoTile}><Image source={{ uri: image.uri }} style={s.uploadedPhotoPreview} contentFit="cover" accessibilityLabel={`صورة ${index + 1} من الطلب`}/><View style={s.uploadedPhotoStatus}><View style={[s.imageStatusDot,image.uploaded&&s.imageStatusUploaded]}/><Text style={s.orderImageStatusText}>{image.uploaded ? 'تم الرفع' : 'جاهزة'}</Text></View><View style={s.imageActions}><Pressable disabled={sending || !!pendingOrderId} onPress={() => void replaceOrderImage(image.id)} style={s.replaceImageButton} accessibilityRole="button" accessibilityLabel={`استبدال الصورة ${index + 1}`}><Text style={s.replaceImageText}>↻ استبدال</Text></Pressable><Pressable disabled={sending || !!pendingOrderId} onPress={() => removeOrderImage(image.id)} style={s.removeImageButton} accessibilityRole="button" accessibilityLabel={`حذف الصورة ${index + 1}`}><Text style={s.removeImageText}>× حذف</Text></Pressable></View></View>)}</View>}
-          {orderImages.length < 3 && <Pressable onPress={() => void pickOrderImages()} disabled={sending || !!pendingOrderId} style={s.addImageCard} accessibilityRole="button"><View style={s.addImageIcon}><Text style={s.attachmentIcon}>＋</Text></View><View style={s.addImageCopy}><Text style={s.addImageTitle}>إضافة صورة</Text><Text style={s.addImageHint}>من معرض الصور · JPEG أو PNG</Text></View><Text style={s.addImageArrow}>←</Text></Pressable>}
+          {!!orderImages.length && <View style={s.uploadedPhotoList}>{orderImages.map((image, index) => <View key={image.id} style={s.uploadedPhotoTile}>{image.uri ? <Image source={{ uri: image.uri }} cachePolicy="none" style={s.uploadedPhotoPreview} contentFit="cover" accessibilityLabel={`صورة ${index + 1} من الطلب`}/> : <View style={[s.uploadedPhotoPreview,{alignItems:'center',justifyContent:'center',padding:6}]}><Text style={s.orderImageStatusText}>{image.uploaded ? 'مرفقة بالطلب' : 'أعد اختيار الصورة'}</Text></View>}<View style={s.uploadedPhotoStatus}><View style={[s.imageStatusDot,image.uploaded&&s.imageStatusUploaded]}/><Text style={s.orderImageStatusText}>{image.uploaded ? 'تم الرفع' : image.uri ? 'جاهزة' : 'بانتظار الاختيار'}</Text></View><View style={s.imageActions}><Pressable disabled={sending || (!!pendingOrderId && image.uploaded)} onPress={() => void replaceOrderImage(image.id)} style={s.replaceImageButton} accessibilityRole="button" accessibilityLabel={`${image.uri ? 'استبدال' : 'اختيار'} الصورة ${index + 1}`}><Text style={s.replaceImageText}>{image.uri ? '↻ استبدال' : 'اختيار الصورة'}</Text></Pressable><Pressable disabled={sending || !!pendingOrderId} onPress={() => removeOrderImage(image.id)} style={s.removeImageButton} accessibilityRole="button" accessibilityLabel={`حذف الصورة ${index + 1}`}><Text style={s.removeImageText}>× حذف</Text></Pressable></View></View>)}</View>}
+          {orderImages.length < 3 && <Pressable onPress={() => void pickOrderImages()} disabled={sending} style={s.addImageCard} accessibilityRole="button"><View style={s.addImageIcon}><Text style={s.attachmentIcon}>＋</Text></View><View style={s.addImageCopy}><Text style={s.addImageTitle}>إضافة صورة</Text><Text style={s.addImageHint}>من معرض الصور · JPEG أو PNG</Text></View><Text style={s.addImageArrow}>←</Text></Pressable>}
         </View>
       </View>
       <View style={s.note}><Text style={s.noteIcon}>ⓘ</Text><Text style={s.noteText}>الدفع كاش عند الاستلام. الإدارة بتقدّر أجرة التوصيل حسب مسافة الطريق وتعرضها عليك قبل إرسال الطلب للسائق.</Text></View>
@@ -1234,14 +1268,14 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
           <View style={s.orderFacts}>
             <View style={s.orderFact}>
               <Text style={s.orderFactLabel}>أجرة التوصيل</Text>
-              <Text style={s.orderFactValue}>{order.delivery_quote_set_at ? numberFormatter.format(order.delivery_fee_minor) + ' ل.س' : 'تتحدد حسب الطريق'}</Text>
+              <Text style={s.orderFactValue}>{ordersAreStale ? 'يظهر عند الاتصال' : order.delivery_quote_set_at ? numberFormatter.format(order.delivery_fee_minor) + ' ل.س' : 'تتحدد حسب الطريق'}</Text>
             </View>
             <View style={s.orderFact}>
               <Text style={s.orderFactLabel}>ميزانية المشتريات</Text>
-              <Text style={s.orderFactValue}>{numberFormatter.format(order.budget_ceiling_minor)} ل.س</Text>
+              <Text style={s.orderFactValue}>{ordersAreStale ? 'يظهر عند الاتصال' : numberFormatter.format(order.budget_ceiling_minor) + ' ل.س'}</Text>
             </View>
           </View>
-          {order.purchase_amount_minor !== null && <Text style={s.purchaseAmountLine}>المبلغ بعد الشراء: {numberFormatter.format(order.purchase_amount_minor)} ل.س</Text>}
+          {!ordersAreStale && order.purchase_amount_minor !== null && <Text style={s.purchaseAmountLine}>المبلغ بعد الشراء: {numberFormatter.format(order.purchase_amount_minor)} ل.س</Text>}
           {order.status === 'quoted' && <View style={s.reviewActions}>
             <Pressable disabled={orderActionBusy===order.id || !online || ordersAreStale} onPress={() => void respondDeliveryQuote(order.id,true)} accessibilityRole="button" style={[s.approvePurchase,(orderActionBusy===order.id || !online || ordersAreStale)&&s.disabled]}><Text style={s.acceptOfferText}>موافقة على أجرة التوصيل</Text></Pressable>
             <Pressable disabled={orderActionBusy===order.id || !online || ordersAreStale} onPress={() => void respondDeliveryQuote(order.id,false)} accessibilityRole="button" style={[s.rejectPurchase,(orderActionBusy===order.id || !online || ordersAreStale)&&s.disabled]}><Text style={s.rejectPurchaseText}>رفض وإلغاء</Text></Pressable>
@@ -1268,7 +1302,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
         <Text style={s.pageDescription}>حدّث اسمك وصورتك. بريدك الإلكتروني للعرض فقط.</Text>
         <View style={s.profileCard}>
           <View style={s.profileEditPhotoWrap}>
-            {profileAvatarDraft ? <Image source={{ uri: profileAvatarDraft.uri }} style={s.profileEditPhoto} contentFit="cover" accessibilityLabel="معاينة الصورة الجديدة"/> : profileAvatarUrl ? <Image source={{ uri: profileAvatarUrl }} style={s.profileEditPhoto} contentFit="cover" accessibilityLabel="صورة الحساب"/> : <Text style={s.profileEditInitial}>{accountInitial}</Text>}
+            {profileAvatarDraft ? <Image source={{ uri: profileAvatarDraft.uri }} cachePolicy="none" style={s.profileEditPhoto} contentFit="cover" accessibilityLabel="معاينة الصورة الجديدة"/> : profileAvatarUrl ? <Image source={{ uri: profileAvatarUrl }} cachePolicy="none" style={s.profileEditPhoto} contentFit="cover" accessibilityLabel="صورة الحساب"/> : <Text style={s.profileEditInitial}>{accountInitial}</Text>}
           </View>
           <Pressable onPress={() => void pickProfileAvatar()} disabled={profileBusy} style={[s.profilePhotoButton, profileBusy && s.disabled]} accessibilityRole="button"><Text style={s.profilePhotoButtonText}>{profileAvatarDraft || profileAvatarPath ? 'تغيير الصورة' : 'اختيار صورة'}</Text></Pressable>
           <Text style={s.label}>البريد الإلكتروني</Text>
@@ -1282,7 +1316,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
         <View style={s.profileSectionCard}>
           <View style={s.profileSectionHeading}><View style={s.profileHeadingIcon}><SymbolView name={{ ios: 'person.crop.circle.fill', android: 'account_circle', web: 'account_circle' }} tintColor={c.primary} size={21}/></View><Text style={s.profileSectionTitle}>الملف الشخصي</Text><Text style={s.profileSectionTag}>حساب العميل</Text></View>
           <View style={s.profileIdentityRow}>
-            <View style={s.accountAvatarLarge}>{profileAvatarUrl ? <Image source={{ uri: profileAvatarUrl }} style={s.avatarImage} contentFit="cover" accessibilityLabel="صورة الحساب"/> : <Text style={s.accountAvatarLargeText}>{accountInitial}</Text>}</View>
+            <View style={s.accountAvatarLarge}>{profileAvatarUrl ? <Image source={{ uri: profileAvatarUrl }} cachePolicy="none" style={s.avatarImage} contentFit="cover" accessibilityLabel="صورة الحساب"/> : <Text style={s.accountAvatarLargeText}>{accountInitial}</Text>}</View>
             <View style={s.profileIdentityCopy}><Text style={s.profileIdentityName} numberOfLines={1}>{profileName || 'حساب لَبّيك'}</Text><Text style={s.profileEmail} numberOfLines={1}>{email}</Text></View>
           </View>
           <Pressable onPress={() => { setProfileNameDraft(profileName); setProfileAvatarDraft(null); navigate('profile-edit'); }} style={s.profileSectionAction} accessibilityRole="button"><Text style={s.profileSectionActionText}>تعديل الاسم والصورة</Text><SymbolView name={{ ios: 'pencil', android: 'edit', web: 'edit' }} tintColor={c.primary} size={17}/></Pressable>
@@ -1318,7 +1352,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
 
 function useInternetAvailable() {
   const network = useNetworkState();
-  return network.isConnected !== false && network.isInternetReachable !== false;
+  return network.isConnected === true && network.isInternetReachable !== false;
 }
 
 function OrderImageGallery({ orderId }: { orderId: string }) {
@@ -1345,18 +1379,26 @@ function OrderImageGallery({ orderId }: { orderId: string }) {
     <Pressable onPress={() => setExpanded((current) => !current)} accessibilityRole="button" accessibilityState={{ expanded }} style={{ minHeight: 38, justifyContent: 'center' }}>
       <Text style={s.orderGalleryTitle}>{expanded ? 'إخفاء صور الطلب ↑' : 'عرض صور الطلب ↓'}</Text>
     </Pressable>
-    {expanded && (loading ? <ActivityIndicator color={c.primary}/> : urls.length ? <View style={s.uploadedPhotoList}>{urls.map((uri) => <Image key={uri} source={{ uri }} style={s.orderGalleryImage} contentFit="cover" accessibilityLabel="صورة من الطلب"/>)}</View> : <Text style={s.orderGalleryTitle}>{online ? 'ما في صور مرفقة بهالطلب.' : 'الاتصال مطلوب لعرض الصور.'}</Text>)}
+    {expanded && (loading ? <ActivityIndicator color={c.primary}/> : urls.length ? <View style={s.uploadedPhotoList}>{urls.map((uri) => <Image key={uri} source={{ uri }} cachePolicy="none" style={s.orderGalleryImage} contentFit="cover" accessibilityLabel="صورة من الطلب"/>)}</View> : <Text style={s.orderGalleryTitle}>{online ? 'ما في صور مرفقة بهالطلب.' : 'الاتصال مطلوب لعرض الصور.'}</Text>)}
   </View>;
 }
 
 function NetworkStatusBanner() {
   const { colors: c } = useMobileTheme();
   const online = useInternetAvailable();
-  const offline = !online;
-  if (!offline) return null;
+  const [backendHealth, setBackendHealth] = useState<BackendHealth>(getBackendHealth);
+  useEffect(() => subscribeBackendHealth(setBackendHealth), []);
+  const message = !online
+    ? 'ما في اتصال بالإنترنت. الإجراءات تحتاج اتصالاً، والمسودة تُحفظ محلياً عند نجاح الحفظ.'
+    : backendHealth === 'unreachable'
+      ? 'تعذّر الاتصال بالخادم. جرّب التحديث بعد قليل؛ قد لا تكون البيانات المعروضة حديثة.'
+      : backendHealth === 'degraded'
+        ? 'الخادم يستجيب ببطء أو يواجه مشكلة مؤقتة. جرّب التحديث بعد قليل.'
+        : '';
+  if (!message) return null;
   const light = c.background === lightPalette.background;
   return <View accessibilityRole="alert" style={{ backgroundColor: light ? '#FFF5D9' : '#3A2D18', borderBottomWidth: 1, borderBottomColor: light ? '#E7D39B' : '#745C2C', paddingHorizontal: 16, paddingVertical: 10 }}>
-    <Text style={{ color: light ? '#735500' : '#FFE2A0', textAlign: 'center', fontSize: 12, lineHeight: 19 }}>الاتصال بالإنترنت منقطع. الإجراءات تحتاج اتصال وما رح تنرسل تلقائياً؛ مسودة الطلب محفوظة على هالجهاز.</Text>
+    <Text style={{ color: light ? '#735500' : '#FFE2A0', textAlign: 'center', fontSize: 12, lineHeight: 19 }}>{message}</Text>
   </View>;
 }
 
@@ -1411,7 +1453,7 @@ export default function HomeScreen() {
         ? <PasswordRecoveryScreen onDone={() => setPasswordRecovery(false)} theme={theme} />
       : !session
         ? <AuthScreen inviteToken={inviteToken || undefined} theme={theme} />
-        : <SignedInHome userId={session.user.id} email={session.user.email ?? ''} inviteToken={inviteToken || undefined} openOrderId={openOrderId} onSignOut={async () => { await Promise.allSettled([clearCustomerOrderDraft(session.user.id), clearCustomerOrdersSnapshot(session.user.id), clearDriverOrdersSnapshot(session.user.id), unregisterPushNotifications(session.user.id)]); await supabase?.auth.signOut(); }} theme={theme} onToggleTheme={() => applyTheme(theme === 'dark' ? 'light' : 'dark')} />;
+        : <SignedInHome userId={session.user.id} email={session.user.email ?? ''} inviteToken={inviteToken || undefined} openOrderId={openOrderId} onSignOut={async () => { await Promise.allSettled([clearCustomerOrderDraft(session.user.id), clearCustomerOrdersSnapshot(session.user.id), clearDriverOrdersSnapshot(session.user.id), unregisterPushNotifications(session.user.id), Image.clearDiskCache()]); await supabase?.auth.signOut(); }} theme={theme} onToggleTheme={() => applyTheme(theme === 'dark' ? 'light' : 'dark')} />;
   return <MobileThemeContext.Provider value={themeContext}><ToastProvider theme={theme}><View style={{ flex: 1, backgroundColor: colors.background }}><NetworkStatusBanner />{screen}</View></ToastProvider></MobileThemeContext.Provider>;
 }
 

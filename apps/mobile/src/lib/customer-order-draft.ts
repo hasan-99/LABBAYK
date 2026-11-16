@@ -1,16 +1,21 @@
 import type { Database } from '@labbayk/shared/database.types';
 import { getOfflineItem, removeOfflineItem, setOfflineItem } from './offline-storage';
 
+export type CustomerOrderImageDraft = { id: string; mimeType: string; extension: string; uploaded: boolean };
 export type CustomerOrderDraft = {
+  schemaVersion: 1;
+  savedAt: string;
   request: string;
   category: string;
   budgetCeiling: string;
   addressId: string;
   idempotencyKey: string;
+  pendingOrderId?: string;
+  images?: CustomerOrderImageDraft[];
 };
 
 type OrderSummary = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'category'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'budget_ceiling_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'>;
-export type CustomerOrderSnapshot = { orders: OrderSummary[]; syncedAt: string };
+export type CustomerOrderSnapshot = { schemaVersion: 1; orders: OrderSummary[]; syncedAt: string };
 
 const storageKey = (userId: string) => `labbayk:customer-order-draft:${userId}`;
 const snapshotKey = (userId: string) => `labbayk:customer-orders-snapshot:${userId}`;
@@ -27,19 +32,33 @@ export const loadCustomerOrderDraft = (userId: string) => enqueue(async (): Prom
     const raw = await getOfflineItem(storageKey(userId));
     if (!raw) return null;
     const value: unknown = JSON.parse(raw);
-    if (!value || typeof value !== 'object') return null;
+    if (!value || typeof value !== 'object') { await removeOfflineItem(storageKey(userId)); return null; }
     const draft = value as Partial<CustomerOrderDraft>;
-    if (typeof draft.request !== 'string' || typeof draft.category !== 'string' || typeof draft.addressId !== 'string' ||
-        typeof draft.budgetCeiling !== 'string' || typeof draft.idempotencyKey !== 'string' ||
-        !/^[a-f0-9-]{36}$/i.test(draft.idempotencyKey)) return null;
-    return { request: draft.request, category: draft.category, budgetCeiling: draft.budgetCeiling, addressId: draft.addressId, idempotencyKey: draft.idempotencyKey };
+    const legacyDraft = draft.schemaVersion === undefined;
+    const savedAt = typeof draft.savedAt === 'string' ? Date.parse(draft.savedAt) : legacyDraft ? Date.now() : NaN;
+    if ((!legacyDraft && draft.schemaVersion !== 1) || !Number.isFinite(savedAt) || Date.now() - savedAt > 7 * 24 * 60 * 60 * 1000 ||
+        typeof draft.request !== 'string' || draft.request.length > 4000 || typeof draft.category !== 'string' || draft.category.length > 120 || typeof draft.addressId !== 'string' ||
+        typeof draft.budgetCeiling !== 'string' || draft.budgetCeiling.length > 24 || typeof draft.idempotencyKey !== 'string' ||
+        !/^[a-f0-9-]{36}$/i.test(draft.idempotencyKey)) { await removeOfflineItem(storageKey(userId)); return null; }
+    const validImages = draft.images === undefined || (Array.isArray(draft.images) && draft.images.length <= 3 && draft.images.every((image) => !!image && typeof image === 'object'
+      && typeof image.id === 'string' && /^[a-f0-9-]{36}$/i.test(image.id)
+      && typeof image.mimeType === 'string' && ['image/jpeg','image/png','image/webp','image/heic','image/heif'].includes(image.mimeType)
+      && typeof image.extension === 'string' && ['jpg','png','webp','heic','heif'].includes(image.extension)
+      && typeof image.uploaded === 'boolean'));
+    if (!validImages) { await removeOfflineItem(storageKey(userId)); return null; }
+    const images = (draft.images ?? []) as CustomerOrderImageDraft[];
+    const pendingOrderId = typeof draft.pendingOrderId === 'string' && /^[a-f0-9-]{36}$/i.test(draft.pendingOrderId) ? draft.pendingOrderId : undefined;
+    return { schemaVersion: 1, savedAt: new Date(savedAt).toISOString(), request: draft.request, category: draft.category, budgetCeiling: draft.budgetCeiling, addressId: draft.addressId, idempotencyKey: draft.idempotencyKey, pendingOrderId, images };
   } catch {
+    await removeOfflineItem(storageKey(userId)).catch(() => {});
     return null;
   }
 });
 
 export const saveCustomerOrderDraft = (userId: string, draft: CustomerOrderDraft) => enqueue(async () => {
-  await setOfflineItem(storageKey(userId), JSON.stringify(draft));
+  const serialized = JSON.stringify({ ...draft, schemaVersion: 1, savedAt: new Date().toISOString() });
+  if (serialized.length > 16_000) throw new Error('Order draft exceeds the local storage limit.');
+  await setOfflineItem(storageKey(userId), serialized);
 });
 
 export const clearCustomerOrderDraft = (userId: string) => enqueue(async () => {
@@ -51,6 +70,7 @@ const summaryFields: (keyof OrderSummary)[] = ['id','status','category','deliver
 
 export const saveCustomerOrdersSnapshot = (userId: string, orders: OrderSummary[]) => enqueue(async () => {
   const snapshot: CustomerOrderSnapshot = {
+    schemaVersion: 1,
     syncedAt: new Date().toISOString(),
     orders: orders.filter((order) => activeOrderStatuses.has(order.status)).slice(0, 30).map((order) =>
       Object.fromEntries(summaryFields.map((field) => [field, order[field]])) as OrderSummary),
@@ -67,7 +87,8 @@ export const loadCustomerOrdersSnapshot = (userId: string) => enqueue(async (): 
     if (!value || typeof value !== 'object') return null;
     const snapshot = value as Partial<CustomerOrderSnapshot>;
     const syncedAt = typeof snapshot.syncedAt === 'string' ? Date.parse(snapshot.syncedAt) : NaN;
-    if (!Number.isFinite(syncedAt) || Date.now() - syncedAt > 30 * 24 * 60 * 60 * 1000 || !Array.isArray(snapshot.orders)) return null;
+    const legacySnapshot = snapshot.schemaVersion === undefined;
+    if ((!legacySnapshot && snapshot.schemaVersion !== 1) || !Number.isFinite(syncedAt) || Date.now() - syncedAt > 7 * 24 * 60 * 60 * 1000 || !Array.isArray(snapshot.orders)) { await removeOfflineItem(snapshotKey(userId)); return null; }
     const orders = snapshot.orders.filter((order): order is OrderSummary => !!order && typeof order === 'object'
       && typeof order.id === 'string' && /^[a-f0-9-]{36}$/i.test(order.id)
       && typeof order.status === 'string' && activeOrderStatuses.has(order.status)
@@ -77,7 +98,9 @@ export const loadCustomerOrdersSnapshot = (userId: string) => enqueue(async (): 
       && (order.delivery_quote_set_at === null || typeof order.delivery_quote_set_at === 'string')
       && (order.delivery_quote_approved_at === null || typeof order.delivery_quote_approved_at === 'string')
       && (order.purchase_approved_at === null || typeof order.purchase_approved_at === 'string'));
-    return { orders: orders.slice(0, 30), syncedAt: new Date(syncedAt).toISOString() };
+    const result: CustomerOrderSnapshot = { schemaVersion: 1, orders: orders.slice(0, 30), syncedAt: new Date(syncedAt).toISOString() };
+    if (legacySnapshot) await setOfflineItem(snapshotKey(userId), JSON.stringify(result));
+    return result;
   } catch {
     return null;
   }
