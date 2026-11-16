@@ -166,7 +166,35 @@ const orderStatus: Record<string, string> = { requested:'بانتظار تحدي
 
 function SkeletonBlock({ width = '68%', height = 11, style }: { width?: number | `${number}%`; height?: number; style?: object }) {
   const { colors: c } = useMobileTheme();
-  return <View style={[{ width, height, borderRadius: 8, backgroundColor: c.raised, alignSelf: 'flex-end' }, style]} />;
+  const [pulse] = useState(() => new Animated.Value(0.45));
+  useEffect(() => {
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(pulse, { toValue: 1, duration: 750, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      Animated.timing(pulse, { toValue: 0.45, duration: 750, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+  return <Animated.View style={[{ width, height, borderRadius: 8, backgroundColor: c.border, alignSelf: 'flex-end', opacity: pulse }, style]} />;
+}
+
+function SkeletonCard({ children, style }: { children: ReactNode; style?: object }) {
+  const { colors: c } = useMobileTheme();
+  return <View style={[{ borderRadius: 24, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface, padding: 16 }, style]}>{children}</View>;
+}
+const skRow = { flexDirection: 'row-reverse', alignItems: 'center', gap: 12 } as const;
+const skCol = { flex: 1, gap: 9, alignItems: 'flex-end' } as const;
+const sk = (width: number | `${number}%`, height: number, extra?: object) => <SkeletonBlock width={width} height={height} style={{ alignSelf: 'auto', ...extra }} />;
+
+function NotificationsSkeleton({ standalone }: { standalone: boolean }) {
+  return <View accessibilityRole="progressbar" accessibilityLabel="تحميل التنبيهات" style={{ gap: 12, paddingVertical: 8 }}>
+    {standalone && <View style={{ flexDirection: 'row-reverse', gap: 8, marginBottom: 2 }}>{sk(64, 40, { borderRadius: 20 })}{sk(104, 40, { borderRadius: 20 })}{sk(84, 40, { borderRadius: 20 })}{sk(84, 40, { borderRadius: 20 })}</View>}
+    {[0, 1, 2].map((item) => <SkeletonCard key={item}>
+      <View style={[skRow, { alignItems: 'flex-start' }]}>{sk(52, 52, { borderRadius: 17 })}<View style={skCol}><View style={[skRow, { justifyContent: 'space-between', width: '100%' }]}>{sk('56%', 16)}{sk(54, 24, { borderRadius: 12 })}</View>{sk('94%', 11)}{sk('68%', 11)}</View></View>
+      <View style={{ height: 1, backgroundColor: 'transparent', marginVertical: 13 }} />
+      <View style={[skRow, { justifyContent: 'space-between' }]}>{sk(118, 32, { borderRadius: 12 })}{sk(96, 12)}</View>
+    </SkeletonCard>)}
+  </View>;
 }
 
 function OrdersSkeleton({ styles: s }: { styles: Record<string, any> }) {
@@ -478,12 +506,7 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
     {false?<Pressable onPress={()=>void markAllRead()} disabled={markingAllRead||!online} accessibilityRole="button" style={[s.notificationMarkAll,s.notificationMarkAllStandalone,(markingAllRead||!online)&&{opacity:0.6}]}><SymbolView name={{ios:'checkmark.circle.fill',android:'mark_email_read',web:'mark_email_read'}} tintColor="#17210F" size={18}/><Text style={[s.notificationMarkAllText,s.notificationMarkAllStandaloneText]}>{markingAllRead?'عم نحدّث التنبيهات…':'تحديد الكل كمقروء'}</Text></Pressable>:null}
     {(expanded||standalone) && <View style={[s.notificationList,standalone&&s.notificationListStandalone]}>
       {standalone&&!loading&&items.length>0&&!items.some(i=>filter==='all'||notificationKind(i.title)===filter)&&<Text style={s.notificationEmpty}>ما في تنبيهات بهالتصنيف.</Text>}
-      {loading?<View accessibilityRole="progressbar" accessibilityLabel="تحميل التنبيهات" style={{ gap: 12, paddingVertical: 12 }}>
-        {[0, 1, 2].map((item) => <View key={item} style={[s.notificationItem, standalone && s.notificationItemStandalone, { minHeight: 92, justifyContent: 'center', gap: 12, paddingHorizontal: 15, borderWidth: 1, borderColor: c.border, borderRadius: 18, backgroundColor: c.surface }]}>
-          <View style={{ flex: 1, gap: 9 }}><SkeletonBlock width="43%" height={12} /><SkeletonBlock width="88%" height={10} /><SkeletonBlock width="62%" height={9} /></View>
-          <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: c.primary, opacity: 0.55 }} />
-        </View>)}
-      </View>:items.length?(standalone?items.filter(i=>filter==='all'||notificationKind(i.title)===filter):items).map(item=>standalone?<Pressable key={item.id} onPress={()=>{setSheet(item);if(!item.read_at)void markRead(item.id)}} accessibilityRole="button" accessibilityLabel={item.title+', '+item.body+(item.read_at?'، مقروء':'، جديد')} style={[s.nCard,!item.read_at?s.nCardUnread:s.nCardRead]}>
+      {loading?<NotificationsSkeleton standalone={standalone}/>:items.length?(standalone?items.filter(i=>filter==='all'||notificationKind(i.title)===filter):items).map(item=>standalone?<Pressable key={item.id} onPress={()=>{setSheet(item);if(!item.read_at)void markRead(item.id)}} accessibilityRole="button" accessibilityLabel={item.title+', '+item.body+(item.read_at?'، مقروء':'، جديد')} style={[s.nCard,!item.read_at?s.nCardUnread:s.nCardRead]}>
         {!item.read_at&&<View style={s.nAccent}/>}
         <View style={s.nTop}>
           <View style={[s.nTile,!item.read_at&&s.nTileUnread]}><SymbolView name={notificationIcons[notificationKind(item.title)]} tintColor={c.primary} size={24}/></View>
@@ -561,15 +584,23 @@ function OfferCountdown({ expiresAt }: { expiresAt: string }) {
 }
 
 function DriverOperationsSkeleton({ screen }: { screen: 'home' | 'orders' }) {
-  const { styles: s } = useMobileTheme();
-  if (screen === 'home') return <View accessibilityRole="progressbar" accessibilityLabel="تحميل الصفحة الرئيسية للسائق" style={{ gap: 12, marginTop: 8 }}>
-    <View style={[s.driverOrdersSkeleton, { minHeight: 142, marginBottom: 0 }]}><View style={s.driverSkeletonTop}><View style={s.driverSkeletonPill}/><View style={s.driverSkeletonLine}/></View><View style={[s.driverSkeletonLine,{width:'88%'}]}/><View style={[s.driverSkeletonLine,{width:'61%'}]}/><View style={[s.driverSkeletonButton,{alignSelf:'flex-end',width:'100%'}]}/></View>
-    <View style={s.driverStatsRow}><View style={[s.driverStat,{minHeight:68}]}><SkeletonBlock width="52%" height={13}/></View><View style={[s.driverStat,{minHeight:68}]}><SkeletonBlock width="52%" height={13}/></View></View>
-    <View style={[s.driverOrdersSkeleton,{minHeight:72,marginBottom:0}]}><View style={[s.driverSkeletonLine,{width:'42%'}]}/><View style={[s.driverSkeletonLine,{width:'72%',marginBottom:0}]}/></View>
+  const { colors: c } = useMobileTheme();
+  if (screen === 'home') return <View accessibilityRole="progressbar" accessibilityLabel="تحميل الصفحة الرئيسية للسائق" style={{ gap: 12, marginTop: 10 }}>
+    <SkeletonCard style={[skRow, { minHeight: 92, padding: 15 }]}>{sk(54, 54, { borderRadius: 18 })}<View style={skCol}>{sk('36%', 11)}{sk('66%', 18)}{sk('52%', 10)}</View></SkeletonCard>
+    <SkeletonCard style={{ gap: 16 }}><View style={skRow}>{sk(52, 52, { borderRadius: 17 })}<View style={skCol}>{sk('64%', 17)}{sk('46%', 11)}</View></View>{sk('100%', 54, { borderRadius: 18 })}</SkeletonCard>
+    <View style={{ flexDirection: 'row-reverse', gap: 10 }}>{[0, 1].map((item) => <SkeletonCard key={item} style={{ flex: 1, minHeight: 140, padding: 14, gap: 10 }}><View style={[skRow, { justifyContent: 'space-between' }]}>{sk(44, 44, { borderRadius: 14 })}{sk(12, 14)}</View>{sk(46, 30, { alignSelf: 'flex-end' })}{sk('70%', 14, { alignSelf: 'flex-end' })}{sk('55%', 11, { alignSelf: 'flex-end' })}</SkeletonCard>)}</View>
+    <SkeletonCard style={[skRow, { padding: 14 }]}>{sk(42, 42, { borderRadius: 14 })}<View style={skCol}>{sk('50%', 14)}{sk('70%', 11)}</View></SkeletonCard>
   </View>;
   return <View accessibilityRole="progressbar" accessibilityLabel="تحميل الطلبات" style={{ gap: 12, marginTop: 8 }}>
-    <View style={s.driverOrderTabs}>{[0,1].map((item)=><View key={item} style={[s.driverOrderTab,{minHeight:70}]}><SkeletonBlock width={36} height={36} style={{alignSelf:'auto',borderRadius:12}}/><View style={{flex:1,gap:8}}><SkeletonBlock width="62%" height={12}/><SkeletonBlock width="42%" height={10}/></View><SkeletonBlock width={20} height={16} style={{alignSelf:'auto'}}/></View>)}</View>
-    {[0,1].map((item)=><View key={item} style={[s.driverOrdersSkeleton,{minHeight:174,marginBottom:0}]}><View style={s.driverSkeletonTop}><View style={s.driverSkeletonPill}/><View style={s.driverSkeletonLine}/></View><View style={[s.driverSkeletonLine,{width:'86%'}]}/><View style={[s.driverSkeletonLine,{width:'68%'}]}/><View style={[s.driverSkeletonLine,{width:'76%'}]}/><View style={[s.driverSkeletonButton,{alignSelf:'flex-end'}]}/></View>)}
+    <View style={{ flexDirection: 'row-reverse', gap: 6, padding: 6, borderRadius: 22, borderWidth: 1, borderColor: c.border, backgroundColor: c.raised }}>{[0, 1].map((item) => <SkeletonBlock key={item} width="48%" height={54} style={{ alignSelf: 'auto', flex: 1, borderRadius: 17 }} />)}</View>
+    <View style={[skRow, { justifyContent: 'space-between' }]}>{sk('36%', 20)}{sk(92, 36, { borderRadius: 18 })}</View>
+    {[0, 1].map((item) => <SkeletonCard key={item} style={{ gap: 14 }}>
+      <View style={[skRow, { justifyContent: 'space-between' }]}>{sk(84, 30, { borderRadius: 12 })}{sk(104, 38)}</View>
+      <View style={{ gap: 9, alignItems: 'flex-end' }}>{sk('94%', 12)}{sk('72%', 12)}</View>
+      <View style={{ gap: 9, alignItems: 'flex-end', paddingRight: 12 }}>{sk('46%', 12)}{sk('58%', 11)}</View>
+      {sk('100%', 5)}
+      <View style={{ flexDirection: 'row-reverse', gap: 9 }}><SkeletonBlock width="48%" height={50} style={{ alignSelf: 'auto', flex: 1.5, borderRadius: 15 }} /><SkeletonBlock width="48%" height={50} style={{ alignSelf: 'auto', flex: 1, borderRadius: 15 }} /></View>
+    </SkeletonCard>)}
   </View>;
 }
 
