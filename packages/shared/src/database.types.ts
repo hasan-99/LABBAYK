@@ -655,7 +655,7 @@ export type Database = {
       }
       orders: {
         Row: {
-          address_id: string
+          address_id: string | null
           base_fee_minor: number
           budget_ceiling_minor: number
           category: string
@@ -663,7 +663,7 @@ export type Database = {
           commission_rate_basis_points: number | null
           created_at: string
           currency: string
-          customer_id: string
+          customer_id: string | null
           delivered_at: string | null
           delivery_code_attempts: number
           delivery_code_expires_at: string | null
@@ -686,7 +686,7 @@ export type Database = {
           zone_surcharge_minor: number
         }
         Insert: {
-          address_id: string
+          address_id: string | null
           base_fee_minor?: number
           budget_ceiling_minor?: number
           category: string
@@ -694,7 +694,7 @@ export type Database = {
           commission_rate_basis_points?: number | null
           created_at?: string
           currency?: string
-          customer_id: string
+          customer_id: string | null
           delivered_at?: string | null
           delivery_code_attempts?: number
           delivery_code_expires_at?: string | null

@@ -4,12 +4,12 @@
     "slug": "labbayk",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/labbayk-delivery-logo.png",
+    "icon": "./assets/images/labbayk-app-icon.png",
     "scheme": "labbayk",
     "userInterfaceStyle": "dark",
     "ios": {
       "bundleIdentifier": "com.hasan99.labbayk",
-      "icon": "./assets/images/labbayk-delivery-logo.png"
+      "icon": "./assets/images/labbayk-app-icon.png"
     },
     "android": {
       "package": "com.hasan99.labbayk",
@@ -21,13 +21,13 @@
       ],
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
-        "foregroundImage": "./assets/images/labbayk-delivery-logo.png"
+        "foregroundImage": "./assets/images/labbayk-app-icon.png"
       },
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/labbayk-delivery-logo.png"
+      "favicon": "./assets/images/labbayk-app-icon.png"
     },
     "extra": {
       "webPushVapidPublicKey": "BHEAGWfH429jaR2hThAtU2UTRQ24C81fyG2PYE3CO5Myg4B73myc2hvcPdLWs638kLemoKueRkslVHWl06NM13U",
@@ -65,7 +65,10 @@
           "imageWidth": 190
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-font",
+      "expo-status-bar",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,

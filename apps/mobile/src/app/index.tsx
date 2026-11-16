@@ -519,7 +519,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     if (driver.data) setProfile(driver.data);
     const [addressResult, offerOrderResult] = await Promise.all([
       assigned.data?.length
-        ? supabase.from('addresses').select('id,label,street,city,neighborhood,contact_phone,building,landmark').in('id', assigned.data.map((order) => order.address_id))
+        ? supabase.from('addresses').select('id,label,street,city,neighborhood,contact_phone,building,landmark').in('id', assigned.data.map((order) => order.address_id).filter((id): id is string => id !== null))
         : Promise.resolve(null),
       offerRows.data?.length
         ? supabase.from('orders').select('id,status,category,request_text,delivery_fee_minor,budget_ceiling_minor').in('id', offerRows.data.map((offer) => offer.order_id))
@@ -533,7 +533,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
       if (error) addressError = true;
       else {
         const addressMap = new Map((addressRows ?? []).map((address) => [address.id, address]));
-        currentOrders = assigned.data.map((order) => ({ ...order, address: addressMap.get(order.address_id) ?? null }));
+        currentOrders = assigned.data.map((order) => ({ ...order, address: order.address_id ? addressMap.get(order.address_id) ?? null : null }));
       }
     } else currentOrders = [];
     if (currentOrders) {

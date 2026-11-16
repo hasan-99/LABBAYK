@@ -278,6 +278,9 @@ max_frequency = "5s"
 [functions.admin-manage-user]
 verify_jwt = true
 
+[functions.delete-account]
+verify_jwt = true
+
 [functions.push-notification]
 verify_jwt = false
 

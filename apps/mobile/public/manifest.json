@@ -10,8 +10,8 @@
   "theme_color": "#0B1411",
   "icons": [
     {
-      "src": "/labbayk-delivery-logo.png",
-      "sizes": "1312x1199",
+      "src": "/labbayk-app-icon.png",
+      "sizes": "1024x1024",
       "type": "image/png",
       "purpose": "any"
     }

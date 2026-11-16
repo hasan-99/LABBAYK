@@ -57,8 +57,8 @@ self.addEventListener('push', (event) => {
     const orderId = typeof payload.orderId === 'string' ? payload.orderId : '';
     await self.registration.showNotification(payload.title || 'تحديث جديد من لَبّيك', {
       body: payload.body || 'في تحديث جديد على طلبك.',
-      icon: '/labbayk-delivery-logo.png',
-      badge: '/labbayk-delivery-logo.png',
+      icon: '/labbayk-app-icon.png',
+      badge: '/labbayk-app-icon.png',
       tag: orderId ? `order-${orderId}` : 'labbayk-update',
       data: { url: orderId ? `/?openOrder=${encodeURIComponent(orderId)}` : '/' },
       dir: 'rtl',

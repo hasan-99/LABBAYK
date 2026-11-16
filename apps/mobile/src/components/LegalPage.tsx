@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Linking, Pressable, SafeAreaView, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link, useRouter } from 'expo-router';
 import { AppText as Text } from '@/components/AppText';
 import { SUPPORT_EMAIL } from '@/lib/legal-contact';
+import { supabase } from '@/lib/supabase';
+import { clearCustomerOrderDraft, clearCustomerOrdersSnapshot } from '@/lib/customer-order-draft';
+import { clearDriverOrdersSnapshot } from '@/lib/driver-orders-cache';
+import { unregisterPushNotifications } from '@/lib/push-notifications';
 
 type PageName = 'privacy' | 'terms' | 'support' | 'delete-account';
 type Section = { title: string; paragraphs: string[]; bullets?: string[] };
@@ -17,9 +21,9 @@ const pageContent: Record<PageName, { title: string; subtitle: string; updated: 
       { title: 'الجهة المشغّلة والتواصل', paragraphs: [`يشغّل خدمة لَبّيك فريق لَبّيك. لأسئلة الخصوصية أو لممارسة حقوقك، راسل ${SUPPORT_EMAIL}.`] },
       { title: 'المعلومات التي نجمعها', paragraphs: ['نجمع ما يلزم لإنشاء الحساب وتشغيل خدمات الطلب والتوصيل. كلمة السر تُدار عبر Supabase Auth ولا نعرضها لموظفي لَبّيك.'], bullets: ['بيانات الحساب: البريد الإلكتروني، الاسم، وصورة الملف الشخصي إذا أضفتها.', 'بيانات العنوان والتواصل: رقم الهاتف، المدينة، الحي، العنوان وتفاصيل الوصول التي تدخلها.', 'بيانات الطلب: وصف الطلب وفئته والميزانية والصور الاختيارية وحالة الطلب والمحادثات/البلاغات المرتبطة به.', 'بيانات السائق: الاسم والهاتف والعمر ونوع المركبة، عند إنشاء ملف سائق.', 'التنبيهات: رمز الجهاز أو اشتراك المتصفح ومنصته لإرسال تحديثات الطلب.', 'بيانات محلية على جهازك: جلسة تسجيل الدخول وتفضيل المظهر ومسودة الطلب ونسخ مؤقتة من بعض البيانات للعمل عند ضعف الاتصال.'] },
       { title: 'لماذا نستخدمها', paragraphs: ['نستخدم المعلومات لإنشاء الحساب والتحقق منه، معالجة الطلب وتوصيله، التواصل بشأن العنوان والحالة، تشغيل الدعم وتسوية النزاعات، حماية الخدمة، وإرسال التنبيهات التي تختار تفعيلها. لا تستخدم النسخة الحالية أدوات إعلانات أو تحليلات سلوكية بحسب مراجعة الشيفرة الحالية.'] },
-      { title: 'من يستلم المعلومات وأين تُخزّن', paragraphs: ['تُعالج بيانات الحساب والطلبات والصور عبر Supabase (المصادقة وقاعدة البيانات والتخزين). قد يمر رمز الإشعار عبر Expo Push ثم Apple Push Notification service أو Firebase Cloud Messaging بحسب الجهاز. هذه الخدمات تستلم فقط ما يلزم لتقديم وظائفها. لا نبيع بياناتك ولا نستخدمها للإعلانات. موقع منطقة استضافة المشروع ومواعيد الاحتفاظ لدى المزوّدين يجب تثبيتهما في إعدادات الإنتاج قبل الإطلاق.'] },
+      { title: 'من يستلم المعلومات وأين تُخزّن', paragraphs: ['تُعالج بيانات الحساب والطلبات والصور عبر Supabase (المصادقة وقاعدة البيانات والتخزين)، ومشروع قاعدة البيانات الحالي مستضاف في المنطقة eu-central-1. قد يمر رمز الإشعار عبر Expo Push ثم Apple Push Notification service أو Firebase Cloud Messaging بحسب الجهاز. هذه الخدمات تستلم ما يلزم لتقديم وظائفها. لا نبيع بياناتك ولا نستخدمها للإعلانات.'] },
       { title: 'الصور والموقع والأذونات', paragraphs: ['يمكنك اختيار صورة للطلب أو الملف الشخصي من منتقي الصور في الجهاز. لا يستخدم التطبيق التقاط الكاميرا أو تسجيل الصوت أو جهات الاتصال أو بيانات الصحة أو الموقع الدقيق في مساراته الحالية. تدخل عنوان التوصيل يدويًا.'] },
-      { title: 'الاحتفاظ والحذف', paragraphs: ['نحتفظ ببيانات الحساب ما دام الحساب قائمًا وبالقدر اللازم لتشغيل الطلبات والدعم والأمان. قد يلزم الاحتفاظ ببعض سجلات الطلب أو التسوية لفترة يحددها القانون أو لمعالجة نزاع. لم تُعتمد بعد مدة رقمية موحّدة لهذه السجلات؛ لذلك نراجع كل طلب حذف ونوضح ما سيُحذف وما قد يلزم الاحتفاظ به. اطلب الحذف من داخل التطبيق عبر صفحة «حذف الحساب» أو راسلنا من بريد حسابك.'] },
+      { title: 'الاحتفاظ والحذف', paragraphs: ['يمكنك حذف حساب العميل من صفحة «حذف الحساب» داخل التطبيق بعد تسوية الطلبات المفتوحة وحل البلاغات. عند الحذف نزيل بيانات الحساب والعناوين والصور ووصف الطلب الذي قد يعرّف بك، ونفصل سجلات المبالغ والتسويات عن الحساب. قد نحتفظ بسجلات مالية أو أمنية منزوعة الهوية إذا تطلب القانون أو حل نزاع ذلك، ونحذفها عند انتهاء سبب الاحتفاظ. لا توجد مدة رقمية موحدة منشورة لهذه السجلات حاليًا. تحتاج حسابات السائق والإدارة إلى مراجعة الدعم بسبب الأرصدة والسجلات التشغيلية. ويمكن طلب الحذف الخارجي من صفحة الحذف العامة أو عبر بريد الدعم.'] },
       { title: 'حقوقك وأمان البيانات', paragraphs: ['يمكنك طلب الوصول إلى معلوماتك أو تصحيحها أو حذفها، وسنطلب ما يكفي للتحقق من ملكية الحساب. نستخدم اتصال HTTPS مع خدماتنا ونقصر الوصول التشغيلي على ما تتطلبه الوظيفة. لا توجد وسيلة نقل أو تخزين آمنة بالكامل؛ تواصل معنا فورًا إذا اشتبهت بوصول غير مصرح به إلى حسابك.'] },
       { title: 'المتصفح والتغييرات', paragraphs: ['نسخة الويب تحفظ جلسة الدخول في مساحة التخزين المحلية للمتصفح، وقد تستخدم عامل خدمة لدعم التطبيق والتنبيهات. لا نستخدم ملفات تعريف ارتباط إعلانية بحسب الشيفرة الحالية. سنحدّث هذه الصفحة عند تغيّر طريقة معالجة البيانات، ويظهر تاريخ آخر تحديث أعلاه.'] },
     ],
@@ -53,7 +57,7 @@ const pageContent: Record<PageName, { title: string; subtitle: string; updated: 
     updated: 'لا يلزم تسجيل الدخول لفتح طلب الحذف.',
     sections: [
       { title: 'طريقة الطلب', paragraphs: ['أدخل البريد المستخدم في الحساب، ثم افتح رسالة الطلب الجاهزة وأرسلها. يجب أن ترسل الرسالة من البريد نفسه حتى نتحقق من ملكية الحساب. إذا لم يكن لديك وصول إلى البريد، اذكر ذلك وسنوضح طريقة تحقق بديلة.'] },
-      { title: 'ماذا سيُحذف؟', paragraphs: ['بعد التحقق ومعالجة الطلبات النشطة، سيُغلق الحساب وتُحذف أو تُزال بيانات الملف والعنوان ورمز الإشعارات والصور الشخصية التي لم تعد لازمة. قد تبقى سجلات طلب أو تسوية محدودة إذا كان الاحتفاظ بها لازمًا للنزاع أو المحاسبة أو التزام قانوني؛ سنوضح سبب ذلك والبيانات المحتفظ بها عند الرد. لا توجد حاليًا مدة رقمية موحدة منشورة للاحتفاظ بهذه السجلات.'] },
+      { title: 'ماذا سيُحذف؟', paragraphs: ['يمكن حذف حساب العميل من داخل التطبيق بعد إكمال الطلبات المفتوحة وحل البلاغات. نزيل بيانات الملف والعناوين ورموز الإشعارات والصور ووصف الطلب، ونفصل سجلات المبالغ والتسويات عن الحساب. قد تبقى سجلات مالية أو أمنية منزوعة الهوية إذا تطلب القانون أو حل نزاع ذلك؛ لا توجد حاليًا مدة رقمية موحدة منشورة لهذه السجلات. حسابات السائق والإدارة تحتاج مراجعة الدعم بسبب الأرصدة وسجلات التشغيل.'] },
       { title: 'ما الذي يحدث بعد الإرسال؟', paragraphs: ['يفتح الموقع رسالة بريد جاهزة، ولا يُرسل الطلب حتى تضغط «إرسال» في تطبيق البريد. يتولى فريق الدعم مراجعة الطلب يدويًا بعد التحقق من ملكية الحساب، ويشرح أي طلب نشط أو سجل يجب الاحتفاظ به. لا ترسل كلمة السر أو رمز التحقق. يمكنك استخدام هذه الصفحة من دون تسجيل الدخول إلى التطبيق.'] },
     ],
   },
@@ -63,12 +67,66 @@ export function LegalPage({ page }: { page: PageName }) {
   const router = useRouter();
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [email, setEmail] = useState('');
+  const [account, setAccount] = useState<{ id: string; email: string } | null>(null);
+  const [checkingAccount, setCheckingAccount] = useState(false);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => { void AsyncStorage.getItem('labbayk-theme').then((value) => { if (value === 'light') setTheme('light'); }).catch(() => {}); }, []);
+  useEffect(() => {
+    if (page !== 'delete-account' || !supabase) return;
+    let active = true;
+    setCheckingAccount(true);
+    void supabase.auth.getSession().then(({ data }) => {
+      if (!active) return;
+      const user = data.session?.user;
+      setAccount(user ? { id: user.id, email: user.email ?? '' } : null);
+    }).catch(() => { if (active) setAccount(null); }).finally(() => { if (active) setCheckingAccount(false); });
+    return () => { active = false; };
+  }, [page]);
   const s = useMemo(() => stylesFor(theme), [theme]);
   const content = pageContent[page];
+  const deleteSignedInAccount = async () => {
+    if (!supabase || !account) return;
+    setBusy(true); setMessage('');
+    try {
+      const { error } = await supabase.functions.invoke('delete-account');
+      if (error) {
+        let userMessage = 'تعذر حذف الحساب الآن. حاول مرة أخرى أو تواصل مع الدعم.';
+        const response = (error as { context?: Response }).context;
+        if (response) {
+          try {
+            const payload = await response.clone().json() as { error?: unknown };
+            if (typeof payload.error === 'string') userMessage = payload.error;
+          } catch { /* Use the safe fallback message. */ }
+        }
+        setMessage(userMessage);
+        return;
+      }
+      await Promise.allSettled([
+        clearCustomerOrderDraft(account.id),
+        clearCustomerOrdersSnapshot(account.id),
+        clearDriverOrdersSnapshot(account.id),
+        unregisterPushNotifications(account.id),
+      ]);
+      await supabase.auth.signOut({ scope: 'local' });
+      setAccount(null);
+      setMessage('تم حذف حسابك وبياناته الشخصية. قد تبقى سجلات مالية منزوعة الهوية إذا تطلبها القانون.');
+    } catch {
+      setMessage('تعذر حذف الحساب الآن. حاول مرة أخرى أو تواصل مع الدعم.');
+    } finally { setBusy(false); }
+  };
   const requestDeletion = async () => {
+    if (account) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        if (window.confirm('سيُحذف حساب العميل وعناوينه وصوره ووصف طلباته. لن يمكن التراجع عن ذلك. هل تريد المتابعة؟')) void deleteSignedInAccount();
+        return;
+      }
+      Alert.alert('تأكيد حذف الحساب', 'سيُحذف حساب العميل وعناوينه وصوره ووصف طلباته. لن يمكن التراجع عن ذلك.', [
+        { text: 'إلغاء', style: 'cancel' },
+        { text: 'حذف الحساب', style: 'destructive', onPress: () => { void deleteSignedInAccount(); } },
+      ]);
+      return;
+    }
     const normalized = email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) { setMessage('اكتب بريدًا إلكترونيًا صحيحًا مرتبطًا بالحساب.'); return; }
     setBusy(true); setMessage('');
@@ -88,7 +146,7 @@ export function LegalPage({ page }: { page: PageName }) {
       <Pressable onPress={() => router.canGoBack() ? router.back() : router.replace('/')} accessibilityRole="button" style={s.back}><Text style={s.backText}>← العودة إلى لَبّيك</Text></Pressable>
       <View style={s.hero}><Text style={s.brand}>لَبّيك</Text><Text accessibilityRole="header" style={s.title}>{content.title}</Text><Text style={s.subtitle}>{content.subtitle}</Text><Text style={s.updated}>{content.updated}</Text></View>
       {page === 'support' && <Pressable onPress={contactSupport} accessibilityRole="link" style={s.button}><Text style={s.buttonText}>راسل فريق الدعم · {SUPPORT_EMAIL}</Text></Pressable>}
-      {page === 'delete-account' && <View style={s.form}><Text style={s.label}>البريد المرتبط بالحساب</Text><TextInput value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} textAlign="left" autoComplete="email" placeholder="name@example.com" placeholderTextColor={theme === 'dark' ? '#839188' : '#65746A'} style={s.input} accessibilityLabel="البريد المرتبط بالحساب"/><Pressable disabled={busy} onPress={() => void requestDeletion()} accessibilityRole="button" style={[s.button,busy&&{opacity:.6}]}>{busy ? <ActivityIndicator color="#0B1411"/> : <Text style={s.buttonText}>إرسال طلب حذف الحساب</Text>}</Pressable>{message ? <Text accessibilityRole="status" style={s.formMessage}>{message}</Text> : null}</View>}
+      {page === 'delete-account' && <View style={s.form}>{checkingAccount ? <ActivityIndicator color={theme === 'dark' ? '#B7FF30' : '#287A55'} /> : account ? <><Text style={s.label}>الحساب الحالي: {account.email || 'حسابك المسجّل'}</Text><Pressable disabled={busy} onPress={() => void requestDeletion()} accessibilityRole="button" style={[s.button,busy&&{opacity:.6}]}>{busy ? <ActivityIndicator color="#0B1411"/> : <Text style={s.buttonText}>حذف حسابي وبياناتي</Text>}</Pressable></> : <><Text style={s.label}>البريد المرتبط بالحساب</Text><TextInput value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} textAlign="left" autoComplete="email" placeholder="name@example.com" placeholderTextColor={theme === 'dark' ? '#839188' : '#65746A'} style={s.input} accessibilityLabel="البريد المرتبط بالحساب"/><Pressable disabled={busy} onPress={() => void requestDeletion()} accessibilityRole="button" style={[s.button,busy&&{opacity:.6}]}>{busy ? <ActivityIndicator color="#0B1411"/> : <Text style={s.buttonText}>إرسال طلب حذف الحساب</Text>}</Pressable></>}{message ? <Text accessibilityRole="status" style={s.formMessage}>{message}</Text> : null}</View>}
       {page === 'support' && message ? <Text accessibilityRole="status" style={s.formMessage}>{message}</Text> : null}
       {content.sections.map((section) => <View key={section.title} style={s.card}><Text accessibilityRole="header" style={s.sectionTitle}>{section.title}</Text>{section.paragraphs.map((paragraph, index) => <Text key={index} selectable style={s.copy}>{paragraph}</Text>)}{section.bullets?.map((item) => <View key={item} style={s.bulletRow}><Text style={s.bullet}>•</Text><Text selectable style={s.bulletCopy}>{item}</Text></View>)}</View>)}
       <View style={s.links}><PageLink href="/privacy" label="سياسة الخصوصية" s={s}/><PageLink href="/terms" label="شروط الاستخدام" s={s}/><PageLink href="/support" label="الدعم" s={s}/><PageLink href="/delete-account" label="حذف الحساب" s={s}/></View>
