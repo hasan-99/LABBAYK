@@ -369,7 +369,9 @@ function AddressBook({ userId, onBack, backLabel, onAddressSaved }: { userId: st
 }
 
 const notificationKind = (title: string) => /عرض|توصيل جديد/.test(title) ? 'offer' : /تسوية|عمولة|رصيد|محفظة/.test(title) ? 'money' : 'update';
-const notificationIcons = { offer: { ios: 'shippingbox.fill', android: 'local_shipping', web: 'local_shipping' }, money: { ios: 'banknote.fill', android: 'payments', web: 'payments' }, update: { ios: 'bell.fill', android: 'notifications', web: 'notifications' } } as const;
+const notificationIcons = { offer: { ios: 'bolt.fill', android: 'bolt', web: 'bolt' }, money: { ios: 'banknote.fill', android: 'payments', web: 'payments' }, update: { ios: 'cube.fill', android: 'deployed_code', web: 'deployed_code' } } as const;
+const notificationKindLabels = { offer: 'عرض توصيل', money: 'تسوية', update: 'تحديث على الطلب' } as const;
+const notificationFilters = [{ key: 'all', label: 'الكل' }, { key: 'offer', label: 'عروض جديدة' }, { key: 'update', label: 'تحديثات' }, { key: 'money', label: 'التسويات' }] as const;
 const notificationTimeFormatter = new Intl.DateTimeFormat('ar-SY', { hour: 'numeric', minute: '2-digit' });
 const notificationDateFormatter = new Intl.DateTimeFormat('ar-SY', { day: 'numeric', month: 'long' });
 function formatNotificationTime(iso: string) {
@@ -386,7 +388,7 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
   const online = useInternetAvailable();
   type Notification = Pick<Database['public']['Tables']['notifications']['Row'],'id'|'title'|'body'|'created_at'|'read_at'|'order_id'>
   const [items,setItems]=useState<Notification[]>([]); const [message,setMessage]=useToastMessage(); const [loadingState,setLoadingState]=useState(true); const [expanded,setExpanded]=useState(standalone); const [loadingMore,setLoadingMore]=useState(false); const [hasMore,setHasMore]=useState(false); const [unreadCount,setUnreadCount]=useState(0)
-  const [markingAllRead,setMarkingAllRead]=useState(false); const openOrderRef=useRef(onOpenOrder)
+  const [filter,setFilter]=useState<'all'|'offer'|'update'|'money'>('all'); const [sheet,setSheet]=useState<Notification|null>(null); const [markingAllRead,setMarkingAllRead]=useState(false); const openOrderRef=useRef(onOpenOrder)
   useEffect(()=>{openOrderRef.current=onOpenOrder},[onOpenOrder])
   useEffect(()=>{
     let subscription:{remove:()=>void}|undefined
@@ -457,12 +459,9 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
     setLoadingMore(false)
   }
   return <View style={[s.notificationCard,standalone&&s.notificationCardStandalone]}>
-    {standalone&&<View style={s.notifStrip}>
-      <View style={s.notifStripInfo}>
-        <View style={[s.notifStripCount,!unreadCount&&!loading&&s.notifStripCountZero]}>{loading ? <SkeletonBlock width={14} height={13} style={{ alignSelf: 'auto' }} /> : <Text style={[s.notifStripCountText,!unreadCount&&s.notifStripCountTextZero]}>{unreadCount}</Text>}</View>
-        <View style={{flexShrink:1}}><Text style={s.notifStripTitle}>{loading?'عم نحمّل التحديثات':unreadCount?'تنبيهات غير مقروءة':'كل شي مقروء'}</Text><Text style={s.notifStripHint}>{unreadCount?'اضغط على التنبيه لتفتح الطلب':'بنخبرك أول ما يوصلك جديد'}</Text></View>
-      </View>
-      {unreadCount>0&&<Pressable onPress={()=>void markAllRead()} disabled={markingAllRead||!online} accessibilityRole="button" accessibilityLabel="تحديد كل التنبيهات كمقروءة" style={[s.notifMarkAll,(markingAllRead||!online)&&{opacity:0.6}]}><SymbolView name={{ios:'checkmark.circle.fill',android:'mark_email_read',web:'mark_email_read'}} tintColor={c.primary} size={16}/><Text style={s.notifMarkAllText}>{markingAllRead?'لحظة…':'قراءة الكل'}</Text></Pressable>}
+    {standalone&&<View style={s.nChips}>
+      {notificationFilters.map(f=>{const count=items.filter(i=>!i.read_at&&(f.key==='all'||notificationKind(i.title)===f.key)).length;const on=filter===f.key;return <Pressable key={f.key} onPress={()=>setFilter(f.key)} accessibilityRole="button" accessibilityState={{selected:on}} style={[s.nChip,on&&s.nChipOn]}><Text style={[s.nChipText,on&&s.nChipTextOn]}>{f.label}</Text>{!loading&&<Text style={[s.nChipText,on&&s.nChipTextOn]}>{count}</Text>}</Pressable>})}
+      {unreadCount>0&&<Pressable onPress={()=>void markAllRead()} disabled={markingAllRead||!online} accessibilityRole="button" accessibilityLabel="تحديد كل التنبيهات كمقروءة" style={[s.nChip,s.nChipAction,(markingAllRead||!online)&&{opacity:0.6}]}><SymbolView name={{ios:'checkmark.circle.fill',android:'mark_email_read',web:'mark_email_read'}} tintColor={c.primary} size={16}/><Text style={s.nChipActionText}>{markingAllRead?'لحظة…':'قراءة الكل'}</Text></Pressable>}
     </View>}
     {!standalone&&<View style={s.notificationHeader}>
       <Pressable disabled={standalone} onPress={()=>setExpanded(value=>!value)} accessibilityRole={standalone?'summary':'button'} accessibilityState={{expanded}} style={[s.notificationSummary,standalone&&s.notificationSummaryStandalone]}>
@@ -478,12 +477,27 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
     {message?<Text accessibilityRole="alert" style={s.formMessage}>{message}</Text>:null}
     {false?<Pressable onPress={()=>void markAllRead()} disabled={markingAllRead||!online} accessibilityRole="button" style={[s.notificationMarkAll,s.notificationMarkAllStandalone,(markingAllRead||!online)&&{opacity:0.6}]}><SymbolView name={{ios:'checkmark.circle.fill',android:'mark_email_read',web:'mark_email_read'}} tintColor="#17210F" size={18}/><Text style={[s.notificationMarkAllText,s.notificationMarkAllStandaloneText]}>{markingAllRead?'عم نحدّث التنبيهات…':'تحديد الكل كمقروء'}</Text></Pressable>:null}
     {(expanded||standalone) && <View style={[s.notificationList,standalone&&s.notificationListStandalone]}>
+      {standalone&&!loading&&items.length>0&&!items.some(i=>filter==='all'||notificationKind(i.title)===filter)&&<Text style={s.notificationEmpty}>ما في تنبيهات بهالتصنيف.</Text>}
       {loading?<View accessibilityRole="progressbar" accessibilityLabel="تحميل التنبيهات" style={{ gap: 12, paddingVertical: 12 }}>
         {[0, 1, 2].map((item) => <View key={item} style={[s.notificationItem, standalone && s.notificationItemStandalone, { minHeight: 92, justifyContent: 'center', gap: 12, paddingHorizontal: 15, borderWidth: 1, borderColor: c.border, borderRadius: 18, backgroundColor: c.surface }]}>
           <View style={{ flex: 1, gap: 9 }}><SkeletonBlock width="43%" height={12} /><SkeletonBlock width="88%" height={10} /><SkeletonBlock width="62%" height={9} /></View>
           <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: c.primary, opacity: 0.55 }} />
         </View>)}
-      </View>:items.length?items.map(item=><Pressable key={item.id} onPress={()=>{if(!item.read_at)void markRead(item.id);if(item.order_id)openOrderRef.current?.(item.order_id)}} accessibilityRole="button" accessibilityLabel={item.title+', '+item.body+(item.read_at?'، مقروء':'، جديد')} style={[s.notificationItem,standalone&&s.notificationItemStandalone,standalone&&!item.read_at&&s.notificationItemUnread,standalone&&!!item.read_at&&s.notifItemReadStandalone,!standalone&&item.read_at&&s.notificationItemRead]}>
+      </View>:items.length?(standalone?items.filter(i=>filter==='all'||notificationKind(i.title)===filter):items).map(item=>standalone?<Pressable key={item.id} onPress={()=>{setSheet(item);if(!item.read_at)void markRead(item.id)}} accessibilityRole="button" accessibilityLabel={item.title+', '+item.body+(item.read_at?'، مقروء':'، جديد')} style={[s.nCard,!item.read_at?s.nCardUnread:s.nCardRead]}>
+        {!item.read_at&&<View style={s.nAccent}/>}
+        <View style={s.nTop}>
+          <View style={[s.nTile,!item.read_at&&s.nTileUnread]}><SymbolView name={notificationIcons[notificationKind(item.title)]} tintColor={c.primary} size={24}/></View>
+          <View style={s.nMain}>
+            <View style={s.nTitleRow}><Text style={s.nTitle}>{item.title}</Text>{item.read_at?<Text style={s.nReadLabel}>مقروء</Text>:<View style={s.nNewBadge}><View style={s.nNewDot}/><Text style={s.nNewText}>جديد</Text></View>}</View>
+            <Text style={s.nBody}>{item.body}</Text>
+          </View>
+        </View>
+        <View style={s.nDivider}/>
+        <View style={s.nFooter}>
+          {item.order_id?<View style={s.nOrderChip}><Text style={s.nOrderLabel}>طلب</Text><Text style={s.nOrderCode}>{'#'+item.order_id.slice(0,8)}</Text></View>:<View/>}
+          <View style={s.nDateRow}><SymbolView name={{ios:'chevron.left',android:'chevron_left',web:'chevron_left'}} tintColor={c.muted} size={14}/><Text style={s.nDate}>{formatNotificationTime(item.created_at)}</Text></View>
+        </View>
+      </Pressable>:<Pressable key={item.id} onPress={()=>{if(!item.read_at)void markRead(item.id);if(item.order_id)openOrderRef.current?.(item.order_id)}} accessibilityRole="button" accessibilityLabel={item.title+', '+item.body+(item.read_at?'، مقروء':'، جديد')} style={[s.notificationItem,standalone&&s.notificationItemStandalone,standalone&&!item.read_at&&s.notificationItemUnread,standalone&&!!item.read_at&&s.notifItemReadStandalone,!standalone&&item.read_at&&s.notificationItemRead]}>
         {standalone?<View style={[s.notifTile,!item.read_at&&s.notifTileUnread]}><SymbolView name={notificationIcons[notificationKind(item.title)]} tintColor={item.read_at?c.muted:'#0B1411'} size={20}/></View>:<View style={[s.notificationDot,item.read_at&&s.notificationDotRead]}/>}
         <View style={[s.notificationItemCopy,standalone&&s.notificationItemCopyStandalone]}>
           <View style={s.notificationItemHeading}><Text style={[s.notificationItemTitle,standalone&&s.notificationItemTitleStandalone]}>{item.title}</Text>{!item.read_at&&!standalone&&<View style={s.notificationUnreadPill}><Text style={s.notificationUnreadPillText}>جديد</Text></View>}</View>
@@ -493,6 +507,24 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
       </Pressable>):!online?<Text style={s.notificationEmpty}>اتصل بالإنترنت حتى نحمّل التنبيهات.</Text>:message?<Text style={s.notificationEmpty}>ما قدرنا نحمّل التنبيهات. جرّب تحديث الصفحة.</Text>:<Text style={s.notificationEmpty}>ما في تنبيهات جديدة.</Text>}
       {standalone&&hasMore&&<Pressable onPress={()=>void loadMore()} disabled={loadingMore||!online} style={s.notificationLoadMore} accessibilityRole="button"><Text style={s.notificationLoadMoreText}>{loadingMore?'عم نحمّل…':'تحميل تنبيهات أقدم'}</Text></Pressable>}
     </View>}
+    {standalone&&<Modal visible={!!sheet} transparent animationType="slide" onRequestClose={()=>setSheet(null)}>
+      <Pressable style={s.sheetBackdrop} onPress={()=>setSheet(null)} accessibilityLabel="إغلاق"><Pressable style={s.sheet} onPress={()=>{}}>
+        {sheet&&<>
+        <View style={s.sheetHandle}/>
+        <View style={s.sheetHead}>
+          <View style={[s.nTile,s.nTileUnread]}><SymbolView name={notificationIcons[notificationKind(sheet.title)]} tintColor={c.primary} size={24}/></View>
+          <View style={{flex:1,minWidth:0}}><Text style={s.sheetKicker}>{notificationKindLabels[notificationKind(sheet.title)]}</Text><Text style={s.sheetTitle}>{sheet.title}</Text></View>
+          <Pressable onPress={()=>setSheet(null)} style={s.sheetClose} accessibilityRole="button" accessibilityLabel="إغلاق"><SymbolView name={{ios:'xmark',android:'close',web:'close'}} tintColor={c.muted} size={16}/></Pressable>
+        </View>
+        <View style={s.sheetBox}>
+          <Text style={s.sheetBody}>{sheet.body}</Text>
+          <View style={s.nDivider}/>
+          <View style={s.nFooter}>{sheet.order_id?<View style={s.nOrderChip}><Text style={s.nOrderLabel}>رقم الطلب:</Text><Text style={s.nOrderCode}>{'#'+sheet.order_id.slice(0,8)}</Text></View>:<View/>}<Text style={s.nDate}>{formatNotificationTime(sheet.created_at)}</Text></View>
+        </View>
+        {sheet.order_id&&<Pressable onPress={()=>{const id=sheet.order_id;setSheet(null);if(id)openOrderRef.current?.(id)}} style={s.sheetCta} accessibilityRole="button"><Text style={s.sheetCtaText}>فتح تفاصيل الطلب</Text><SymbolView name={{ios:'arrow.left',android:'arrow_back',web:'arrow_back'}} tintColor="#0B1411" size={18}/></Pressable>}
+        </>}
+      </Pressable></Pressable>
+    </Modal>}
   </View>
 }
 
@@ -1717,4 +1749,7 @@ const styleDefinitions = {
   notifMetaRow:{flexDirection:'row-reverse',alignItems:'center',flexWrap:'wrap',gap:8,marginTop:9},notifTime:{color:c.muted,fontSize:11.5,textAlign:'right'},notifOrderChip:{flexDirection:'row-reverse',alignItems:'center',gap:5,paddingHorizontal:8,height:22,borderRadius:11,backgroundColor:c.raised,borderWidth:1,borderColor:c.border},notifOrderChipLabel:{color:c.muted,fontSize:10.5,fontWeight:'700'},notifOrderChipCode:{color:c.text,fontSize:10.5,fontWeight:'800',writingDirection:'ltr'},
   driverOrdersToolbar:{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',gap:10,marginTop:14,marginBottom:2},driverOrdersToolbarTitleRow:{flex:1,minWidth:0,flexDirection:'row-reverse',alignItems:'center'},driverOrdersToolbarTitle:{color:c.text,fontSize:16,fontWeight:'900',textAlign:'right'},driverToolbarRefresh:{minHeight:36,flexDirection:'row-reverse',alignItems:'center',gap:6,paddingHorizontal:12,borderRadius:18,borderWidth:1,borderColor:c.border,backgroundColor:c.surface},driverToolbarRefreshText:{color:c.primary,fontSize:12,fontWeight:'800'},emptyIconWrap:{width:64,height:64,borderRadius:32,alignItems:'center',justifyContent:'center',backgroundColor:c.raised,borderWidth:1,borderColor:c.border},
   offerActions:{flexDirection:'row-reverse',gap:9,marginTop:12},offerTimerWrap:{marginTop:12},offerTimerTrack:{height:5,borderRadius:3,backgroundColor:c.raised,overflow:'hidden'},offerTimerFill:{height:'100%',borderRadius:3,backgroundColor:c.primary},offerTimerText:{color:c.muted,fontSize:11.5,marginTop:6,textAlign:'right'},
+  nChips:{flexDirection:'row-reverse',flexWrap:'wrap',gap:8,marginBottom:14},nChip:{minHeight:40,paddingHorizontal:14,borderRadius:20,borderWidth:1,borderColor:c.border,backgroundColor:c.surface,flexDirection:'row-reverse',alignItems:'center',gap:7},nChipOn:{backgroundColor:c.primary,borderColor:c.primary},nChipText:{color:c.muted,fontSize:13,fontWeight:'800'},nChipTextOn:{color:'#0B1411'},nChipAction:{borderColor:c.primary,backgroundColor:'transparent'},nChipActionText:{color:c.primary,fontSize:13,fontWeight:'800'},
+  nCard:{borderRadius:24,borderWidth:1,borderColor:c.border,backgroundColor:c.surface,padding:16,overflow:'hidden'},nCardUnread:{borderColor:'#3F6A2E',backgroundColor:'#1B2A22'},nCardRead:{opacity:0.72},nAccent:{position:'absolute',right:0,top:20,bottom:20,width:4,borderTopLeftRadius:2,borderBottomLeftRadius:2,backgroundColor:c.primary},nTop:{flexDirection:'row-reverse',alignItems:'flex-start',gap:13},nTile:{width:52,height:52,borderRadius:17,alignItems:'center',justifyContent:'center',backgroundColor:c.raised,borderWidth:1,borderColor:c.border},nTileUnread:{backgroundColor:'#2B3F22',borderColor:'#4B7A2E'},nMain:{flex:1,minWidth:0},nTitleRow:{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',gap:8},nTitle:{flex:1,color:c.text,fontSize:17,fontWeight:'900',textAlign:'right'},nReadLabel:{color:c.muted,fontSize:11},nNewBadge:{flexDirection:'row-reverse',alignItems:'center',gap:6,paddingHorizontal:10,height:26,borderRadius:13,backgroundColor:'#2A3B1A',borderWidth:1,borderColor:'#4B6A2A'},nNewDot:{width:8,height:8,borderRadius:4,backgroundColor:c.primary},nNewText:{color:c.primary,fontSize:12,fontWeight:'900'},nBody:{color:c.muted,fontSize:14,lineHeight:22,marginTop:5,textAlign:'right'},nDivider:{height:1,backgroundColor:c.border,marginVertical:13},nFooter:{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',gap:10},nOrderChip:{flexDirection:'row-reverse',alignItems:'center',gap:7,paddingHorizontal:11,height:34,borderRadius:12,backgroundColor:c.background,borderWidth:1,borderColor:c.border},nOrderLabel:{color:c.muted,fontSize:12},nOrderCode:{color:c.accent,fontSize:13,fontWeight:'800',writingDirection:'ltr'},nDateRow:{flexDirection:'row',alignItems:'center',gap:8},nDate:{color:c.muted,fontSize:12.5},
+  sheetBackdrop:{flex:1,justifyContent:'flex-end',backgroundColor:'rgba(0,0,0,0.6)'},sheet:{backgroundColor:c.surface,borderTopLeftRadius:32,borderTopRightRadius:32,padding:20,paddingBottom:34,gap:16,borderWidth:1,borderColor:c.border},sheetHandle:{alignSelf:'center',width:48,height:5,borderRadius:3,backgroundColor:c.border},sheetHead:{flexDirection:'row-reverse',alignItems:'center',gap:14},sheetClose:{width:42,height:42,borderRadius:21,alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:c.border},sheetKicker:{color:c.accent,fontSize:13,fontWeight:'700',textAlign:'right'},sheetTitle:{color:c.text,fontSize:20,fontWeight:'900',textAlign:'right',marginTop:2},sheetBox:{borderRadius:22,borderWidth:1,borderColor:c.border,backgroundColor:c.background,padding:16},sheetBody:{color:c.text,fontSize:15.5,lineHeight:25,textAlign:'right'},sheetCta:{minHeight:58,borderRadius:20,backgroundColor:c.primary,flexDirection:'row-reverse',alignItems:'center',justifyContent:'center',gap:10},sheetCtaText:{color:'#0B1411',fontSize:17,fontWeight:'900'},
 };
