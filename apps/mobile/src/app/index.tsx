@@ -18,6 +18,7 @@ import { clearCustomerOrderDraft, clearCustomerOrdersSnapshot, loadCustomerOrder
 import { clearDriverOrdersSnapshot, loadDriverOrdersSnapshot, saveDriverOrdersSnapshot } from '@/lib/driver-orders-cache';
 import { enablePushNotifications, hasRegisteredPushToken, unregisterPushNotifications } from '@/lib/push-notifications';
 import { AuthScreen, PasswordRecoveryScreen } from '@/components/AuthScreen';
+import { LegalLinksSection } from '@/components/LegalLinksSection';
 import { AppText as Text } from '@/components/AppText';
 import { ToastProvider, useToastMessage } from '@/components/Toast';
 
@@ -837,7 +838,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
             <Text style={s.label}>العمر <Text style={s.driverRequired}>إلزامي · 18 سنة أو أكثر</Text></Text><TextInput value={age} onChangeText={(value) => setAge(normalizeDigits(value).slice(0, 2))} keyboardType="number-pad" maxLength={2} textAlign="right" placeholder="العمر بالسنوات" placeholderTextColor={c.muted} style={s.driverInput} accessibilityLabel="عمر السائق"/>
             <Pressable disabled={busy || loading} onPress={() => void save()} style={[s.driverSaveButton, (busy || loading) && s.disabled]} accessibilityRole="button"><Text style={s.driverSaveButtonText}>{busy ? 'عم نحفظ بياناتك…' : 'حفظ الملف الشخصي'}</Text></Pressable>
             <Pressable onPress={onToggleTheme} style={s.profileThemeRow} accessibilityRole="button" accessibilityLabel={theme === 'dark' ? 'تفعيل الوضع الفاتح' : 'تفعيل الوضع الداكن'}><View style={s.profileThemeIcon}><SymbolView name={{ ios: theme === 'dark' ? 'sun.max.fill' : 'moon.fill', android: theme === 'dark' ? 'light_mode' : 'dark_mode', web: theme === 'dark' ? 'light_mode' : 'dark_mode' }} tintColor={c.primary} size={20}/></View><View style={s.profileThemeCopy}><Text style={s.profileThemeTitle}>المظهر · {theme === 'dark' ? 'داكن' : 'فاتح'}</Text><Text style={s.profileThemeHint}>اضغط للتبديل إلى الوضع {theme === 'dark' ? 'الفاتح' : 'الداكن'}</Text></View><Text style={s.profileThemeStateText}>تغيير</Text></Pressable>
-            <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8, marginTop: 14 }}><Link href="/privacy" style={{ color: c.primary, padding: 8 }}>الخصوصية</Link><Link href="/terms" style={{ color: c.primary, padding: 8 }}>الشروط</Link><Link href="/support" style={{ color: c.primary, padding: 8 }}>الدعم</Link><Link href="/delete-account" style={{ color: c.danger, padding: 8 }}>حذف الحساب</Link></View>
+            <LegalLinksSection theme={theme}/>
             <Pressable onPress={onSignOut} style={s.profileLogout} accessibilityRole="button"><SymbolView name={{ ios: 'rectangle.portrait.and.arrow.right', android: 'logout', web: 'logout' }} tintColor={c.danger} size={18}/><Text style={s.profileLogoutText}>تسجيل الخروج</Text></Pressable>
           </View>
         </> : null}
@@ -1408,7 +1409,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
           <View style={s.profileSectionHeading}><View style={s.profileHeadingIcon}><SymbolView name={{ ios: 'circle.lefthalf.filled', android: 'contrast', web: 'contrast' }} tintColor={c.primary} size={21}/></View><Text style={s.profileSectionTitle}>المظهر</Text></View>
           <Pressable onPress={onToggleTheme} style={s.profileThemeRow} accessibilityRole="button" accessibilityLabel={theme === 'dark' ? 'تفعيل الوضع الفاتح' : 'تفعيل الوضع الداكن'}><View style={s.profileThemeIcon}><SymbolView name={{ ios: theme === 'dark' ? 'sun.max.fill' : 'moon.fill', android: theme === 'dark' ? 'light_mode' : 'dark_mode', web: theme === 'dark' ? 'light_mode' : 'dark_mode' }} tintColor={c.primary} size={20}/></View><View style={s.profileThemeCopy}><Text style={s.profileThemeTitle}>الوضع {theme === 'dark' ? 'الداكن' : 'الفاتح'}</Text><Text style={s.profileThemeHint}>اضغط للتبديل إلى الوضع {theme === 'dark' ? 'الفاتح' : 'الداكن'}</Text></View><View style={s.profileThemeState}><Text style={s.profileThemeStateText}>{theme === 'dark' ? 'داكن' : 'فاتح'}</Text></View></Pressable>
         </View>
-        <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8, marginTop: 12 }}><Link href="/privacy" style={{ color: c.primary, padding: 8 }}>الخصوصية</Link><Link href="/terms" style={{ color: c.primary, padding: 8 }}>الشروط</Link><Link href="/support" style={{ color: c.primary, padding: 8 }}>الدعم</Link><Link href="/delete-account" style={{ color: c.danger, padding: 8 }}>حذف الحساب</Link></View>
+        <LegalLinksSection theme={theme}/>
         <Pressable onPress={onSignOut} style={s.profileLogout} accessibilityRole="button"><SymbolView name={{ ios: 'rectangle.portrait.and.arrow.right', android: 'logout', web: 'logout' }} tintColor={c.danger} size={19}/><Text style={s.profileLogoutText}>تسجيل الخروج</Text></Pressable>
         {showDriverFlow && <DriverApplicationFlow key={inviteToken ?? 'driver-application'} userId={userId} initialToken={inviteToken}/>}
       </StaggeredSections></View>}
