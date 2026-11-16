@@ -147,7 +147,7 @@ type DriverActiveOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id
 const newRequestKey = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => { const value = Math.random() * 16 | 0; return (char === 'x' ? value : (value & 3 | 8)).toString(16); });
 type OrderImage = CustomerOrderImageDraft & { uri: string };
 type ProfileAvatarDraft = { uri: string; mimeType: string; extension: string };
-const orderStatus: Record<string, string> = { requested:'بانتظار التوزيع', quoted:'أجرة التوصيل جاهزة', searching:'عم ندور على سائق', accepted:'قبل السائق الطلب', assigned:'تم تعيين سائق', shopping:'عم نجهز طلبك', awaiting_approval:'بانتظار موافقتك', purchased:'تم الشراء', delivering:'بالطريق لعندك', delivered:'تم التوصيل', settled:'تمت التسوية', disputed:'قيد مراجعة الدعم', cancelled:'ملغي' };
+const orderStatus: Record<string, string> = { requested:'بانتظار التسعير', quoted:'بانتظار سائق', searching:'عم نفتش على سائق', accepted:'قبل السائق الطلب', assigned:'تم تعيين سائق', shopping:'عم نجهز طلبك', awaiting_approval:'بانتظار موافقتك', purchased:'تم الشراء', delivering:'بالطريق لعندك', delivered:'تم التوصيل', settled:'تمت التسوية', disputed:'قيد مراجعة الدعم', cancelled:'ملغي' };
 
 function SkeletonBlock({ width = '68%', height = 11, style }: { width?: number | `${number}%`; height?: number; style?: object }) {
   const { colors: c } = useMobileTheme();
@@ -1142,7 +1142,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     }
     setSending(false);
     await clearCustomerOrderDraft(userId);
-    requestKey.current = newRequestKey(); setRequest(''); setCategory(''); setBudgetCeiling(''); setOrderImages([]); setPendingOrderId(''); setRequestMessage('وصلنا طلبك! الإدارة رح تقدّر أجرة الطريق وتبعتها إلك للموافقة قبل توزيع السائق.'); navigate('orders');
+    requestKey.current = newRequestKey(); setRequest(''); setCategory(''); setBudgetCeiling(''); setOrderImages([]); setPendingOrderId(''); setRequestMessage('وصلنا طلبك! الإدارة رح تحدد أجرة التوصيل وتبعت طلبك للسائقين.'); navigate('orders');
   };
   const pickOrderImages = async () => {
     if (sending) return;
@@ -1182,15 +1182,6 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     setOrderActionBusy('');
     if (error) { setOrderActionMessage('ما انحفظ قرارك. حدّث الطلب وجرب مرة تانية.'); return; }
     setOrderActionMessage(approved ? 'وافقت على المبلغ. السائق فيو يكمل.' : 'رفضت المبلغ؛ ما انحسبت المشتريات.');
-    const rows = await fetchCustomerOrders(); if (rows) await applyCustomerOrders(rows);
-  };
-  const respondDeliveryQuote = async (orderId: string, approved: boolean) => {
-    if (!supabase) return;
-    setOrderActionBusy(orderId); setOrderActionMessage('');
-    const { error } = await supabase.rpc('respond_delivery_quote', { p_order_id: orderId, p_approved: approved });
-    setOrderActionBusy('');
-    if (error) { setOrderActionMessage('ما انحفظ قرارك. حدّث الطلب وجرب مرة تانية.'); return; }
-    setOrderActionMessage(approved ? 'وافقت على أجرة الطريق. صار طلبك جاهزاً للتوزيع.' : 'رفضت أجرة الطريق وانلغى الطلب.');
     const rows = await fetchCustomerOrders(); if (rows) await applyCustomerOrders(rows);
   };
   const showDeliveryCode = async (orderId: string) => {
@@ -1237,7 +1228,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
           {orderImages.length < 3 && <Pressable onPress={() => void pickOrderImages()} disabled={sending} style={s.addImageCard} accessibilityRole="button"><View style={s.addImageIcon}><Text style={s.attachmentIcon}>＋</Text></View><View style={s.addImageCopy}><Text style={s.addImageTitle}>إضافة صورة</Text><Text style={s.addImageHint}>من معرض الصور · JPEG أو PNG</Text></View><Text style={s.addImageArrow}>←</Text></Pressable>}
         </View>
       </View>
-      <View style={s.note}><Text style={s.noteIcon}>ⓘ</Text><Text style={s.noteText}>الدفع كاش عند الاستلام. الإدارة بتقدّر أجرة التوصيل حسب مسافة الطريق وتعرضها عليك قبل إرسال الطلب للسائق.</Text></View>
+      <View style={s.note}><Text style={s.noteIcon}>ⓘ</Text><Text style={s.noteText}>الدفع كاش عند الاستلام. الإدارة بتحدد أجرة التوصيل وبتبعت طلبك للسائقين مباشرة.</Text></View>
       <Pressable disabled={sending || !draftReady || !online} onPress={() => { if (!hasAddress) { navigate('addresses'); return; } void submitOrder(); }} style={[s.submit, (sending || !draftReady || !online)&&s.disabled]} accessibilityRole="button"><Text style={s.submitText}>{!hasAddress?'إضافة عنوان تسليم':!online?'بانتظار الاتصال':sending?'عم نرسل الطلب والصور…':pendingOrderId?'إكمال رفع الصور وإرسال الطلب':'إرسال الطلب'} <Text style={s.submitArrow}>←</Text></Text></Pressable>
       {requestMessage ? <Text accessibilityRole="alert" style={s.requestMessage}>{requestMessage}</Text> : null}
       </> : tab === 'orders' ? <View style={s.orderPage}><StaggeredSections transitionKey={`${tab}-orders`}>
@@ -1295,10 +1286,6 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
             </View>
           </View>
           {!ordersAreStale && order.purchase_amount_minor !== null && <Text style={s.purchaseAmountLine}>المبلغ بعد الشراء: {numberFormatter.format(order.purchase_amount_minor)} ل.س</Text>}
-          {order.status === 'quoted' && <View style={s.reviewActions}>
-            <Pressable disabled={orderActionBusy===order.id || !online || ordersAreStale} onPress={() => void respondDeliveryQuote(order.id,true)} accessibilityRole="button" style={[s.approvePurchase,(orderActionBusy===order.id || !online || ordersAreStale)&&s.disabled]}><Text style={s.acceptOfferText}>موافقة على أجرة التوصيل</Text></Pressable>
-            <Pressable disabled={orderActionBusy===order.id || !online || ordersAreStale} onPress={() => void respondDeliveryQuote(order.id,false)} accessibilityRole="button" style={[s.rejectPurchase,(orderActionBusy===order.id || !online || ordersAreStale)&&s.disabled]}><Text style={s.rejectPurchaseText}>رفض وإلغاء</Text></Pressable>
-          </View>}
           {order.status === 'awaiting_approval' && <View style={s.reviewActions}>
             <Pressable disabled={orderActionBusy===order.id || !online || ordersAreStale} onPress={() => void respondPurchase(order.id,true)} accessibilityRole="button" style={[s.approvePurchase,(orderActionBusy===order.id || !online || ordersAreStale)&&s.disabled]}><Text style={s.acceptOfferText}>موافقة على المشتريات</Text></Pressable>
             <Pressable disabled={orderActionBusy===order.id || !online || ordersAreStale} onPress={() => void respondPurchase(order.id,false)} accessibilityRole="button" style={[s.rejectPurchase,(orderActionBusy===order.id || !online || ordersAreStale)&&s.disabled]}><Text style={s.rejectPurchaseText}>رفض الطلب</Text></Pressable>
