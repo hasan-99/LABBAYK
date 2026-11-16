@@ -788,10 +788,10 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     const amount = Number(purchaseDrafts[orderId]);
     if (!Number.isSafeInteger(amount) || amount < 0) { setMessage('أدخل قيمة المشتريات بالليرة السورية كرقم صحيح.'); return; }
     setBusy(true); setMessage('');
-    const { data, error } = await supabase.rpc('record_order_purchase', { p_order_id: orderId, p_purchase_amount_minor: amount });
+    const { error } = await supabase.rpc('record_order_purchase', { p_order_id: orderId, p_purchase_amount_minor: amount });
     setBusy(false);
     if (error) { setMessage('ما قدرنا نسجل المشتريات. تأكد من حالة الطلب.'); return; }
-    setMessage(data === 'awaiting_approval' ? 'المبلغ أعلى من ميزانية الزبون؛ ناطرين موافقته قبل ما تشتري.' : 'السعر ضمن الميزانية. اشتري الأغراض وبعدها أكد إتمام الشراء.');
+    setMessage('انسجل المبلغ. اشتري الأغراض وبعدها أكد إتمام الشراء. إذا بدك تستفسر من الزبون اتصل فيه.');
     await refresh();
   };
   const confirmPurchase = async (orderId: string) => {
@@ -1502,15 +1502,6 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     setOrderImages((current) => current.filter((image) => image.id !== imageId));
     setRequestMessage('انحذفت الصورة من الطلب.');
   };
-  const respondPurchase = async (orderId: string, approved: boolean) => {
-    if (!supabase) return;
-    setOrderActionBusy(orderId); setOrderActionMessage('');
-    const { error } = await supabase.rpc('respond_purchase_approval', { p_order_id: orderId, p_approved: approved });
-    setOrderActionBusy('');
-    if (error) { setOrderActionMessage('ما انحفظ قرارك. حدّث الطلب وجرب مرة تانية.'); return; }
-    setOrderActionMessage(approved ? 'وافقت على المبلغ. السائق فيو يكمل.' : 'رفضت المبلغ؛ ما انحسبت المشتريات.');
-    const rows = await fetchCustomerOrders(); if (rows) await applyCustomerOrders(rows);
-  };
   const cancelOrder = async (orderId: string) => {
     if (!supabase) return;
     setOrderActionBusy(orderId); setOrderActionMessage('');
@@ -1603,10 +1594,6 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
             </View>
           </View>
           {!ordersAreStale && order.purchase_amount_minor !== null && <Text style={s.purchaseAmountLine}>المبلغ بعد الشراء: {numberFormatter.format(order.purchase_amount_minor)} ل.س</Text>}
-          {order.status === 'awaiting_approval' && <View style={s.reviewActions}>
-            <Pressable disabled={orderActionBusy===order.id || !online || ordersAreStale} onPress={() => void respondPurchase(order.id,true)} accessibilityRole="button" style={[s.approvePurchase,(orderActionBusy===order.id || !online || ordersAreStale)&&s.disabled]}><Text style={s.acceptOfferText}>موافقة على المشتريات</Text></Pressable>
-            <Pressable disabled={orderActionBusy===order.id || !online || ordersAreStale} onPress={() => void respondPurchase(order.id,false)} accessibilityRole="button" style={[s.rejectPurchase,(orderActionBusy===order.id || !online || ordersAreStale)&&s.disabled]}><Text style={s.rejectPurchaseText}>رفض الطلب</Text></Pressable>
-          </View>}
           {order.status === 'delivering' && <Text style={s.offerExpiry}>السائق بالطريق لعندك. رح يصوّر التسليم ويأكده بنفسه، ما بتحتاج تسوي شي.</Text>}
           {(order.status === 'delivered' || order.status === 'settled') && !ordersAreStale && <OrderImageGallery orderId={order.id} bucket="delivery-proofs" label="صورة التسليم"/>}
           {(['requested','quoted','searching','accepted','assigned','awaiting_approval'].includes(order.status) || (order.status === 'shopping' && order.purchase_amount_minor === null)) && <Pressable disabled={orderActionBusy === order.id || !online || ordersAreStale} onPress={() => void cancelOrder(order.id)} style={[s.cancelOrder, (orderActionBusy === order.id || !online || ordersAreStale) && s.disabled]} accessibilityRole="button"><Text style={s.cancelOrderText}>إلغاء الطلب</Text></Pressable>}
