@@ -952,6 +952,10 @@ export type Database = {
         Args: { p_notification_id: number }
         Returns: undefined
       }
+      mark_all_notifications_read: {
+        Args: Record<PropertyKey, never>
+        Returns: number
+      }
       open_order_dispute: {
         Args: {
           p_details: string
