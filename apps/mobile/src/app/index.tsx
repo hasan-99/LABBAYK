@@ -720,16 +720,17 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     return () => subscription.remove();
   }, [scheduleRefresh]);
   const setAvailability = async (is_online: boolean) => {
-    if (!profileComplete) { onCompleteProfile(); return; }
-    if (!supabase || !online || operationsAreStale) return;
+    if (!profileComplete) { setMessage('أكمل ملفك الشخصي أولاً حتى تقدر تستقبل الطلبات.'); onCompleteProfile(); return; }
+    if (!supabase || !online || operationsAreStale) { setMessage('هالإجراء يحتاج اتصالاً بالخادم. تأكد من الإنترنت وحدّث الصفحة.'); return; }
     setBusy(true); setMessage('');
     const { error } = await supabase.from('driver_profiles').update({ is_online }).eq('user_id', userId);
     setBusy(false);
     if (error) { setMessage('ما قدرنا نحدّث التوفر. حاول مرة ثانية.'); return; }
     setProfile({ is_online });
+    setMessage(is_online ? 'تم تفعيل استقبال الطلبات. العروض الجديدة توصلك فوراً.' : 'تم إيقاف استقبال الطلبات.');
   };
   const accept = async (offerId: string) => {
-    if (!supabase || !online || operationsAreStale) return;
+    if (!supabase || !online || operationsAreStale) { setMessage('هالإجراء يحتاج اتصالاً بالخادم. تأكد من الإنترنت وحدّث الصفحة.'); return; }
     setBusy(true); setMessage('');
     const { error } = await supabase.rpc('accept_order_offer', { p_offer_id: offerId });
     setBusy(false);
@@ -737,7 +738,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     setMessage('تم قبول الطلب من السيرفر.'); await refresh();
   };
   const decline = async (offerId: string) => {
-    if (!supabase || !online || operationsAreStale) return;
+    if (!supabase || !online || operationsAreStale) { setMessage('هالإجراء يحتاج اتصالاً بالخادم. تأكد من الإنترنت وحدّث الصفحة.'); return; }
     setBusy(true); setMessage('');
     const { error } = await supabase.rpc('decline_order_offer', { p_offer_id: offerId });
     setBusy(false);
@@ -745,7 +746,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     setMessage('اعتذرت عن العرض.'); await refresh();
   };
   const startShopping = async (orderId: string) => {
-    if (!supabase || !online || operationsAreStale) return;
+    if (!supabase || !online || operationsAreStale) { setMessage('هالإجراء يحتاج اتصالاً بالخادم. تأكد من الإنترنت وحدّث الصفحة.'); return; }
     setBusy(true); setMessage('');
     const { error } = await supabase.rpc('start_order_shopping', { p_order_id: orderId });
     setBusy(false);
@@ -753,7 +754,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     setMessage('تم تأكيد بدء التسوق.'); await refresh();
   };
   const recordPurchase = async (orderId: string) => {
-    if (!supabase || !online || operationsAreStale) return;
+    if (!supabase || !online || operationsAreStale) { setMessage('هالإجراء يحتاج اتصالاً بالخادم. تأكد من الإنترنت وحدّث الصفحة.'); return; }
     const amount = Number(purchaseDrafts[orderId]);
     if (!Number.isSafeInteger(amount) || amount < 0) { setMessage('أدخل قيمة المشتريات بالليرة السورية كرقم صحيح.'); return; }
     setBusy(true); setMessage('');
@@ -764,7 +765,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     await refresh();
   };
   const confirmPurchase = async (orderId: string) => {
-    if (!supabase || !online || operationsAreStale) return;
+    if (!supabase || !online || operationsAreStale) { setMessage('هالإجراء يحتاج اتصالاً بالخادم. تأكد من الإنترنت وحدّث الصفحة.'); return; }
     setBusy(true); setMessage('');
     const { error } = await supabase.rpc('confirm_order_purchase', { p_order_id: orderId });
     setBusy(false);
@@ -772,7 +773,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     setMessage('تأكد شراء الأغراض من السيرفر.'); await refresh();
   };
   const startDelivery = async (orderId: string) => {
-    if (!supabase || !online || operationsAreStale) return;
+    if (!supabase || !online || operationsAreStale) { setMessage('هالإجراء يحتاج اتصالاً بالخادم. تأكد من الإنترنت وحدّث الصفحة.'); return; }
     setBusy(true); setMessage('');
     const { error } = await supabase.rpc('start_order_delivery', { p_order_id: orderId });
     setBusy(false);
@@ -780,7 +781,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     setMessage('بدأ التوصيل. اطلب من الزبون رمز التأكيد عند التسليم.'); await refresh();
   };
   const confirmDelivery = async (orderId: string) => {
-    if (!supabase || !online || operationsAreStale) return;
+    if (!supabase || !online || operationsAreStale) { setMessage('هالإجراء يحتاج اتصالاً بالخادم. تأكد من الإنترنت وحدّث الصفحة.'); return; }
     setBusy(true); setMessage('');
     const { data, error } = await supabase.rpc('confirm_order_delivery', { p_order_id: orderId, p_code: deliveryDrafts[orderId] ?? '' });
     setBusy(false);
