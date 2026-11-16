@@ -579,6 +579,12 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
       .subscribe();
     return () => { void supabase?.removeChannel(channel); };
   }, [online, scheduleRefresh, userId]);
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') scheduleRefresh();
+    });
+    return () => subscription.remove();
+  }, [scheduleRefresh]);
   const setAvailability = async (is_online: boolean) => {
     if (!profileComplete) { onCompleteProfile(); return; }
     if (!supabase || !online || operationsAreStale) return;
@@ -1110,6 +1116,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
           continue;
         }
         const body = await fetch(image.uri).then((response) => response.arrayBuffer());
+        if (body.byteLength > 5 * 1024 * 1024) { setSending(false); setRequestMessage('حجم الصورة أكبر من 5 ميغابايت. استبدلها بصورة أصغر قبل المتابعة.'); return; }
         const { error } = await supabase.storage.from('order-images').upload(`${orderId}/${imageName}`, body, { contentType: image.mimeType, cacheControl: '3600', upsert: false });
         if (error) throw error;
         existingImageNames.add(imageName);
@@ -1129,25 +1136,26 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   };
   const pickOrderImages = async () => {
     if (sending) return;
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, selectionLimit: 3 - orderImages.length, quality: 0.8, exif: false });
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, selectionLimit: 3 - orderImages.length, quality: 0.65, exif: false });
     if (result.canceled) return;
     const accepted = result.assets.flatMap((asset) => {
       const mimeType = asset.mimeType?.toLowerCase() ?? 'image/jpeg';
       const extension = ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic', 'image/heif': 'heif' } as Record<string, string>)[mimeType];
-      return extension ? [{ id: newRequestKey(), uri: asset.uri, mimeType, extension, uploaded: false }] : [];
+      return extension && (asset.fileSize === undefined || asset.fileSize <= 5 * 1024 * 1024) ? [{ id: newRequestKey(), uri: asset.uri, mimeType, extension, uploaded: false }] : [];
     });
     setOrderImages((current) => [...current, ...accepted].slice(0, 3));
-    if (accepted.length < result.assets.length) setRequestMessage('الصور المدعومة: JPEG وPNG وWebP وHEIC.');
+    if (accepted.length < result.assets.length) setRequestMessage('الصور المدعومة: JPEG وPNG وWebP وHEIC، وبحجم أقصى 5 ميغابايت للصورة.');
     else if (accepted.length) setRequestMessage('انضافت الصور لطلبك. فيك تبدّلها أو تحذفها قبل الإرسال.');
   };
   const replaceOrderImage = async (imageId: string) => {
     if (sending) return;
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: false, quality: 0.8, exif: false });
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: false, quality: 0.65, exif: false });
     if (result.canceled || !result.assets[0]) return;
     const asset = result.assets[0];
     const mimeType = asset.mimeType?.toLowerCase() ?? 'image/jpeg';
     const extension = ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic', 'image/heif': 'heif' } as Record<string, string>)[mimeType];
     if (!extension) { setRequestMessage('اختار صورة JPEG أو PNG أو WebP أو HEIC.'); return; }
+    if (asset.fileSize !== undefined && asset.fileSize > 5 * 1024 * 1024) { setRequestMessage('حجم الصورة أكبر من 5 ميغابايت. اختار صورة أصغر.'); return; }
     const existingImage = orderImages.find((image) => image.id === imageId);
     if (pendingOrderId && existingImage && existingImage.extension !== extension) { setRequestMessage('اختار صورة بنفس صيغة الملف الأصلي حتى نكمل الرفع دون تكرار الصورة.'); return; }
     setOrderImages((current) => current.map((image) => image.id === imageId ? { ...image, uri: asset.uri, mimeType, extension, uploaded: false } : image));

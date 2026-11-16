@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import type { User } from '@supabase/supabase-js'
 import type { Database } from '@labbayk/shared/database.types'
 import { supabase, supabaseConfigured } from './lib/supabase'
+import { getAdminBackendHealth, subscribeAdminBackendHealth, type AdminBackendHealth } from './lib/network-health'
 import './App.css'
 import './pricing.css'
 import './auth.css'
@@ -208,6 +209,31 @@ function LoadingSkeleton({ rows = 3 }: { rows?: number }) {
     {Array.from({ length: rows }, (_, index) => <div className="loading-skeleton-row" key={index} aria-hidden="true"><i/><i/><i/></div>)}
     <span className="sr-only">جار تحميل البيانات…</span>
   </div>
+}
+
+function AdminNetworkBanner() {
+  const [backendHealth, setBackendHealth] = useState<AdminBackendHealth>(getAdminBackendHealth)
+  const [browserOnline, setBrowserOnline] = useState(() => navigator.onLine)
+  useEffect(() => {
+    const unsubscribe = subscribeAdminBackendHealth(setBackendHealth)
+    const updateOnline = () => setBrowserOnline(navigator.onLine)
+    window.addEventListener('online', updateOnline)
+    window.addEventListener('offline', updateOnline)
+    return () => {
+      unsubscribe()
+      window.removeEventListener('online', updateOnline)
+      window.removeEventListener('offline', updateOnline)
+    }
+  }, [])
+  const message = !browserOnline
+    ? 'الاتصال بالإنترنت منقطع. بيانات اللوحة قديمة؛ حدّث الصفحة بعد عودة الاتصال.'
+    : backendHealth === 'unreachable'
+      ? 'تعذّر الاتصال بالخادم. البيانات الحالية قديمة، أعد المحاولة بعد قليل.'
+      : backendHealth === 'degraded'
+        ? 'الخادم يواجه بطئًا أو مشكلة مؤقتة. احتفظ بالصفحة مفتوحة وأعد المحاولة.'
+        : ''
+  if (!message) return null
+  return <div role="alert" style={{ margin: '0 24px 12px', padding: '10px 14px', borderRadius: 10, background: '#3A2D18', border: '1px solid #745C2C', color: '#FFE2A0', textAlign: 'center', fontSize: 12, lineHeight: 1.6 }}>{message}</div>
 }
 
 function useDebouncedRefresh(refresh: () => Promise<void>) {
@@ -803,7 +829,10 @@ function AdminShell({ active, setActive, user, theme, onToggleTheme }: { active:
   const [todayLabel] = useState(() => headerDateFormatter.format(new Date()))
   const [zones, setZones] = useState<Zone[]>([])
   const [orders, setOrders] = useState<AdminOrder[]>([])
-  const [visibleOrderLimit, setVisibleOrderLimit] = useState(30)
+  const [hasMoreOrders, setHasMoreOrders] = useState(true)
+  const [loadingMoreOrders, setLoadingMoreOrders] = useState(false)
+  const [ordersAreStale, setOrdersAreStale] = useState(false)
+  const [ordersSyncedAt, setOrdersSyncedAt] = useState('')
   const [loadingOrders, setLoadingOrders] = useState(false)
   const [orderMessage, setOrderMessage] = useToastMessage()
   const [quoteFees, setQuoteFees] = useState<Record<string, string>>({})
@@ -820,6 +849,9 @@ function AdminShell({ active, setActive, user, theme, onToggleTheme }: { active:
   const [fee, setFee] = useState('0')
   const hasLoadedZones = useRef(false)
   const hasLoadedOrders = useRef(false)
+  const ordersRef = useRef<AdminOrder[]>([])
+  const ordersRequestId = useRef(0)
+  const loadingMoreOrdersRef = useRef(false)
 
   const loadZones = useCallback(async () => {
     if (!supabase) return
@@ -831,14 +863,43 @@ function AdminShell({ active, setActive, user, theme, onToggleTheme }: { active:
     setLoadingZones(false)
   }, [setZoneError])
   useEffect(() => { if (active === 'المناطق') void loadZones() }, [active, loadZones])
-  const loadOrders = useCallback(async () => {
+  const loadOrders = useCallback(async (append = false) => {
     if (!supabase) return
-    if (!hasLoadedOrders.current) setLoadingOrders(true)
+    if (append && loadingMoreOrdersRef.current) return
+    if (!hasLoadedOrders.current && !append) setLoadingOrders(true)
+    if (append) { loadingMoreOrdersRef.current = true; setLoadingMoreOrders(true) }
     setOrderMessage('')
-    const { data, error } = await supabase.from('orders').select('id,customer_id,address_id,category,request_text,status,delivery_fee_minor,delivery_quote_set_at,delivery_quote_approved_at,budget_ceiling_minor,purchase_amount_minor,created_at').order('created_at', { ascending: false }).limit(100)
-    if (error) setOrderMessage('ما قدرنا نحمّل الطلبات. جرّب تحدّث القائمة.')
-    else { setOrders(data ?? []); hasLoadedOrders.current = true }
+    const requestId = ++ordersRequestId.current
+    const offset = append ? ordersRef.current.length : 0
+    let data: AdminOrder[] | null = null
+    let error: unknown = null
+    try {
+      const result = await supabase.from('orders').select('id,customer_id,address_id,category,request_text,status,delivery_fee_minor,delivery_quote_set_at,delivery_quote_approved_at,budget_ceiling_minor,purchase_amount_minor,created_at').order('created_at', { ascending: false }).order('id', { ascending: false }).range(offset, offset + 29)
+      data = result.data
+      error = result.error
+    } catch {
+      error = new Error('Network request failed')
+    }
+    if (requestId !== ordersRequestId.current) {
+      if (append) { loadingMoreOrdersRef.current = false; setLoadingMoreOrders(false) }
+      return
+    }
+    if (error) {
+      setOrderMessage('ما قدرنا نحمّل الطلبات. البيانات المعروضة قديمة؛ جرّب التحديث مرة ثانية.')
+      setOrdersAreStale(true)
+    } else {
+      const page = data ?? []
+      const nextOrders = append ? [...ordersRef.current, ...page.filter((order) => !ordersRef.current.some((current) => current.id === order.id))] : page
+      ordersRef.current = nextOrders
+      setOrders(nextOrders)
+      setHasMoreOrders(page.length === 30)
+      setOrdersAreStale(false)
+      setOrdersSyncedAt(new Date().toISOString())
+      hasLoadedOrders.current = true
+    }
     setLoadingOrders(false)
+    loadingMoreOrdersRef.current = false
+    setLoadingMoreOrders(false)
   }, [setOrderMessage])
   const scheduleOrderRefresh = useDebouncedRefresh(loadOrders)
   useEffect(() => {
@@ -852,7 +913,9 @@ function AdminShell({ active, setActive, user, theme, onToggleTheme }: { active:
     setOrderMessage('')
     const { data, error } = await supabase.rpc('dispatch_order', { p_order_id: id })
     if (error) { setOrderMessage(error.message.includes('Commission policy') ? 'حدد نسبة العمولة أولاً من صفحة التسعير.' : error.message.includes('No online approved drivers') ? 'ما في سائقين معتمدين ومتصلين حالياً.' : 'ما قدرنا نرسل الطلب للسائقين.') ; return }
-    setOrders((current) => current.map((order) => order.id === id ? { ...order, status: 'searching' } : order))
+    const nextOrders = ordersRef.current.map((order) => order.id === id ? { ...order, status: 'searching' } : order)
+    ordersRef.current = nextOrders
+    setOrders(nextOrders)
     setOrderMessage(`انرسل العرض إلى ${data} سائق متاح.`)
   }
   const saveDeliveryQuote = async (event: FormEvent, order: AdminOrder) => {
@@ -899,9 +962,9 @@ function AdminShell({ active, setActive, user, theme, onToggleTheme }: { active:
   const signOut = async () => { await supabase?.auth.signOut() }
   return <div className="admin" dir="rtl">
     <aside className="sidebar"><a className="brand" href="#home" onClick={() => setActive(nav[0])} aria-label="لَبّيك لوحة الإدارة الرئيسية"><img className="brand-logo" src="/labbayk-delivery-logo.png" alt=""/><span>لَبّيك<small>لوحة الإدارة</small></span></a><div className="workspace-label">مساحة العمل</div><nav aria-label="القائمة الرئيسية">{nav.map((item, i) => <button key={item} className={`nav-item ${active === item ? 'selected' : ''}`} onClick={() => setActive(item)} aria-pressed={active === item}><span className="nav-icon" aria-hidden="true">{['⌂','≋','♙','♧','◈','⌖','▤','♢','⌁','⚙'][i]}</span>{item}</button>)}</nav><button className="sidebar-bottom account-button" onClick={() => void signOut()} aria-label="تسجيل الخروج من لوحة الإدارة"><span className="avatar" aria-hidden="true">ل</span><span className="account-copy">{user?.email || 'مدير لَبّيك'}<small>تسجيل الخروج</small></span><span className="more">↗</span></button></aside>
-    <main className="main"><header className="topbar"><div><span className="crumb">لوحة الإدارة</span><span className="slash">/</span><strong>{active}</strong></div><div className="top-actions"><button className="appearance-toggle" onClick={onToggleTheme} aria-label={theme === 'dark' ? 'تفعيل الوضع الفاتح' : 'تفعيل الوضع الداكن'} title={theme === 'dark' ? 'الوضع الفاتح' : 'الوضع الداكن'}><svg viewBox="0 0 24 24" aria-hidden="true">{theme === 'dark' ? <path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.64 5.64l1.42 1.42m9.88 9.88 1.42 1.42m0-12.72-1.42 1.42m-9.88 9.88-1.42 1.42M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/> : <path d="M20.2 15.4A8.5 8.5 0 0 1 8.6 3.8 8.5 8.5 0 1 0 20.2 15.4Z"/>}</svg></button><span className="environment"><i className="online-dot"/> جلسة مدير موثّقة</span><span className="admin-avatar">{user?.email?.slice(0,1).toUpperCase() || 'ل'}</span></div></header>
+    <main className="main"><AdminNetworkBanner/><header className="topbar"><div><span className="crumb">لوحة الإدارة</span><span className="slash">/</span><strong>{active}</strong></div><div className="top-actions"><button className="appearance-toggle" onClick={onToggleTheme} aria-label={theme === 'dark' ? 'تفعيل الوضع الفاتح' : 'تفعيل الوضع الداكن'} title={theme === 'dark' ? 'الوضع الفاتح' : 'الوضع الداكن'}><svg viewBox="0 0 24 24" aria-hidden="true">{theme === 'dark' ? <path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.64 5.64l1.42 1.42m9.88 9.88 1.42 1.42m0-12.72-1.42 1.42m-9.88 9.88-1.42-1.42M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/> : <path d="M20.2 15.4A8.5 8.5 0 0 1 8.6 3.8 8.5 8.5 0 1 0 20.2 15.4Z"/>}</svg></button><span className="environment"><i className="online-dot"/> جلسة مدير موثّقة</span><span className="admin-avatar">{user?.email?.slice(0,1).toUpperCase() || 'ل'}</span></div></header>
       <section className={`page ${active === 'الطلبات' ? 'orders-page' : active === 'المناطق' ? 'zones-page' : active === 'التسويات' ? 'settlements-page' : active === 'التنبيهات' ? 'notifications-page' : active === 'الإعدادات' ? 'settings-page' : active === 'المستخدمون' ? 'users-admin-page' : ''}`}><div className="page-heading"><div><p className="eyebrow">{todayLabel}</p><h1>{active === nav[0] ? 'أهلاً في لَبّيك' : active}</h1><p className="subtitle">{active === nav[0] ? 'من هون بتتابع الطلبات والتشغيل اليومي.' : active === 'السائقون' ? 'ادعُ سائقين جدد، راجع طلبات الانضمام، وتابع حالة فريق التوصيل.' : active === 'المستخدمون' ? 'ابحث عن الحساب، اعرف دوره وحالته، واختر الإجراء المناسب.' : active === 'الإعدادات' ? 'جدول موحّد لحسابات المستخدمين، أدوارهم، وحالة كل حساب وإجراءاته.' : `إدارة ومتابعة ${active} ضمن نظام لَبّيك.`}</p></div></div>
-        {active === 'نظرة عامة' ? <OverviewPanel onOpen={setActive}/> : active === 'الطلبات' ? <><section className="panel order-admin-panel"><div className="panel-heading"><div><h2>الطلبات الواردة</h2><p>حدد أجرة كل طلب حسب مسافة الطريق، ثم انتظر موافقة العميل قبل التوزيع.</p></div><button className="refresh-button" onClick={() => void loadOrders()} aria-label="تحديث الطلبات">↻</button></div>{orderMessage && <p className="error-line" role="alert">{orderMessage}</p>}{loadingOrders ? <LoadingSkeleton rows={4}/> : orders.length ? <><div className="admin-order-list">{orders.slice(0, visibleOrderLimit).map(order => <article className="admin-order" key={order.id}><div className="admin-order-head"><div><span className="order-reference">#{order.id.slice(0,8)}</span><span className="status-pill is-active"><i/>{orderStates.find(x=>x.value===order.status)?.label??order.status}</span></div><time>{shortDateTimeFormatter.format(new Date(order.created_at))}</time></div><div className="admin-order-copy"><strong>{order.category}</strong><p>{order.request_text}</p><small>العميل {order.customer_id?.slice(0,8) ?? 'محذوف'} · العنوان {order.address_id?.slice(0,8) ?? 'غير متاح'}</small><small>سقف الشراء {arabicNumberFormatter.format(order.budget_ceiling_minor)} قرش</small></div><div className="admin-order-actions"><span>{order.delivery_quote_set_at ? `أجرة التوصيل ${arabicNumberFormatter.format(order.delivery_fee_minor)} قرش${order.delivery_quote_approved_at ? ' · وافق العميل' : ' · بانتظار موافقة العميل'}` : 'بانتظار تحديد أجرة الطريق'}</span>{['requested','quoted'].includes(order.status) && !order.delivery_quote_approved_at && <form className="admin-quote-form" onSubmit={(event) => void saveDeliveryQuote(event, order)}><label>أجرة الطريق · قرش<input type="number" min="0" max="100000000" step="1" value={quoteFees[order.id] ?? ''} onChange={(event) => setQuoteFees((current) => ({ ...current, [order.id]: event.target.value }))} required /></label><label>سبب أو ملاحظة المسافة<input value={quoteReasons[order.id] ?? ''} onChange={(event) => setQuoteReasons((current) => ({ ...current, [order.id]: event.target.value }))} placeholder="مثال: تقدير المسار من جرمانا للمزة" minLength={5} maxLength={500} required /></label><button className="secondary-button" disabled={quoteBusy === order.id}>{quoteBusy === order.id ? 'عم نحفظ…' : order.delivery_quote_set_at ? 'تعديل الأجرة وإعادة الإرسال' : 'إرسال الأجرة للعميل'}</button></form>}{['requested','searching'].includes(order.status) && !!order.delivery_quote_approved_at && <button className="dispatch-button" onClick={() => void dispatchOrder(order.id)}>{order.status === 'searching' ? 'إعادة إرسال للسائقين ←' : 'إرسال للسائقين ←'}</button>}{(['requested','quoted','searching','accepted','assigned','awaiting_approval'].includes(order.status)||(order.status==='shopping'&&order.purchase_amount_minor===null))&&<button className="cancel-admin-button" onClick={()=>void cancelOrder(order.id)}>إلغاء الطلب</button>}</div></article>)}</div>{orders.length > visibleOrderLimit && <button className="secondary-button" onClick={() => setVisibleOrderLimit((current) => Math.min(current + 30, orders.length))}>عرض 30 طلباً إضافياً</button>}</>:<div className="zone-empty"><strong>لسه ما وصل طلب</strong></div>}</section></> : active === 'السائقون' ? <DriversPanel userId={user?.id??''}/> : active === 'المستخدمون' ? <UsersPanel onOpen={setActive}/> : active === 'التسعير' ? <PricingPanel/> : active === 'التسويات' ? <SettlementPanel/> : active === 'التنبيهات' ? <NotificationsPanel userId={user?.id??''}/> : active === 'الدعم والنزاعات' ? <DisputesPanel/> : active === 'المناطق' ? <><div className="zone-layout"><section className="panel zone-form-panel"><div className="panel-heading"><div><h2>أضف منطقة</h2><p>حدد موقع التوصيل ورسومه.</p></div><span className="step-mark">01</span></div><form className="zone-form" onSubmit={addZone}><label>اسم العرض<input value={name} onChange={e=>setName(e.target.value)} placeholder="مثال: المزة" required maxLength={100}/></label><div className="field-pair"><label>المحافظة<input value={governorate} onChange={e=>setGovernorate(e.target.value)} placeholder="دمشق" required maxLength={100}/></label><label>المدينة<input value={city} onChange={e=>setCity(e.target.value)} placeholder="دمشق" required maxLength={100}/></label></div><label>الحي · اختياري<input value={neighborhood} onChange={e=>setNeighborhood(e.target.value)} placeholder="المزة" maxLength={100}/></label><label>رسوم التوصيل · قرش<input type="number" min="0" step="1" value={fee} onChange={e=>setFee(e.target.value)} required/></label><button className="primary-button create-button" disabled={saving}>{saving?'عم نحفظ…':'حفظ كمسودة'} ←</button>{formMessage&&<p className="form-feedback" role="status">{formMessage}</p>}</form></section><section className="panel zone-list-panel"><div className="panel-heading"><div><h2>مناطق التوصيل</h2><p>إدارة المناطق المنشورة للعملاء.</p></div><button className="refresh-button" onClick={()=>void loadZones()} aria-label="تحديث المناطق">↻</button></div>{zoneError&&<p className="error-line" role="alert">{zoneError}</p>}{loadingZones?<LoadingSkeleton rows={3}/>:zones.length===0?<div className="zone-empty"><strong>ابدأ بأول منطقة خدمة</strong></div>:<div className="zone-list">{zones.map(zone=><article key={zone.id} className="zone-row"><div className="zone-location"><span className="zone-pin">{zone.active?'●':'⌖'}</span><div><strong>{zone.name}</strong><p>{[zone.neighborhood,zone.city,zone.governorate].filter(Boolean).join('، ')}</p></div></div><div className="zone-status"><span className="status-pill">{zone.active?'فعّالة':'مسودة'}</span><button className="toggle-button" onClick={()=>void toggleZone(zone)} role="switch" aria-checked={zone.active} aria-label={`تفعيل منطقة ${zone.name}`}><span/></button></div></article>)}</div>}</section></div></> : active === 'الإعدادات' ? <SettingsPanel onOpen={setActive}/> : <div className="empty-panel"><h3>مرحباً في لوحة لَبّيك</h3><p>تابع الطلبات والسائقين والأسعار من القائمة.</p><button className="text-button" onClick={()=>setActive('الطلبات')}>عرض الطلبات ←</button></div>}
+        {active === 'نظرة عامة' ? <OverviewPanel onOpen={setActive}/> : active === 'الطلبات' ? <><section className="panel order-admin-panel"><div className="panel-heading"><div><h2>الطلبات الواردة</h2><p>حدد أجرة كل طلب حسب مسافة الطريق، ثم انتظر موافقة العميل قبل التوزيع.</p></div><button className="refresh-button" onClick={() => void loadOrders()} aria-label="تحديث الطلبات">↻</button></div>{orderMessage && <p className="error-line" role="alert">{orderMessage}</p>}{ordersAreStale && <p className="muted-copy" role="status">{ordersSyncedAt ? 'البيانات قديمة. آخر مزامنة ' + shortDateTimeFormatter.format(new Date(ordersSyncedAt)) : 'تعذر تحديث الطلبات.'}</p>}{loadingOrders ? <LoadingSkeleton rows={4}/> : orders.length ? <><div className="admin-order-list">{orders.map(order => <article className="admin-order" key={order.id}><div className="admin-order-head"><div><span className="order-reference">#{order.id.slice(0,8)}</span><span className="status-pill is-active"><i/>{orderStates.find(x=>x.value===order.status)?.label??order.status}</span></div><time>{shortDateTimeFormatter.format(new Date(order.created_at))}</time></div><div className="admin-order-copy"><strong>{order.category}</strong><p>{order.request_text}</p><small>العميل {order.customer_id?.slice(0,8) ?? 'محذوف'} · العنوان {order.address_id?.slice(0,8) ?? 'غير متاح'}</small><small>سقف الشراء {arabicNumberFormatter.format(order.budget_ceiling_minor)} قرش</small></div><div className="admin-order-actions"><span>{order.delivery_quote_set_at ? `أجرة التوصيل ${arabicNumberFormatter.format(order.delivery_fee_minor)} قرش${order.delivery_quote_approved_at ? ' · وافق العميل' : ' · بانتظار موافقة العميل'}` : 'بانتظار تحديد أجرة الطريق'}</span>{['requested','quoted'].includes(order.status) && !order.delivery_quote_approved_at && <form className="admin-quote-form" onSubmit={(event) => void saveDeliveryQuote(event, order)}><label>أجرة الطريق · قرش<input type="number" min="0" max="100000000" step="1" value={quoteFees[order.id] ?? ''} onChange={(event) => setQuoteFees((current) => ({ ...current, [order.id]: event.target.value }))} required /></label><label>سبب أو ملاحظة المسافة<input value={quoteReasons[order.id] ?? ''} onChange={(event) => setQuoteReasons((current) => ({ ...current, [order.id]: event.target.value }))} placeholder="مثال: تقدير المسار من جرمانا للمزة" minLength={5} maxLength={500} required /></label><button className="secondary-button" disabled={quoteBusy === order.id}>{quoteBusy === order.id ? 'عم نحفظ…' : order.delivery_quote_set_at ? 'تعديل الأجرة وإعادة الإرسال' : 'إرسال الأجرة للعميل'}</button></form>}{['requested','searching'].includes(order.status) && !!order.delivery_quote_approved_at && <button className="dispatch-button" onClick={() => void dispatchOrder(order.id)}>{order.status === 'searching' ? 'إعادة إرسال للسائقين ←' : 'إرسال للسائقين ←'}</button>}{(['requested','quoted','searching','accepted','assigned','awaiting_approval'].includes(order.status)||(order.status==='shopping'&&order.purchase_amount_minor===null))&&<button className="cancel-admin-button" onClick={()=>void cancelOrder(order.id)}>إلغاء الطلب</button>}</div></article>)}</div>{hasMoreOrders && <button disabled={loadingMoreOrders} className="secondary-button" onClick={() => void loadOrders(true)}>{loadingMoreOrders ? 'عم نحمّل الطلبات…' : 'تحميل 30 طلبًا إضافيًا'}</button>}</>:<div className="zone-empty"><strong>لسه ما وصل طلب</strong></div>}</section></> : active === 'السائقون' ? <DriversPanel userId={user?.id??''}/> : active === 'المستخدمون' ? <UsersPanel onOpen={setActive}/> : active === 'التسعير' ? <PricingPanel/> : active === 'التسويات' ? <SettlementPanel/> : active === 'التنبيهات' ? <NotificationsPanel userId={user?.id??''}/> : active === 'الدعم والنزاعات' ? <DisputesPanel/> : active === 'المناطق' ? <><div className="zone-layout"><section className="panel zone-form-panel"><div className="panel-heading"><div><h2>أضف منطقة</h2><p>حدد موقع التوصيل ورسومه.</p></div><span className="step-mark">01</span></div><form className="zone-form" onSubmit={addZone}><label>اسم العرض<input value={name} onChange={e=>setName(e.target.value)} placeholder="مثال: المزة" required maxLength={100}/></label><div className="field-pair"><label>المحافظة<input value={governorate} onChange={e=>setGovernorate(e.target.value)} placeholder="دمشق" required maxLength={100}/></label><label>المدينة<input value={city} onChange={e=>setCity(e.target.value)} placeholder="دمشق" required maxLength={100}/></label></div><label>الحي · اختياري<input value={neighborhood} onChange={e=>setNeighborhood(e.target.value)} placeholder="المزة" maxLength={100}/></label><label>رسوم التوصيل · قرش<input type="number" min="0" step="1" value={fee} onChange={e=>setFee(e.target.value)} required/></label><button className="primary-button create-button" disabled={saving}>{saving?'عم نحفظ…':'حفظ كمسودة'} ←</button>{formMessage&&<p className="form-feedback" role="status">{formMessage}</p>}</form></section><section className="panel zone-list-panel"><div className="panel-heading"><div><h2>مناطق التوصيل</h2><p>إدارة المناطق المنشورة للعملاء.</p></div><button className="refresh-button" onClick={()=>void loadZones()} aria-label="تحديث المناطق">↻</button></div>{zoneError&&<p className="error-line" role="alert">{zoneError}</p>}{loadingZones?<LoadingSkeleton rows={3}/>:zones.length===0?<div className="zone-empty"><strong>ابدأ بأول منطقة خدمة</strong></div>:<div className="zone-list">{zones.map(zone=><article key={zone.id} className="zone-row"><div className="zone-location"><span className="zone-pin">{zone.active?'●':'⌖'}</span><div><strong>{zone.name}</strong><p>{[zone.neighborhood,zone.city,zone.governorate].filter(Boolean).join('، ')}</p></div></div><div className="zone-status"><span className="status-pill">{zone.active?'فعّالة':'مسودة'}</span><button className="toggle-button" onClick={()=>void toggleZone(zone)} role="switch" aria-checked={zone.active} aria-label={`تفعيل منطقة ${zone.name}`}><span/></button></div></article>)}</div>}</section></div></> : active === 'الإعدادات' ? <SettingsPanel onOpen={setActive}/> : <div className="empty-panel"><h3>مرحباً في لوحة لَبّيك</h3><p>تابع الطلبات والسائقين والأسعار من القائمة.</p><button className="text-button" onClick={()=>setActive('الطلبات')}>عرض الطلبات ←</button></div>}
         <footer>لَبّيك <span>•</span> لوحة الإدارة · بيانات تشغيل فعلية</footer></section>
     </main>
   </div>

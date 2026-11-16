@@ -24,6 +24,10 @@ const importStorageModule = async (path) => {
 };
 const customerDraft = await importStorageModule('../src/lib/customer-order-draft.ts');
 const driverCache = await importStorageModule('../src/lib/driver-orders-cache.ts');
+globalThis.window = { setTimeout, clearTimeout };
+const adminSource = await readFile(new URL('../../admin/src/lib/network-health.ts', import.meta.url), 'utf8');
+const adminJs = ts.transpileModule(adminSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const adminNetwork = await import(`data:text/javascript;base64,${Buffer.from(adminJs).toString('base64')}`);
 
 const response = (status) => new Response(null, { status });
 for (const status of [401, 403, 429]) {
@@ -50,6 +54,9 @@ controller.abort();
 await assert.rejects(canceled);
 assert.equal(network.getBackendHealth(), 'reachable', 'caller cancellation does not report a network outage');
 
+await adminNetwork.createAdminMonitoredFetch(async () => response(503))('/rest/v1/orders');
+assert.equal(adminNetwork.getAdminBackendHealth(), 'degraded', 'admin portal reports server errors separately');
+
 const userId = '11111111-1111-4111-8111-111111111111';
 const orderId = '22222222-2222-4222-8222-222222222222';
 await driverCache.saveDriverOrdersSnapshot(userId, [{
@@ -68,4 +75,4 @@ await customerDraft.saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: 
 assert.equal((await customerDraft.loadCustomerOrderDraft(userId)).request, 'Test order');
 await assert.rejects(customerDraft.saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request: 'x'.repeat(16_000), category: '', budgetCeiling: '', addressId: '', idempotencyKey: '44444444-4444-4444-8444-444444444444' }), /storage limit/);
 
-console.log('network-health: 13 checks passed');
+console.log('network-health: 14 checks passed');
