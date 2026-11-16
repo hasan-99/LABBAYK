@@ -33,7 +33,7 @@ export type Database = {
           street: string
           updated_at: string
           user_id: string
-          zone_id: string
+          zone_id: string | null
         }
         Insert: {
           building?: string | null
@@ -53,7 +53,7 @@ export type Database = {
           street: string
           updated_at?: string
           user_id: string
-          zone_id: string
+          zone_id?: string | null
         }
         Update: {
           building?: string | null
@@ -73,7 +73,7 @@ export type Database = {
           street?: string
           updated_at?: string
           user_id?: string
-          zone_id?: string
+          zone_id?: string | null
         }
         Relationships: [
           {
@@ -275,10 +275,12 @@ export type Database = {
       }
       driver_profiles: {
         Row: {
+          age: number | null
           approved_at: string | null
           approved_by: string | null
           created_at: string
           is_online: boolean
+          phone_e164: string | null
           review_status: Database["public"]["Enums"]["driver_review_status"]
           service_zone_id: string | null
           updated_at: string
@@ -286,10 +288,12 @@ export type Database = {
           vehicle_description: string | null
         }
         Insert: {
+          age?: number | null
           approved_at?: string | null
           approved_by?: string | null
           created_at?: string
           is_online?: boolean
+          phone_e164?: string | null
           review_status?: Database["public"]["Enums"]["driver_review_status"]
           service_zone_id?: string | null
           updated_at?: string
@@ -297,10 +301,12 @@ export type Database = {
           vehicle_description?: string | null
         }
         Update: {
+          age?: number | null
           approved_at?: string | null
           approved_by?: string | null
           created_at?: string
           is_online?: boolean
+          phone_e164?: string | null
           review_status?: Database["public"]["Enums"]["driver_review_status"]
           service_zone_id?: string | null
           updated_at?: string
@@ -473,6 +479,57 @@ export type Database = {
           },
         ]
       }
+      push_tokens: {
+        Row: {
+          created_at: string
+          expo_push_token: string
+          platform: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          expo_push_token: string
+          platform: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          expo_push_token?: string
+          platform?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      web_push_subscriptions: {
+        Row: {
+          auth: string
+          created_at: string
+          endpoint: string
+          p256dh: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          auth: string
+          created_at?: string
+          endpoint: string
+          p256dh: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          auth?: string
+          created_at?: string
+          endpoint?: string
+          p256dh?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       order_disputes: {
         Row: {
           created_at: string
@@ -625,7 +682,7 @@ export type Database = {
           request_text: string
           status: string
           updated_at: string
-          zone_id: string
+          zone_id: string | null
           zone_surcharge_minor: number
         }
         Insert: {
@@ -656,7 +713,7 @@ export type Database = {
           request_text: string
           status?: string
           updated_at?: string
-          zone_id: string
+          zone_id: string | null
           zone_surcharge_minor?: number
         }
         Update: {
@@ -687,7 +744,7 @@ export type Database = {
           request_text?: string
           status?: string
           updated_at?: string
-          zone_id?: string
+          zone_id?: string | null
           zone_surcharge_minor?: number
         }
         Relationships: [
@@ -709,18 +766,21 @@ export type Database = {
       }
       profiles: {
         Row: {
+          avatar_path: string | null
           created_at: string
           display_name: string
           id: string
           updated_at: string
         }
         Insert: {
+          avatar_path?: string | null
           created_at?: string
           display_name?: string
           id: string
           updated_at?: string
         }
         Update: {
+          avatar_path?: string | null
           created_at?: string
           display_name?: string
           id?: string
@@ -900,6 +960,10 @@ export type Database = {
       record_order_purchase: {
         Args: { p_order_id: string; p_purchase_amount_minor: number }
         Returns: string
+      }
+      register_push_token: {
+        Args: { p_expo_push_token: string; p_platform: string }
+        Returns: undefined
       }
       redeem_driver_invite: {
         Args: { p_token: string; p_vehicle_description?: string }

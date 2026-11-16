@@ -1,0 +1,10 @@
+.toast-viewport{position:fixed;z-index:10000;top:18px;right:18px;display:grid;gap:10px;width:min(440px,calc(100vw - 36px));pointer-events:none}
+.app-toast{--toast-accent:#8ed6c1;position:relative;display:flex;align-items:center;gap:12px;min-height:74px;overflow:hidden;padding:12px 13px;border:1px solid #34483b;border-right:4px solid var(--toast-accent);border-radius:16px;background:linear-gradient(130deg,#19271f,#111a14);box-shadow:0 16px 44px #0008;color:#eff5f0;pointer-events:auto;animation:toast-enter .22s cubic-bezier(.2,.8,.2,1) both}
+.toast-success{--toast-accent:#b7ff30}.toast-error{--toast-accent:#ff7771}.toast-warning{--toast-accent:#f3c76c}.toast-info{--toast-accent:#8ed6c1}
+.toast-icon{display:grid;flex:none;place-items:center;width:35px;height:35px;border:1px solid color-mix(in srgb,var(--toast-accent) 42%,transparent);border-radius:12px;background:color-mix(in srgb,var(--toast-accent) 12%,transparent);color:var(--toast-accent);font-size:18px;font-weight:900}
+.toast-copy{display:grid;gap:2px;min-width:0;flex:1}.toast-copy small{color:var(--toast-accent);font-size:10px;font-weight:900}.toast-copy p{margin:0;color:#eff5f0;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.toast-close{display:grid;flex:none;place-items:center;width:40px;height:40px;padding:0;border:0;border-radius:12px;background:transparent;color:#9aac9f;font-size:24px}.toast-close:hover{background:#ffffff0b;color:#fff}
+.toast-progress{position:absolute;right:0;bottom:0;height:2px;width:100%;background:var(--toast-accent);opacity:.8;transform-origin:right center;animation:toast-progress 3.9s linear both}.toast-error .toast-progress{animation-duration:5.2s}
+@keyframes toast-enter{from{opacity:0;transform:translateY(-14px)}to{opacity:1;transform:translateY(0)}}@keyframes toast-progress{to{transform:scaleX(0)}}
+@media(max-width:520px){.toast-viewport{top:10px;right:10px;width:calc(100vw - 20px)}.app-toast{min-height:68px;padding:10px}.toast-copy p{font-size:12px}}
+@media(prefers-reduced-motion:reduce){.app-toast{animation:none}.toast-progress{animation:none;display:none}}

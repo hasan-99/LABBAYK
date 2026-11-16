@@ -1,0 +1,157 @@
+/* Labbayk operations pages: shared emerald glass surfaces with a lime action color. */
+.page-heading{position:relative;margin-bottom:28px;padding:4px 2px 22px;border-bottom:1px solid #26382d}
+.page-heading::after{content:"";position:absolute;right:0;bottom:-1px;width:94px;height:2px;border-radius:9px;background:linear-gradient(90deg,transparent,#b7ff30)}
+.page-heading h1{font-size:34px;letter-spacing:-.8px;text-shadow:0 8px 35px #b7ff3018}
+.page-heading .subtitle{max-width:620px;font-size:14px;line-height:1.8}
+.admin .panel{border-color:#2e4535;border-radius:18px;background:linear-gradient(145deg,#142119 0%,#101a14 72%);box-shadow:0 14px 38px #050b071c,inset 0 1px #ffffff08}
+.admin .panel-heading{gap:16px;padding-bottom:16px;border-bottom:1px solid #ffffff0c}
+.admin .panel-heading h2{font-size:17px;letter-spacing:-.25px}
+.admin .panel-heading p{max-width:680px;font-size:12px;line-height:1.75}
+.admin .refresh-button{width:42px;height:42px;border-radius:13px;border-color:#455b45;background:#1c2e21;color:#d9ffa1;transition:transform .18s ease,background .18s ease}
+.admin .refresh-button:hover{transform:rotate(-18deg);background:#29412b}
+.admin .secondary-button{border:1px solid #496148;background:#1b2a1f;color:#e0f4c5;transition:background .16s ease,border-color .16s ease,transform .16s ease}
+.admin .secondary-button:hover:not(:disabled){background:#293d2b;border-color:#7d9c54;transform:translateY(-1px)}
+.admin .primary-button{box-shadow:0 8px 22px #b7ff3020;transition:filter .16s ease,transform .16s ease}
+.admin .primary-button:hover:not(:disabled){filter:brightness(1.08);transform:translateY(-1px)}
+.admin .connection-card{position:relative;overflow:hidden;min-height:112px;padding:23px 24px;border-color:#486343;border-radius:18px;background:radial-gradient(ellipse at 6% 120%,#b7ff301b,transparent 39%),linear-gradient(110deg,#203624,#142219 70%);box-shadow:0 16px 34px #050b0728,inset 0 1px #ffffff0b}
+.admin .connection-card::after{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:linear-gradient(#d1ff74,#638d38);opacity:.85}
+.admin .connection-symbol{width:48px;height:48px;border:1px solid #a6d66136;border-radius:15px;background:#b7ff3017;box-shadow:0 0 26px #b7ff3012}
+.admin .connection-card strong{font-size:15px}
+.admin .connection-card p{max-width:670px;font-size:12px}
+.admin .connection-tag{border-color:#66834a;background:#b7ff300d;color:#ddf9ae}
+
+/* Orders: the quote form remains attached to its order and its next step. */
+.orders-page .order-admin-panel{margin-top:0;padding:22px}
+.orders-page .admin-order-list{gap:11px;padding-top:15px}
+.orders-page .admin-order{display:grid;grid-template-columns:minmax(0,1fr) minmax(250px,.78fr);gap:4px 22px;padding:17px 18px;border:1px solid #2d4333;border-radius:15px;background:linear-gradient(115deg,#19281e,#121d16 62%);transition:border-color .18s ease,transform .18s ease,box-shadow .18s ease}
+.orders-page .admin-order:hover{transform:translateY(-2px);border-color:#547044;box-shadow:0 12px 24px #050b0726}
+.orders-page .admin-order-head{grid-column:1/-1;padding-bottom:11px;border-bottom:1px solid #ffffff0c}
+.orders-page .admin-order-head>div{gap:10px}
+.orders-page .order-reference{font-size:12px;color:#d8f5aa}
+.orders-page .admin-order-head time{font-size:11px}
+.orders-page .status-pill{border:1px solid #465a3d;background:#253421;color:#e0f5b6;font-size:10px}
+.orders-page .admin-order-copy{align-self:center;padding:13px 0 7px}
+.orders-page .admin-order-copy strong{font-size:15px;color:#f4f8f3}
+.orders-page .admin-order-copy p{font-size:12px;line-height:1.8}
+.orders-page .admin-order-copy small{display:inline-block;margin:7px 14px 0 0;font-size:10px;color:#99ad9e}
+.orders-page .admin-order-actions{grid-column:2;grid-row:2;align-content:center;gap:10px;padding:13px 0 7px;border:0;border-right:1px solid #ffffff10;padding-right:17px}
+.orders-page .admin-order-actions>span{font-size:11px;color:#d6e7d8}
+.orders-page .admin-quote-form{grid-template-columns:minmax(110px,.5fr) minmax(170px,1fr)}
+.orders-page .admin-quote-form button{grid-column:1/-1;min-height:42px;background:#b7ff30;color:#132016;border:0;font-size:11px}
+.orders-page .admin-quote-form input{min-height:42px;background:#0d1711}
+.orders-page .dispatch-button{min-height:42px;background:linear-gradient(110deg,#c5ff59,#9ae313);box-shadow:0 7px 20px #b7ff3022}
+.orders-page .cancel-admin-button{min-height:38px}
+
+/* Service regions: guided setup beside a scan-friendly list. */
+.zones-page .zone-layout{margin-top:0;gap:20px}
+.zones-page .zone-form-panel,.zones-page .zone-list-panel{padding:22px}
+.zones-page .zone-form-panel{position:relative;overflow:hidden;background:radial-gradient(ellipse at 0 0,#b7ff3010,transparent 45%),linear-gradient(145deg,#16251b,#101a14)}
+.zones-page .step-mark{display:grid;place-items:center;width:36px;height:36px;border:1px solid #647e48;border-radius:12px;background:#b7ff3012;color:#d9f6a6;font:700 11px Inter,sans-serif}
+.zones-page .zone-form-panel .zone-form{gap:16px}
+.zones-page .zone-form-panel .zone-form label{font-size:12px}
+.zones-page .zone-form-panel .zone-form input{min-height:47px;border-color:#3c5541;border-radius:11px;background:#0c1710}
+.zones-page .zone-form-panel .create-button{min-height:48px;width:100%;margin-top:3px}
+.zones-page .zone-list{gap:10px;padding-top:16px}
+.zones-page .zone-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:14px;border:1px solid #2a4031;border-radius:14px;background:linear-gradient(100deg,#18271d,#121c16);transition:border-color .16s ease,transform .16s ease}
+.zones-page .zone-row:hover{transform:translateX(-2px);border-color:#526d43}
+.zones-page .zone-row:first-child{padding-top:14px}
+.zones-page .zone-pin{width:42px;height:42px;border:1px solid #8db4542b;border-radius:14px;background:#b7ff3012;font-size:15px}
+.zones-page .zone-row .zone-location strong{font-size:14px}
+.zones-page .zone-row .zone-location p{font-size:11px}
+.zones-page .zone-status .status-pill{min-width:62px;text-align:center}
+
+/* Cash desk: prominent totals and clear, auditable action rows. */
+.settlements-page>.connection-card{margin-bottom:18px}
+.settlements-page .wallet-ledger-panel,.settlements-page .reconciliation-panel,.settlements-page .pricing-global,.settlements-page .pricing-zones{padding:21px}
+.settlements-page .pricing-layout{gap:18px}
+.settlements-page .pricing-global .zone-form label{font-size:12px}
+.settlements-page .pricing-global .zone-form input,.settlements-page .pricing-global .zone-form select{height:45px;border:1px solid #405642;border-radius:10px;background:#0d1711;color:#eef4ee;padding:0 11px;font:inherit;font-size:13px}
+.settlements-page .reconciliation-panel{margin-top:18px;border-color:#4b663f;background:radial-gradient(ellipse at 0 0,#b7ff3014,transparent 40%),linear-gradient(140deg,#18271c,#101a14)}
+.settlements-page .reconciliation-grid>div{min-height:82px;border:1px solid #324a36;border-radius:13px;background:#0e1912;padding:14px}
+.settlements-page .reconciliation-grid strong{color:#e1ffaf;font-size:17px}
+.settlements-page .audit-entry{align-items:center;margin-top:10px;padding:15px;border:1px solid #2a4030;border-radius:13px;background:linear-gradient(100deg,#18271d,#111c15)}
+.settlements-page .audit-entry:first-of-type{border-top:1px solid #2a4030}
+.settlements-page .audit-entry strong{font-size:13px;color:#edf5ec}
+.settlements-page .audit-entry small{font-size:10px}
+.settlements-page .audit-values{grid-template-columns:repeat(2,minmax(0,1fr))}
+.settlements-page .audit-values span{border:1px solid #ffffff08;background:#101b14;color:#c6d8c7}
+.settlements-page .reversal-button{min-height:40px;border-color:#805447;background:#30231f;font-size:11px}
+.settlements-page .pricing-zone{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;margin-top:10px;padding:14px;border:1px solid #2a4030;border-radius:13px;background:#142119}
+.settlements-page .pricing-zone:first-of-type{border-top:1px solid #2a4030;padding-top:14px}
+.settlements-page .pricing-zone .zone-location{margin:0}
+.settlements-page .pricing-zone .primary-button{min-height:42px}
+
+/* Notifications: status and recipient stay visible beside each event. */
+.notifications-page>.connection-card{margin-bottom:18px}
+.notifications-page .pricing-audit{padding:21px}
+.notifications-page .audit-entry{grid-template-columns:minmax(0,1fr) auto;align-items:center;margin-top:10px;padding:15px;border:1px solid #2b4131;border-radius:14px;background:linear-gradient(100deg,#18271d,#111c15);transition:border-color .16s ease,background .16s ease}
+.notifications-page .audit-entry[style*="opacity: 1"]{border-color:#527046;background:linear-gradient(100deg,#1c2d20,#121d16)}
+.notifications-page .audit-entry:first-of-type{border-top:1px solid #2b4131}
+.notifications-page .audit-entry strong{font-size:13px;color:#edf5ec}
+.notifications-page .audit-entry small{font-size:10px}
+.notifications-page .audit-entry p{font-size:12px;line-height:1.7}
+.notifications-page .audit-entry .secondary-button{min-width:134px;min-height:40px}
+
+/* Settings directory: role chips make each rule and its owners scannable. */
+.settings-workspace{display:grid;gap:18px}
+.settings-hero{position:relative;display:flex;align-items:center;gap:18px;min-height:150px;overflow:hidden;padding:25px 28px;border:1px solid #526d43;border-radius:20px;background:radial-gradient(ellipse at 0 100%,#b7ff3021,transparent 42%),linear-gradient(110deg,#253b29,#142219 72%);box-shadow:0 18px 42px #050b0730,inset 0 1px #ffffff10}
+.settings-hero::after{content:"";position:absolute;left:12%;top:-74px;width:210px;height:210px;border:1px solid #d0ff7420;border-radius:50%;box-shadow:0 0 0 25px #d0ff7408,0 0 0 50px #d0ff7405}
+.settings-hero-icon{z-index:1;display:grid;place-items:center;width:58px;height:58px;border:1px solid #d1ff7440;border-radius:18px;background:#b7ff3018;color:#d7ff99;font-size:26px;box-shadow:0 0 30px #b7ff3014}
+.settings-hero>div{z-index:1}
+.settings-kicker{color:#d1f29d;font-size:11px;font-weight:700}
+.settings-hero h2{margin:4px 0 3px;color:#f6faf4;font-size:22px}
+.settings-hero p{margin:0;color:#b2c3b4;font-size:12px;line-height:1.7}
+.settings-hero-mark{margin-right:auto;color:#d9ff9a;font-size:68px;font-weight:800;opacity:.11}
+.settings-directory{padding:22px}
+.settings-directory .connection-tag{margin-right:auto}
+.admin-table-wrap{width:100%;overflow:auto;border:1px solid #304735;border-radius:14px;background:#101a14}
+.admin-table{width:100%;border-collapse:separate;border-spacing:0;text-align:right}
+.admin-table thead{background:linear-gradient(90deg,#263a29,#1a2a1e)}
+.admin-table th{padding:14px 15px;border-bottom:1px solid #45603d;color:#d1e2c2;font-size:11px;font-weight:700;white-space:nowrap}
+.admin-table td{padding:15px;border-bottom:1px solid #ffffff0c;color:#e4ede3;vertical-align:middle}
+.admin-table tbody tr:last-child td{border-bottom:0}
+.admin-table tbody tr{transition:background .16s ease}
+.admin-table tbody tr:hover{background:#19281d}
+.settings-table td:first-child{min-width:175px;white-space:nowrap}
+.settings-table td:first-child strong{font-size:12px}
+.settings-row-icon{display:inline-grid;place-items:center;width:31px;height:31px;margin-left:9px;border:1px solid #8fb85a38;border-radius:10px;background:#b7ff3012;color:#d3ff8b}
+.settings-role-list{display:flex;flex-wrap:wrap;gap:6px;min-width:145px}
+.role-chip{display:inline-flex;align-items:center;min-height:27px;padding:4px 9px;border:1px solid #426040;border-radius:30px;background:#20311f;color:#d6f2ae;font-size:10px;font-weight:700;white-space:nowrap}
+.role-chip-admin{border-color:#877442;background:#352f1e;color:#f2db92}
+.role-chip-driver{border-color:#3c654b;background:#1b3324;color:#bdeab0}
+.role-chip-customer{border-color:#426174;background:#1b2d35;color:#b8dce8}
+.settings-detail{max-width:540px;margin:0;color:#adbeaf;font-size:11px;line-height:1.8}
+.settings-open-button{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:40px;padding:0 13px;border:1px solid #607f45;border-radius:11px;background:#223523;color:#e1f5ba;font-size:11px;font-weight:700;white-space:nowrap;transition:background .15s ease,transform .15s ease}
+.settings-open-button:hover{transform:translateY(-1px);background:#30492b}
+.settings-open-button span{color:#b7ff30;font-size:16px}
+
+/* Keep real table rows readable on mobile without sideways page scrolling. */
+.users-admin-page .user-directory-panel{padding:21px;border-radius:18px;background:linear-gradient(145deg,#142119,#101a14);box-shadow:0 14px 38px #050b071c,inset 0 1px #ffffff08}
+.users-admin-page .users-overview-main,.users-admin-page .users-overview-stat{border-radius:15px;box-shadow:inset 0 1px #ffffff09}
+.users-admin-page .users-overview-main{position:relative;overflow:hidden;background:radial-gradient(ellipse at 0 120%,#b7ff3020,transparent 50%),linear-gradient(120deg,#243925,#16231a)}
+.users-admin-page .users-overview-stat{background:linear-gradient(145deg,#19281e,#111b15)}
+.users-admin-page .users-directory-list{display:grid;gap:11px}
+.users-admin-page .user-account-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px 22px;padding:17px;border:1px solid #304735;border-radius:15px;background:linear-gradient(120deg,#18271d,#111b15);box-shadow:0 10px 24px #050b071a;transition:transform .16s ease,border-color .16s ease,background .16s ease}
+.users-admin-page .user-account-card:hover{transform:translateY(-1px);border-color:#526d43;background:linear-gradient(120deg,#1b2c20,#121d16)}
+.users-admin-page .user-card-main{display:flex;align-items:center;justify-content:space-between;gap:18px;min-width:0}
+.users-admin-page .user-card-identity{display:flex;align-items:center;gap:12px;min-width:0}
+.users-admin-page .user-card-avatar{display:grid;place-items:center;flex:none;width:44px;height:44px;border:1px solid #527044;border-radius:15px;background:#263a28;color:#d7f89c;font-size:17px;font-weight:800}
+.users-admin-page .user-card-avatar.role-admin{border-color:#75623e;background:#302b1d;color:#f4db91}
+.users-admin-page .user-card-avatar.role-driver,.users-admin-page .user-card-avatar.role-pending{border-color:#3c5b40;background:#1c3022;color:#bdf08c}
+.users-admin-page .user-card-avatar.role-customer{border-color:#3b5160;background:#1a2931;color:#b6d9e9}
+.users-admin-page .user-card-roles{display:grid;gap:7px;justify-items:start;min-width:120px}
+.users-admin-page .user-card-label{display:block;color:#8fa294;font-size:10px;font-weight:700}
+.users-admin-page .user-card-meta{display:flex;flex-wrap:wrap;align-items:center;gap:18px}
+.users-admin-page .user-card-meta>div{display:grid;gap:7px}
+.users-admin-page .users-last-login{min-width:0;font-size:11px}
+.users-admin-page .users-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:8px;min-width:0}
+.users-admin-page .users-actions button{width:auto;min-height:42px;padding-inline:13px;border-radius:10px}
+.users-admin-page .users-actions .users-review-action{min-height:42px;padding-inline:13px;border-radius:10px}
+.users-admin-page .users-review-action{border-radius:10px}
+.users-admin-page .user-result-count{padding:10px 12px;border:1px solid #2d4332;border-radius:10px;background:#132017}
+.users-admin-page .user-edit-form{grid-column:1/-1;margin:0;border-top:1px solid #ffffff10;padding:15px 0 0}
+
+@media(max-width:900px){.orders-page .admin-order{grid-template-columns:minmax(0,1fr)}.orders-page .admin-order-actions{grid-column:1;grid-row:auto;border-right:0;border-top:1px solid #ffffff10;padding:13px 0 2px}.orders-page .admin-quote-form{grid-template-columns:repeat(2,minmax(0,1fr))}.settlements-page .audit-entry{grid-template-columns:minmax(0,1fr) auto}.settlements-page .pricing-zone{grid-template-columns:1fr}.settlements-page .pricing-zone .primary-button{width:100%}}
+@media(max-width:760px){.admin-table-wrap{overflow:visible;border:0;background:transparent}.admin-table,.admin-table tbody{display:block;width:100%}.admin-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}.admin-table tbody{display:grid;gap:11px}.admin-table tbody tr{display:grid;gap:0;padding:9px 13px;border:1px solid #304735;border-radius:14px;background:linear-gradient(120deg,#18271d,#111b15)}.admin-table tbody tr:hover{background:#1b2c20}.admin-table td{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;min-width:0;padding:10px 2px;border-bottom:1px solid #ffffff0c}.admin-table td:last-child{border-bottom:0}.admin-table td::before{content:attr(data-label);flex:none;color:#91a793;font-size:10px;font-weight:700}.settings-table td:first-child{white-space:normal}.settings-table td:first-child::before{content:"الإعداد"}.settings-table td:nth-child(2)::before{content:"الأدوار"}.settings-table td:nth-child(3)::before{content:"كيف يعمل"}.settings-table td:nth-child(4)::before{content:"الإجراء"}.settings-detail{max-width:65%;text-align:left}.settings-role-list{min-width:0;justify-content:flex-end}.settings-open-button{min-width:140px}.admin .panel-heading{align-items:flex-start}.settings-directory{padding:15px}}
+@media(max-width:600px){.page-heading{margin-bottom:21px;padding-bottom:17px}.page-heading h1{font-size:28px}.page-heading .subtitle{font-size:12px}.orders-page .order-admin-panel,.zones-page .zone-form-panel,.zones-page .zone-list-panel,.settlements-page .wallet-ledger-panel,.settlements-page .reconciliation-panel,.settlements-page .pricing-global,.settlements-page .pricing-zones,.notifications-page .pricing-audit,.users-admin-page .user-directory-panel{padding:15px}.orders-page .admin-order{padding:13px}.orders-page .admin-order-head{align-items:flex-start;flex-direction:column}.orders-page .admin-order-copy small{display:block;margin-right:0}.orders-page .admin-quote-form{grid-template-columns:minmax(0,1fr)}.zones-page .zone-row{grid-template-columns:minmax(0,1fr);padding:12px}.zones-page .zone-status{justify-content:space-between}.settlements-page .audit-entry{grid-template-columns:minmax(0,1fr);gap:10px}.settlements-page .audit-values{grid-template-columns:minmax(0,1fr)}.settlements-page .reconciliation-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.notifications-page .audit-entry{grid-template-columns:minmax(0,1fr);gap:12px}.notifications-page .audit-entry .secondary-button{width:100%}.settings-hero{min-height:132px;padding:20px 17px}.settings-hero-icon{width:48px;height:48px;border-radius:15px}.settings-hero h2{font-size:18px}.settings-hero p{max-width:260px;font-size:11px}.settings-hero-mark{font-size:50px}.settings-detail{max-width:64%;font-size:10px}.settings-table td{gap:8px}.settings-table td:first-child{font-size:11px}.settings-open-button{min-width:125px}.users-admin-page .user-account-card{grid-template-columns:minmax(0,1fr);gap:13px;padding:14px}.users-admin-page .user-card-main{align-items:flex-start;flex-direction:column}.users-admin-page .user-card-roles{padding-right:56px}.users-admin-page .user-card-meta{align-items:flex-start;flex-direction:column;gap:12px;padding-top:11px;border-top:1px solid #ffffff0c}.users-admin-page .users-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.users-admin-page .users-actions button,.users-admin-page .users-actions .users-review-action{width:100%;min-height:44px}.users-admin-page .users-actions .users-protected-action{grid-column:1/-1}.users-admin-page .user-edit-form{grid-template-columns:minmax(0,1fr);padding-top:13px}}
+@media(prefers-reduced-motion:reduce){.admin .refresh-button,.admin .secondary-button,.admin .primary-button,.orders-page .admin-order,.zones-page .zone-row,.admin-table tbody tr,.settings-open-button{transition:none}}

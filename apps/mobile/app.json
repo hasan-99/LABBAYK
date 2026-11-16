@@ -4,35 +4,51 @@
     "slug": "labbayk",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/labbayk-delivery-logo.png",
     "scheme": "labbayk",
     "userInterfaceStyle": "dark",
     "ios": {
       "bundleIdentifier": "com.hasan99.labbayk",
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/images/labbayk-delivery-logo.png"
     },
     "android": {
       "package": "com.hasan99.labbayk",
       "adaptiveIcon": {
-        "backgroundColor": "#0B1411",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/images/labbayk-delivery-logo.png"
       },
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/labbayk-delivery-logo.png"
+    },
+    "extra": {
+      "webPushVapidPublicKey": "BHEAGWfH429jaR2hThAtU2UTRQ24C81fyG2PYE3CO5Myg4B73myc2hvcPdLWs638kLemoKueRkslVHWl06NM13U",
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "2b2c9056-cc66-4a6d-b34c-f91eee97cc3c"
+      }
     },
     "plugins": [
       "expo-router",
       [
+        "expo-notifications",
+        {
+          "color": "#B7FF30",
+          "defaultChannel": "order_updates"
+        }
+      ],
+      [
         "expo-splash-screen",
         {
-          "backgroundColor": "#0B1411",
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "backgroundColor": "#FFFFFF",
+          "image": "./assets/images/labbayk-delivery-logo.png",
+          "imageWidth": 190
         }
       ],
       "expo-secure-store"
@@ -40,6 +56,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "owner": "hasan-jahouse",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/2b2c9056-cc66-4a6d-b34c-f91eee97cc3c"
     }
   }
 }

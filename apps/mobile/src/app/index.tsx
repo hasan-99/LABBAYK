@@ -1,135 +1,467 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Children, Fragment, createContext, isValidElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import type { Metadata } from 'expo-router/server';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Animated, AppState, Easing, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { SymbolView, type AndroidSymbol, type SFSymbol } from 'expo-symbols';
 import { useNetworkState } from 'expo-network';
+import type { NotificationResponse } from 'expo-notifications';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { tokens } from '@labbayk/design-tokens';
 import type { Session } from '@supabase/supabase-js';
 import type { Database } from '@labbayk/shared/database.types';
 import { supabase, supabaseConfigured } from '@/lib/supabase';
 import { clearCustomerOrderDraft, clearCustomerOrdersSnapshot, loadCustomerOrderDraft, loadCustomerOrdersSnapshot, saveCustomerOrderDraft, saveCustomerOrdersSnapshot, type CustomerOrderSnapshot } from '@/lib/customer-order-draft';
 import { clearDriverOrdersSnapshot, loadDriverOrdersSnapshot, saveDriverOrdersSnapshot } from '@/lib/driver-orders-cache';
+import { enablePushNotifications, hasRegisteredPushToken, unregisterPushNotifications } from '@/lib/push-notifications';
 import { AuthScreen, PasswordRecoveryScreen } from '@/components/AuthScreen';
 import { AppText as Text } from '@/components/AppText';
+import { ToastProvider, useToastMessage } from '@/components/Toast';
 
-const c = tokens.color;
+const c: any = tokens.color;
+const MobileThemeContext = createContext<{ colors: any; styles: Record<string, any> } | null>(null);
+function useMobileTheme() {
+  const theme = useContext(MobileThemeContext);
+  if (!theme) throw new Error('useMobileTheme must be used inside MobileThemeContext');
+  return theme;
+}
+const mobileThemeKey = 'labbayk-theme';
+const lightPalette = { ...tokens.color, background: '#F5F7F2', surface: '#FFFFFF', raised: '#EFF5E8', surfaceRaised: '#EFF5E8', border: '#DCE4D8', text: '#20241F', muted: '#5D645B', primary: '#343A32', accent: '#287A55', danger: '#B42318' } as unknown as typeof tokens.color;
+const lightColorMap: Record<string, string> = {
+  '#0B1411':'#F5F7F2','#101A14':'#F5F7F2','#0F1A13':'#F5F7F2','#111c16':'#F5F7F2','#121d16':'#F5F7F2',
+  '#142119':'#FFFFFF','#15231a':'#FFFFFF','#17251C':'#F5F7F2','#17251c':'#F5F7F2','#1D2B24':'#FFFFFF','#25382E':'#EFF5E8','#25382d':'#EFF5E8','#26382c':'#EFF5E8','#263b2c':'#EFF5E8','#26392c':'#EFF5E8','#283b2d':'#EFF5E8','#223128':'#EFF5E8','#344629':'#EFF5E8','#2C4034':'#DCE4D8','#33473b':'#DCE4D8','#3b5143':'#DCE4D8','#405449':'#DCE4D8','#42564a':'#DCE4D8','#3A5143':'#DCE4D8',
+  '#FFFFFF':'#20241F','#ffffff':'#20241F','#fff':'#20241F','#E4EEE7':'#30372F','#A9B9B0':'#5D645B','#8fa196':'#687066','#839188':'#687066','#819087':'#58675D','#91A397':'#58675D','#99AA9E':'#58675D','#99bd75':'#496037','#DFFFAD':'#30372F','#DFFFAE':'#30372F','#D3EFA4':'#30372F','#B8C8BE':'#5D645B','#FFC1AD':'#A33420','#FFD1D1':'#A33420','#FFE2A0':'#765500',
+  '#451E21':'#FBE9E7','#302321':'#FBE9E7','#352D1D':'#FFF4D6','#263820':'#EFF5E8','#3A2D18':'#FFF4D6'
+};
+function stylesForTheme(definitions: Record<string, Record<string, unknown>>, theme: 'dark' | 'light'): Record<string, any> {
+  if (theme === 'dark') return StyleSheet.create(definitions as never) as Record<string, any>;
+  const mapped = Object.fromEntries(Object.entries(definitions).map(([name, style]) => [name, Object.fromEntries(Object.entries(style).map(([property, value]) => {
+    if (typeof value !== 'string' || !/color/i.test(property)) return [property, value];
+    if (property === 'color' && ['#0B1411','#101A14','#0F1A13'].includes(value)) return [property, '#20241F'];
+    const replacement = lightColorMap[value];
+    if (replacement) return [property, replacement];
+    if (/^border.*color$/i.test(property) && /^#[0-9a-f]{6}$/i.test(value)) return [property, value.toUpperCase() === '#B7FF30' ? '#9ACB28' : '#DCE4D8'];
+    if (/^#[0-9a-f]{6}$/i.test(value)) {
+      const raw = value.slice(1);
+      const luminance = (parseInt(raw.slice(0, 2), 16) * 299 + parseInt(raw.slice(2, 4), 16) * 587 + parseInt(raw.slice(4, 6), 16) * 114) / 1000;
+      if (property === 'backgroundColor' && luminance < 62) return [property, '#F3F6F2'];
+      if (property === 'backgroundColor' && luminance < 112) return [property, '#EDF3ED'];
+      if (property === 'backgroundColor' && luminance < 158) return [property, '#E6F0D8'];
+      if ((property === 'color' || property === 'tintColor') && luminance > 165) return [property, '#343A32'];
+      if ((property === 'color' || property === 'tintColor') && luminance < 45) return [property, '#20241F'];
+    }
+    return [property, value];
+  }))]));
+  const driverPrimarySurfaces = ['driverHeroOrb','driverAvailabilityAction','driverAvailabilityHeroIconOn','driverSaveButton','completeDriverProfile','driverOnboardingIcon','driverOnboardingButton','driverFooterButtonActive'];
+  for (const name of driverPrimarySurfaces) {
+    if (mapped[name]) mapped[name].backgroundColor = '#B7FF30';
+  }
+  const driverPrimaryText = ['driverAvailabilityActionText','driverSaveButtonText','completeDriverProfileText','driverOnboardingButtonText','driverFooterLabelActive'];
+  for (const name of driverPrimaryText) {
+    if (mapped[name]) mapped[name].color = '#0B1411';
+  }
+  if (mapped.driverHero) Object.assign(mapped.driverHero, { backgroundColor: '#F2F7E8', borderColor: '#C9D9A7' });
+  if (mapped.driverAvailabilityHeroOn) Object.assign(mapped.driverAvailabilityHeroOn, { backgroundColor: '#F0F6E4', borderColor: '#B7D66C' });
+  if (mapped.driverOnboardingCard) Object.assign(mapped.driverOnboardingCard, { backgroundColor: '#FFFFFF', borderColor: '#DCE4D8' });
+  if (mapped.driverHeaderAvatar) mapped.driverHeaderAvatar.borderColor = '#A7CF45';
+  if (mapped.driverPhotoRing) mapped.driverPhotoRing.borderColor = '#A7CF45';
+  if (mapped.driverTabBadgeText) mapped.driverTabBadgeText.color = '#FFFFFF';
+  Object.assign(mapped.driverFooter, { backgroundColor: '#FFFFFF', borderTopColor: '#CCD6C8' });
+  Object.assign(mapped.driverFooterButtonActive, { backgroundColor: '#B7FF30' });
+  Object.assign(mapped.driverFooterLabel, { color: '#495248', fontSize: 11 });
+  Object.assign(mapped.driverFooterLabelActive, { color: '#17210F', fontSize: 11, fontWeight: '900' });
+  Object.assign(mapped.driverTabBadge, { minWidth: 22, height: 22, borderRadius: 11, right: -7, top: -6, paddingHorizontal: 4, backgroundColor: '#C62828', borderColor: '#FFFFFF', borderWidth: 2 });
+  Object.assign(mapped.driverTabBadgeText, { color: '#FFFFFF', fontSize: 10, fontWeight: '900' });
+  Object.assign(mapped.footer, { backgroundColor: '#FFFFFF', borderTopColor: '#CCD6C8' });
+  Object.assign(mapped.footerButtonActive, { backgroundColor: '#B7FF30' });
+  Object.assign(mapped.footerItem, { color: '#495248', fontSize: 12 });
+  Object.assign(mapped.footerActive, { color: '#17210F', fontSize: 12, fontWeight: '900' });
+  Object.assign(mapped.accountIntro, { borderRightWidth: 3, borderRightColor: '#B7FF30', paddingRight: 10 });
+  Object.assign(mapped.profileSectionCard, { borderColor: '#D5E1C8' });
+  Object.assign(mapped.profileHeadingIcon, { backgroundColor: '#B7FF30' });
+  Object.assign(mapped.profileSectionTag, { color: '#405D1B', backgroundColor: '#EDF7D9' });
+  Object.assign(mapped.profileSectionAction, { backgroundColor: '#F8FBEF', borderColor: '#D4E3BD' });
+  Object.assign(mapped.profileSectionActionText, { color: '#405D1B' });
+  Object.assign(mapped.profileSectionActionPrimary, { backgroundColor: '#B7FF30', borderColor: '#B7FF30' });
+  Object.assign(mapped.profileSectionActionTextPrimary, { color: '#17210F' });
+  Object.assign(mapped.profileAddressSummary, { backgroundColor: '#F8FBEF', borderColor: '#D4E3BD' });
+  Object.assign(mapped.profileThemeRow, { backgroundColor: '#F8FBEF', borderColor: '#D4E3BD' });
+  Object.assign(mapped.profileThemeIcon, { backgroundColor: '#B7FF30' });
+  Object.assign(mapped.profileThemeState, { backgroundColor: '#E9F8C9' });
+  Object.assign(mapped.profileThemeStateText, { color: '#405D1B' });
+  Object.assign(mapped.address, { minHeight: 64, paddingHorizontal: 12, backgroundColor: '#FFFFFF', borderColor: '#D5E1C8' });
+  Object.assign(mapped.pin, { width: 36, height: 36, borderRadius: 12, backgroundColor: '#EDF7D9' });
+  Object.assign(mapped.pinGlyph, { color: '#385616' });
+  Object.assign(mapped.addressEyebrow, { color: '#626D5A' });
+  Object.assign(mapped.addressName, { color: '#20241F', fontSize: 13, fontWeight: '900' });
+  Object.assign(mapped.addressChangeButton, { backgroundColor: '#B7FF30', borderColor: '#A3E51E' });
+  Object.assign(mapped.addressChange, { color: '#17210F', fontSize: 12 });
+  Object.assign(mapped.ordersIntroCard, { backgroundColor: '#FFFFFF', borderColor: '#D5E1C8' });
+  Object.assign(mapped.ordersEyebrow, { color: '#56751F' });
+  Object.assign(mapped.ordersEyebrowDot, { backgroundColor: '#B7FF30' });
+  Object.assign(mapped.ordersBackButton, { backgroundColor: '#F3F8E8', borderColor: '#D3E2B9' });
+  Object.assign(mapped.ordersBackButtonText, { color: '#405D1B' });
+  Object.assign(mapped.ordersCountBadge, { backgroundColor: '#B7FF30', borderColor: '#A3E51E' });
+  Object.assign(mapped.ordersCountValue, { color: '#17210F' });
+  Object.assign(mapped.ordersCountLabel, { color: '#385616' });
+  Object.assign(mapped.ordersRefreshButton, { backgroundColor: '#EFF7DF', borderColor: '#D3E2B9' });
+  Object.assign(mapped.notificationCard, { backgroundColor: '#FFFFFF', borderColor: '#CCD6C8' });
+  Object.assign(mapped.notificationIcon, { backgroundColor: '#EDF7D9', borderColor: '#CFDDB7' });
+  Object.assign(mapped.notificationCount, { backgroundColor: '#B7FF30', borderColor: '#9BCB35' });
+  Object.assign(mapped.notificationCountText, { color: '#17210F', fontSize: 13, fontWeight: '900' });
+  Object.assign(mapped.notificationItemRead, { opacity: 1 });
+  Object.assign(mapped.notificationItemBody, { color: '#4F584D' });
+  Object.assign(mapped.notificationItemMeta, { color: '#586253', fontSize: 11 });
+  Object.assign(mapped.notificationItemTitle, { flex: 1, minWidth: 0, color: '#20241F' });
+  Object.assign(mapped.notificationDot, { backgroundColor: '#6C9F16' });
+  Object.assign(mapped.notificationDotRead, { backgroundColor: '#849080' });
+  Object.assign(mapped.notificationUnreadPill, { backgroundColor: '#E9F8C9', borderColor: '#B7D87A' });
+  Object.assign(mapped.notificationUnreadPillText, { color: '#385616' });
+  Object.assign(mapped.notificationItemStandalone, { backgroundColor: '#FBFCF9', borderColor: '#D1DACD' });
+  Object.assign(mapped.notificationItemUnread, { backgroundColor: '#F3F9E8', borderColor: '#BAD48D' });
+  return StyleSheet.create(mapped as never) as Record<string, any>;
+}
 const categories = ['خضرة', 'لحمة', 'أغراض البيت', 'غيره'];
+const numberFormatter = new Intl.NumberFormat('en-US');
+const normalizeDigits = (value: string) => value.replace(/[٠-٩۰-۹]/g, (digit) => {
+  const code = digit.charCodeAt(0);
+  return String(code >= 0x06F0 ? code - 0x06F0 : code - 0x0660);
+}).replace(/\D/g, '');
+const formatSyrianMobile = (value: string) => normalizeDigits(value).slice(0, 9).replace(/^(\d{3})(\d{0,3})(\d{0,3})$/, (_match, first: string, second: string, third: string) => [first, second, third].filter(Boolean).join(' '));
+const arabicNumberFormatter = new Intl.NumberFormat('ar-SY');
+const shortTimeFormatter = new Intl.DateTimeFormat('ar-SY', { timeStyle: 'short' });
+const shortDateTimeFormatter = new Intl.DateTimeFormat('ar-SY', { dateStyle: 'medium', timeStyle: 'short' });
 export function generateMetadata(): Metadata {
   return { title: 'لَبّيك | اطلب، والباقي علينا.', description: 'خدمة يومك تبدأ من هون. احتياجاتك، بطلب واحد.' };
 }
 type Address = Database['public']['Tables']['addresses']['Row'];
-type ServiceZone = Pick<Database['public']['Tables']['service_zones']['Row'], 'id'|'name'|'governorate'|'city'|'neighborhood'|'delivery_surcharge_minor'|'currency'>;
 type CustomerOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'category'|'request_text'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'budget_ceiling_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'>;
 type DriverOfferCard = { id: string; expires_at: string; order: Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'category'|'request_text'|'delivery_fee_minor'|'budget_ceiling_minor'> };
 type DriverActiveOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'category'|'request_text'|'delivery_fee_minor'|'budget_ceiling_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'address_id'> & { address: Pick<Address, 'id'|'label'|'street'|'city'|'neighborhood'|'contact_phone'|'building'|'landmark'> | null };
 const newRequestKey = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => { const value = Math.random() * 16 | 0; return (char === 'x' ? value : (value & 3 | 8)).toString(16); });
 type OrderImage = { id: string; uri: string; mimeType: string; extension: string; uploaded: boolean };
+type ProfileAvatarDraft = { uri: string; mimeType: string; extension: string };
 const orderStatus: Record<string, string> = { requested:'بانتظار التوزيع', quoted:'أجرة التوصيل جاهزة', searching:'عم ندور على سائق', accepted:'قبل السائق الطلب', assigned:'تم تعيين سائق', shopping:'عم نجهز طلبك', awaiting_approval:'بانتظار موافقتك', purchased:'تم الشراء', delivering:'بالطريق لعندك', delivered:'تم التوصيل', settled:'تمت التسوية', disputed:'قيد مراجعة الدعم', cancelled:'ملغي' };
 
-function AddressBook({ userId, onBack }: { userId: string; onBack: () => void }) {
+function SkeletonBlock({ width = '68%', height = 11, style }: { width?: number | `${number}%`; height?: number; style?: object }) {
+  const { colors: c } = useMobileTheme();
+  return <View style={[{ width, height, borderRadius: 8, backgroundColor: c.raised, alignSelf: 'flex-end' }, style]} />;
+}
+
+function OrdersSkeleton({ styles: s }: { styles: Record<string, any> }) {
+  return <View accessibilityRole="progressbar" accessibilityLabel="تحميل الطلبات" style={{ gap: 10 }}>
+    {[0, 1].map((item) => <View key={item} style={[s.orderCard, { minHeight: 154, justifyContent: 'center', gap: 15 }]}>
+      <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}><SkeletonBlock width="34%" height={26} /><SkeletonBlock width="23%" height={12} /></View>
+      <SkeletonBlock width="48%" height={13} />
+      <SkeletonBlock width="88%" height={11} />
+      <SkeletonBlock width="72%" height={11} />
+      <View style={{ flexDirection: 'row-reverse', gap: 9, marginTop: 2 }}><SkeletonBlock width="48%" height={42} style={{ alignSelf: 'auto', flex: 1 }} /><SkeletonBlock width="48%" height={42} style={{ alignSelf: 'auto', flex: 1 }} /></View>
+    </View>)}
+  </View>;
+}
+
+function flattenSections(children: ReactNode): ReactNode[] {
+  return Children.toArray(children).flatMap((child) => {
+    if (isValidElement<{ children?: ReactNode }>(child) && child.type === Fragment) return flattenSections(child.props.children);
+    return [child];
+  });
+}
+
+function EntranceSection({ children, delay = 0, transitionKey = '' }: { children: ReactNode; delay?: number; transitionKey?: string }) {
+  const [progress] = useState(() => new Animated.Value(0));
+  const translateY = progress.interpolate({ inputRange: [0, 1], outputRange: [26, 0] });
+  const scale = progress.interpolate({ inputRange: [0, 1], outputRange: [0.985, 1] });
+  useEffect(() => {
+    progress.setValue(0);
+    const animation = Animated.timing(progress, { toValue: 1, duration: 680, delay, easing: Easing.out(Easing.cubic), useNativeDriver: true });
+    animation.start();
+    return () => animation.stop();
+  }, [delay, progress, transitionKey]);
+  return <Animated.View style={{ width: '100%', opacity: progress, transform: [{ translateY }, { scale }] }}>{children}</Animated.View>;
+}
+
+function StaggeredSections({ children, transitionKey, animateSingle = false }: { children: ReactNode; transitionKey: string; animateSingle?: boolean }) {
+  const sections = flattenSections(children);
+  if (sections.length === 1 && !animateSingle) return <>{sections[0]}</>;
+  return <>{sections.map((section, index) => <EntranceSection key={`${transitionKey}-${String(isValidElement(section) ? section.key ?? index : index)}`} transitionKey={transitionKey} delay={Math.min(index * 120, 600)}>{section}</EntranceSection>)}</>;
+}
+
+function AddressBook({ userId, onBack, backLabel, onAddressSaved }: { userId: string; onBack: () => void; backLabel: string; onAddressSaved: (address: Address) => void }) {
+  const { colors: c, styles: s } = useMobileTheme();
   const online = useInternetAvailable();
   const [addresses, setAddresses] = useState<Address[]>([]);
-  const [zones, setZones] = useState<ServiceZone[]>([]);
-  const [selectedZone, setSelectedZone] = useState('');
+  const [historyAddresses, setHistoryAddresses] = useState<Address[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const historyLoaded = useRef(false);
+  const [manualGovernorate, setManualGovernorate] = useState('');
+  const [manualCity, setManualCity] = useState('');
+  const [manualNeighborhood, setManualNeighborhood] = useState('');
   const [label, setLabel] = useState('');
   const [street, setStreet] = useState('');
   const [landmark, setLandmark] = useState('');
   const [building, setBuilding] = useState('');
   const [floor, setFloor] = useState('');
   const [contactPhone, setContactPhone] = useState('');
+  const [editingAddress, setEditingAddress] = useState<Address | null>(null);
+  const editingAddressRef = useRef<Address | null>(null);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
+  const [addressLoadingState, setAddressLoadingState] = useState(true);
+  const addressLoading = online && addressLoadingState;
+  const [, setMessage] = useToastMessage();
 
-  const refresh = async () => {
+  const fillAddress = useCallback((address: Address) => {
+    editingAddressRef.current = address;
+    setEditingAddress(address);
+    setManualGovernorate(address.governorate.toLowerCase().includes('ريف') || address.governorate.toLowerCase().includes('rif') ? 'ريف دمشق' : 'دمشق');
+    setManualCity(address.city); setManualNeighborhood(address.neighborhood); setLabel(address.label); setStreet(address.street);
+    setLandmark(address.landmark ?? ''); setBuilding(address.building ?? ''); setFloor(address.floor ?? ''); setContactPhone(address.contact_phone);
+  }, []);
+
+  const refresh = useCallback(async () => {
     if (!supabase || !online) return;
-    const [{ data: addressRows, error: addressError }, { data: zoneRows, error: zoneError }] = await Promise.all([
-      supabase.from('addresses').select('*').order('is_default', { ascending: false }).order('updated_at', { ascending: false }),
-      supabase.from('service_zones').select('id,name,governorate,city,neighborhood,delivery_surcharge_minor,currency').eq('active', true).order('name'),
+    const { data: addressRows, error: addressError } = await supabase.from('addresses').select('*').eq('user_id', userId).order('is_default', { ascending: false }).order('updated_at', { ascending: false });
+    setAddressLoadingState(false);
+    if (addressError) { setMessage('ما قدرنا نحمّل عنوانك. أعد فتح الصفحة وجرب مرة ثانية.'); return; }
+    const rows = addressRows ?? [];
+    setAddresses(rows);
+    if (!editingAddressRef.current && rows.length) fillAddress(rows[0]);
+  }, [online, userId, fillAddress, setMessage]);
+  // Refresh synchronizes this form with Supabase; updates follow the completed request.
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const openHistory = async () => {
+    setShowHistory(true);
+    if (historyLoaded.current) return;
+    if (!supabase || !online) { setMessage('سجل العناوين يحتاج اتصالاً بالإنترنت.'); return; }
+    setHistoryLoading(true);
+    const [{ data: orders, error: ordersError }, { data: allAddresses, error: addressesError }] = await Promise.all([
+      supabase.from('orders').select('address_id').eq('customer_id', userId),
+      supabase.from('addresses').select('*').eq('user_id', userId).order('updated_at', { ascending: false }),
     ]);
-    if (addressError || zoneError) { setMessage('ما قدرنا نحمّل العناوين. تأكد من الاتصال وجرب مرة ثانية.'); return; }
-    setAddresses(addressRows ?? []); setZones(zoneRows ?? []);
+    if (ordersError || addressesError) setMessage('ما قدرنا نحمّل سجل العناوين. جرّب مرة ثانية.');
+    else {
+      const usedIds = new Set((orders ?? []).map((order) => order.address_id));
+      setHistoryAddresses((allAddresses ?? []).filter((address) => usedIds.has(address.id)));
+      historyLoaded.current = true;
+    }
+    setHistoryLoading(false);
   };
-  useEffect(() => { void refresh(); }, [online, userId]);
 
   const save = async () => {
-    if (!supabase) return;
-    const zone = zones.find((item) => item.id === selectedZone);
-    if (!zone) { setMessage('اختار منطقة توصيل أولاً.'); return; }
+    if (!supabase || !online) { setMessage('حفظ العنوان يحتاج اتصالاً بالإنترنت.'); return; }
+    const governorateValue = manualGovernorate.trim() === 'ريف الشام' ? 'ريف دمشق' : manualGovernorate.trim();
+    const cityValue = manualCity.trim();
+    const neighborhoodValue = manualNeighborhood.trim();
+    if (!['دمشق', 'ريف دمشق'].includes(governorateValue)) { setMessage('اختار دمشق أو ريف دمشق؛ التوصيل متاح ضمن هالنطاق حالياً.'); return; }
+    if (!governorateValue || governorateValue.length < 2 || !cityValue || cityValue.length < 2 || !neighborhoodValue) { setMessage('اكتب المحافظة أو المنطقة والمدينة والحارة.'); return; }
     if (label.trim().length < 1 || street.trim().length < 1 || contactPhone.trim().length < 7) { setMessage('كمّل اسم العنوان والشارع ورقم تواصل صحيح.'); return; }
     setBusy(true); setMessage('');
-    const { error } = await supabase.from('addresses').insert({
-      user_id: userId, zone_id: zone.id, label: label.trim(), governorate: zone.governorate,
-      city: zone.city, neighborhood: zone.neighborhood ?? zone.name, street: street.trim(),
+    const values = {
+      user_id: userId, zone_id: null, label: label.trim(), governorate: governorateValue,
+      city: cityValue, neighborhood: neighborhoodValue, street: street.trim(),
       landmark: landmark.trim() || null, building: building.trim() || null, floor: floor.trim() || null,
-      contact_phone: contactPhone.trim(), is_default: addresses.length === 0,
-    });
+      contact_phone: contactPhone.trim(), is_default: editingAddress?.is_default ?? addresses.length === 0,
+    };
+    let savedAddress: Address | null = null;
+    let saveError = '';
+    if (editingAddress) {
+      const { count, error: linkedOrdersError } = await supabase.from('orders').select('id', { count: 'exact', head: true }).eq('address_id', editingAddress.id);
+      if (linkedOrdersError) { setBusy(false); setMessage('ما قدرنا نتحقق من الطلبات السابقة. ما غيّرنا العنوان، جرّب مرة ثانية.'); return; }
+      if (count) {
+        const { error: archiveError } = await supabase.from('addresses').update({ is_default: false }).eq('id', editingAddress.id).eq('user_id', userId);
+        if (archiveError) saveError = archiveError.message;
+        else {
+          const { data, error } = await supabase.from('addresses').insert({ ...values, is_default: true }).select('*').single();
+          if (error || !data) {
+            await supabase.from('addresses').update({ is_default: editingAddress.is_default }).eq('id', editingAddress.id).eq('user_id', userId);
+            saveError = error?.message ?? 'تعذر إنشاء نسخة العنوان الجديدة.';
+          } else savedAddress = data;
+        }
+      } else {
+        const { data, error } = await supabase.from('addresses').update(values).eq('id', editingAddress.id).eq('user_id', userId).select('*').single();
+        if (error || !data) saveError = error?.message ?? 'ما لقينا العنوان الحالي.';
+        else savedAddress = data;
+      }
+    } else {
+      const { data, error } = await supabase.from('addresses').insert(values).select('*').single();
+      if (error || !data) saveError = error?.message ?? 'ما قدرنا نضيف العنوان.';
+      else savedAddress = data;
+    }
     setBusy(false);
-    if (error) { setMessage('ما انحفظ العنوان. تأكد أن المنطقة بعدها فعالة وجرب مرة ثانية.'); return; }
-    setLabel(''); setStreet(''); setLandmark(''); setBuilding(''); setFloor(''); setContactPhone('');
-    setMessage('انحفظ العنوان.'); await refresh();
+    if (saveError || !savedAddress) { setMessage(saveError.includes('Damascus and Rif Dimashq') ? 'التوصيل متاح حالياً بدمشق وريف دمشق فقط.' : 'ما انحفظ العنوان. تأكد من المعلومات والاتصال وجرب مرة ثانية.'); return; }
+    const addedAddress = !editingAddress;
+    fillAddress(savedAddress);
+    setAddresses((current) => [savedAddress!, ...current.filter((address) => address.id !== editingAddress?.id && address.id !== savedAddress!.id)]);
+    onAddressSaved(savedAddress);
+    setMessage(addedAddress ? 'انحفظ عنوان التوصيل.' : 'انحفظ تعديل عنوان التوصيل.');
+    if (addedAddress) onBack();
   };
 
   const remove = async (id: string) => {
     if (!supabase) return;
-    const { error } = await supabase.from('addresses').delete().eq('id', id);
+    const { error } = await supabase.from('addresses').delete().eq('id', id).eq('user_id', userId);
     if (error) {
-      setMessage(error.code === '23503' ? 'ما فينا نحذف عنوان مرتبط بطلب سابق حتى يبقى سجل الطلب محفوظاً.' : 'ما قدرنا نحذف العنوان.');
+      setMessage(error.code === '23503' ? 'ما فينا نحذف عنوان مرتبط بطلب سابق حتى يبقى سجل الطلب محفوظاً.' : 'ما قدرنا نحذف العنوان. جرّب مرة ثانية.');
       return;
     }
-    setMessage('انحذف العنوان.');
-    await refresh();
+    setMessage('انحذف العنوان من السجل.');
+    setHistoryAddresses((current) => current.filter((address) => address.id !== id));
   };
 
+  if (showHistory && historyLoading) return <View style={s.addressPage}>
+    <Pressable onPress={() => setShowHistory(false)} style={s.addressBackButton} accessibilityRole="button"><Text style={s.addressBackArrow}>→</Text><Text style={s.addressBackText}>عنوان التوصيل</Text></Pressable>
+    <View style={s.addressHistoryHero}><SkeletonBlock width="66%" height={18} /><SkeletonBlock width={46} height={46} style={{ alignSelf: 'auto', borderRadius: 15 }} /></View>
+    {[0, 1, 2].map((item) => <View key={item} style={[s.historyAddressCard, { minHeight: 126, justifyContent: 'center', gap: 13 }]}><SkeletonBlock width="54%" height={14} /><SkeletonBlock width="78%" height={11} /><SkeletonBlock width="65%" height={11} /><SkeletonBlock width="38%" height={10} /></View>)}
+  </View>;
+
+  if (showHistory) return <View style={s.addressPage}>
+    <Pressable onPress={() => setShowHistory(false)} style={s.addressBackButton} accessibilityRole="button"><Text style={s.addressBackArrow}>→</Text><Text style={s.addressBackText}>عنوان التوصيل</Text></Pressable>
+    <View style={s.addressHistoryHero}><View style={s.addressHistoryIcon}><SymbolView name={{ios:'clock.arrow.circlepath',android:'history',web:'history'}} tintColor={c.primary} size={22}/></View><View style={s.addressHistoryCopy}><Text style={s.addressHistoryEyebrow}>عناوين طلباتك السابقة</Text><Text style={s.addressHistoryTitle}>سجل العناوين</Text><Text style={s.addressHistorySubtitle}>راجع تفاصيل العناوين التي استخدمتها في طلباتك.</Text></View><View style={s.addressHistoryCount}><Text style={s.addressHistoryCountNumber}>{historyAddresses.length}</Text><Text style={s.addressHistoryCountLabel}>عنوان</Text></View></View>
+    {historyAddresses.length ? historyAddresses.map((address) => <View key={address.id} style={s.historyAddressCard}><View style={s.historyAddressTop}><View style={s.savedPin}><Text style={s.pin}>⌂</Text></View><View style={s.savedCopy}><Text style={s.savedLabel}>{address.label}</Text><Text style={s.savedDetail}>{address.neighborhood}، {address.city}، {address.governorate}</Text></View><Pressable onPress={() => void remove(address.id)} accessibilityRole="button" accessibilityLabel={`حذف ${address.label} من السجل`} style={s.deleteAddress}><Text style={s.deleteText}>حذف</Text></Pressable></View><View style={s.historyAddressDivider}/><Text style={s.historyAddressDetail}>{address.street}{address.building ? `، بناء ${address.building}` : ''}{address.floor ? `، الطابق ${address.floor}` : ''}</Text>{address.landmark ? <Text style={s.historyAddressDetail}>قريب من {address.landmark}</Text> : null}<Text style={s.historyAddressPhone}>للتواصل: {address.contact_phone}</Text></View>) : <View style={s.historyEmpty}><View style={s.historyEmptyIcon}><SymbolView name={{ios:'clock',android:'history',web:'history'}} tintColor={c.primary} size={22}/></View><Text style={s.emptyTitle}>لسه ما عندك عناوين في السجل</Text><Text style={s.emptyCopy}>رح تظهر هون العناوين بعد استخدامها في طلباتك.</Text></View>}
+  </View>;
+
+  if (addressLoading) return <View style={s.addressPage}>
+    <View style={s.addressPageHeader}><SkeletonBlock width="38%" height={25} /><SkeletonBlock width={112} height={38} style={{ alignSelf: 'auto', borderRadius: 12 }} /></View>
+    <SkeletonBlock width="86%" height={12} style={{ marginTop: 10, marginBottom: 18 }} />
+    <View style={[s.addressHistoryButton, { justifyContent: 'flex-start' }]}><SkeletonBlock width={42} height={42} style={{ alignSelf: 'auto', borderRadius: 13 }} /><View style={{ flex: 1, gap: 8 }}><SkeletonBlock width="48%" height={12} /><SkeletonBlock width="76%" height={10} /></View></View>
+    <View style={[s.formCard, { gap: 13 }]}><SkeletonBlock width="42%" height={18} style={{ marginBottom: 4 }} />{[0, 1, 2, 3, 4, 5].map((item) => <View key={item} style={{ gap: 7 }}><SkeletonBlock width="25%" height={11} /><SkeletonBlock width="100%" height={48} style={{ alignSelf: 'auto', borderRadius: 12 }} /></View>)}</View>
+  </View>;
+
   return <View style={s.addressPage}>
-    <Pressable onPress={onBack} style={s.backLink} accessibilityRole="button"><Text style={s.backArrow}>→</Text><Text style={s.backText}>رجوع للرئيسية</Text></Pressable>
-    <Text style={s.pageTitle}>عناويني</Text><Text style={s.pageDescription}>احفظ مكانك المفضل ليسهل عليك الطلب.</Text>
-    {addresses.map((address) => <View key={address.id} style={s.savedAddress}><View style={s.savedPin}><Text style={s.pin}>⌖</Text></View><View style={s.savedCopy}><Text style={s.savedLabel}>{address.label}{address.is_default ? ' · أساسي' : ''}</Text><Text style={s.savedDetail}>{address.governorate}، {address.city}، {address.neighborhood}</Text><Text style={s.savedDetail}>{address.street}{address.building ? `، بناء ${address.building}` : ''}</Text></View><Pressable onPress={() => void remove(address.id)} accessibilityRole="button" accessibilityLabel={`حذف ${address.label}`} style={s.deleteAddress}><Text style={s.deleteText}>حذف</Text></Pressable></View>)}
-    <View style={s.formCard}><Text style={s.sectionTitle}>أضف عنواناً جديداً</Text>
-      {zones.length ? <><Text style={s.label}>منطقة التوصيل</Text><View style={s.zoneList}>{zones.map((zone) => <Pressable key={zone.id} onPress={() => setSelectedZone(zone.id)} accessibilityRole="button" accessibilityState={{ selected: selectedZone === zone.id }} style={[s.zoneOption, selectedZone === zone.id && s.zoneSelected]}><Text style={[s.zoneName, selectedZone === zone.id && s.zoneNameSelected]}>{zone.name}</Text><Text style={s.zoneMeta}>{zone.city}، {zone.governorate}</Text></Pressable>)}</View>
-        <Text style={s.label}>اسم العنوان</Text><TextInput value={label} onChangeText={setLabel} placeholder="البيت، الشغل..." placeholderTextColor="#839188" style={s.field} accessibilityLabel="اسم العنوان"/>
-        <Text style={s.label}>الشارع والوصف</Text><TextInput value={street} onChangeText={setStreet} placeholder="اسم الشارع ورقم البناء" placeholderTextColor="#839188" style={s.field} accessibilityLabel="الشارع والوصف"/>
-        <Text style={s.label}>علامة مميزة <Text style={s.optional}>اختياري</Text></Text><TextInput value={landmark} onChangeText={setLandmark} placeholder="قرب صيدلية، مقابل الحديقة..." placeholderTextColor="#839188" style={s.field} accessibilityLabel="علامة مميزة"/>
-        <View style={s.inlineFields}><View style={s.inline}><Text style={s.label}>البناء</Text><TextInput value={building} onChangeText={setBuilding} placeholder="اختياري" placeholderTextColor="#839188" style={s.field} accessibilityLabel="البناء"/></View><View style={s.inline}><Text style={s.label}>الطابق</Text><TextInput value={floor} onChangeText={setFloor} placeholder="اختياري" placeholderTextColor="#839188" style={s.field} accessibilityLabel="الطابق"/></View></View>
-        <Text style={s.label}>رقم للتواصل</Text><TextInput value={contactPhone} onChangeText={setContactPhone} keyboardType="phone-pad" textAlign="left" placeholder="+963 ..." placeholderTextColor="#839188" style={s.field} accessibilityLabel="رقم للتواصل"/>
-        <Pressable disabled={busy} onPress={() => void save()} style={[s.saveAddress,busy&&s.disabled]} accessibilityRole="button"><Text style={s.saveAddressText}>{busy?'عم نحفظ…':'حفظ العنوان'} <Text style={s.submitArrow}>←</Text></Text></Pressable>
-      </> : <View style={s.noZones}><Text style={s.noZonesTitle}>لسه ما في منطقة مفعّلة</Text><Text style={s.emptyCopy}>ما فينا نحفظ عنوان قبل ما يحدد فريق لَبّيك مناطق الخدمة.</Text></View>}
-      {message ? <Text accessibilityRole="alert" style={s.formMessage}>{message}</Text> : null}
+    <View style={s.addressPageHeader}><Text style={s.pageTitle}>عنوان التوصيل</Text><Pressable onPress={onBack} style={s.addressBackButton} accessibilityRole="button"><Text style={s.addressBackArrow}>→</Text><Text style={s.addressBackText}>{backLabel}</Text></Pressable></View>
+    <Text style={s.pageDescription}>حدّث العنوان الحالي؛ تفاصيل الطلبات السابقة محفوظة في السجل.</Text>
+    <Pressable onPress={() => void openHistory()} style={s.addressHistoryButton} accessibilityRole="button"><View style={s.addressHistoryButtonIcon}><SymbolView name={{ios:'clock.arrow.circlepath',android:'history',web:'history'}} tintColor={c.primary} size={20}/></View><View style={s.addressHistoryButtonCopy}><Text style={s.addressHistoryButtonTitle}>سجل العناوين</Text><Text style={s.addressHistoryButtonHint}>شوف العناوين المستخدمة بطلباتك السابقة</Text></View><View style={s.addressHistoryButtonEnd}><Text style={s.addressHistoryArrow}>←</Text></View></Pressable>
+    <View style={s.formCard}><Text style={s.sectionTitle}>{editingAddress ? `تعديل ${editingAddress.label}` : 'أضف عنوان التوصيل'}</Text>
+      <Text style={s.label}>المحافظة</Text><View style={s.zoneList}>{['دمشق','ريف دمشق'].map((area) => <Pressable key={area} onPress={() => setManualGovernorate(area)} accessibilityRole="button" accessibilityState={{ selected: manualGovernorate === area }} style={[s.zoneOption, manualGovernorate === area && s.zoneSelected]}><Text style={[s.zoneName, manualGovernorate === area && s.zoneNameSelected]}>{area}</Text></Pressable>)}</View>
+      <Text style={s.formLocationHint}>اكتب أي مدينة أو بلدة ضمن دمشق أو ريف دمشق، مثل كناكر، وبعدها الحارة بالتفصيل. ما بدك دبوس خريطة.</Text>
+      <Text style={s.label}>المدينة أو البلدة</Text><TextInput value={manualCity} onChangeText={setManualCity} maxLength={100} placeholder="مثلاً: دمشق، كناكر، جرمانا" placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="المدينة أو البلدة"/>
+      <Text style={s.label}>الحارة</Text><TextInput value={manualNeighborhood} onChangeText={setManualNeighborhood} maxLength={100} placeholder="مثلاً: الحارة الغربية" placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="الحارة"/>
+      <Text style={s.label}>اسم العنوان</Text><TextInput value={label} onChangeText={setLabel} maxLength={60} placeholder="بيت أبو مالك الجاهوش، الشغل..." placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="اسم العنوان"/>
+      <Text style={s.label}>الشارع أو رقم البيت</Text><TextInput value={street} onChangeText={setStreet} maxLength={160} placeholder="مثلاً: الحارة الغربية" placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="الشارع أو رقم البيت"/>
+      <Text style={s.label}>مكان معروف قريب <Text style={s.optional}>اختياري</Text></Text><TextInput value={landmark} onChangeText={setLandmark} maxLength={160} placeholder="مقابل الجامع، جنب الصيدلية..." placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="مكان معروف قريب"/>
+      <View style={s.inlineFields}><View style={s.inline}><Text style={s.label}>رقم البناء</Text><TextInput value={building} onChangeText={setBuilding} maxLength={80} placeholder="اختياري" placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="رقم البناء"/></View><View style={s.inline}><Text style={s.label}>الطابق</Text><TextInput value={floor} onChangeText={setFloor} maxLength={40} placeholder="اختياري" placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="الطابق"/></View></View>
+      <Text style={s.label}>رقم اتصال أو واتساب</Text><TextInput value={contactPhone} onChangeText={setContactPhone} maxLength={24} keyboardType="phone-pad" textAlign="left" placeholder="+963 ..." placeholderTextColor="#839188" style={s.field} accessibilityLabel="رقم اتصال أو واتساب"/>
+      <Pressable disabled={busy || addressLoading} onPress={() => void save()} style={[s.saveAddress,(busy || addressLoading)&&s.disabled]} accessibilityRole="button"><Text style={s.saveAddressText}>{addressLoading?'عم نحمّل عنوانك…':busy?'عم نحفظ…':editingAddress?'حفظ التعديلات':'حفظ العنوان'} <Text style={s.submitArrow}>←</Text></Text></Pressable>
     </View>
   </View>;
 }
 
-function NotificationInbox({ userId }: { userId: string }) {
+function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = false, onUnreadCountChange }: { userId: string; refreshKey?: number; onOpenOrder?: (orderId: string) => void; standalone?: boolean; onUnreadCountChange?: (count: number) => void }) {
+  const { colors: c, styles: s } = useMobileTheme();
   const online = useInternetAvailable();
   type Notification = Pick<Database['public']['Tables']['notifications']['Row'],'id'|'title'|'body'|'created_at'|'read_at'|'order_id'>
-  const [items,setItems]=useState<Notification[]>([]); const [message,setMessage]=useState(''); const [loading,setLoading]=useState(true)
-  const refresh=async()=>{
-    if(!supabase || !online)return
-    const {data,error}=await supabase.from('notifications').select('id,title,body,created_at,read_at,order_id').order('created_at',{ascending:false}).limit(12)
-    if(error)setMessage('ما قدرنا نحمّل التنبيهات.')
-    else {setItems(data??[]);setMessage('')}
-    setLoading(false)
-  }
+  const [items,setItems]=useState<Notification[]>([]); const [message,setMessage]=useToastMessage(); const [loadingState,setLoadingState]=useState(true); const [expanded,setExpanded]=useState(standalone); const [loadingMore,setLoadingMore]=useState(false); const [hasMore,setHasMore]=useState(false)
+  const [pushEnabled,setPushEnabled]=useState(false); const [pushBusy,setPushBusy]=useState(false); const openOrderRef=useRef(onOpenOrder)
+  useEffect(()=>{openOrderRef.current=onOpenOrder},[onOpenOrder])
   useEffect(()=>{
-    void refresh()
+    let subscription:{remove:()=>void}|undefined
+    if(Platform.OS!=='web')void import('expo-notifications').then(Notifications=>{
+        Notifications.setNotificationHandler({handleNotification:async()=>({shouldShowBanner:true,shouldShowList:true,shouldPlaySound:true,shouldSetBadge:false})})
+        const handleResponse=(response:NotificationResponse)=>{
+          const orderId=response.notification.request.content.data?.orderId
+          if(typeof orderId==='string')openOrderRef.current?.(orderId)
+        }
+        const lastResponse=Notifications.getLastNotificationResponse()
+        if(lastResponse)handleResponse(lastResponse)
+        subscription=Notifications.addNotificationResponseReceivedListener(handleResponse)
+      }).catch(()=>undefined)
+    void hasRegisteredPushToken(userId).then(registered=>{
+      setPushEnabled(registered)
+      if(registered&&Platform.OS!=='web')void enablePushNotifications(userId,false)
+    })
+    return()=>subscription?.remove()
+  },[userId])
+  const enablePush=async()=>{
+    setPushBusy(true);setMessage('')
+    const result=await enablePushNotifications(userId)
+    setPushBusy(false)
+    if(result.status==='enabled'){setPushEnabled(true);setMessage('الإشعارات صارت توصلك حتى لو التطبيق مسكّر.')}
+    else if(result.status==='development-build-required')setMessage('إشعارات الجهاز ما بتشتغل داخل Expo Go. لازم تثبّت نسخة تطوير خاصة بلَبّيك؛ تحديث Expo Go لحاله ما بيكفي.')
+    else if(result.status==='permission-denied')setMessage('إذن الإشعارات مرفوض. فعّله من إعدادات الجهاز.')
+    else if(result.status==='missing-project-id')setMessage('ربط إشعارات التطبيق بحاجة لإعداد مشروع Expo.')
+    else if(result.status==='unsupported')setMessage('هذا المتصفح ما بيدعم الإشعارات. افتح لَبّيك بمتصفح حديث أو ثبّت التطبيق.')
+    else setMessage('ما قدرنا نفعّل إشعارات الجهاز. جرب مرة ثانية.')
+  }
+  const loading=online&&loadingState;
+  const refresh=useCallback(async()=>{
     if(!supabase || !online)return
-    const channel=supabase.channel('user-notifications-'+userId).on('postgres_changes',{event:'INSERT',schema:'public',table:'notifications',filter:'recipient_id=eq.'+userId},()=>{void refresh()}).subscribe()
-    return ()=>{void supabase?.removeChannel(channel)}
-  },[online,userId])
+    const pageSize=standalone?20:12
+    const {data,error}=await supabase.from('notifications').select('id,title,body,created_at,read_at,order_id').order('created_at',{ascending:false}).limit(pageSize)
+    if(error)setMessage('ما قدرنا نحمّل التنبيهات.')
+    else {setItems(data??[]);setHasMore((data??[]).length===pageSize);setMessage('')}
+    setLoadingState(false)
+  },[online,setMessage,standalone]);
+  const refreshRef = useRef(refresh);
+  useEffect(() => { refreshRef.current = refresh; }, [refresh]);
+  useEffect(() => { if (refreshKey > 0) void refreshRef.current(); }, [refreshKey]);
+  useEffect(() => {
+    void refreshRef.current();
+    if (!supabase || !online) return;
+    // Unique per subscription so route switches or reconnects cannot reuse a channel during asynchronous removal.
+    const channel = supabase.channel(`user-notifications-${userId}-${newRequestKey()}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${userId}` }, () => { void refreshRef.current(); })
+      .subscribe();
+    return () => { void supabase?.removeChannel(channel); };
+  }, [online, userId]);
   const markRead=async(id:number)=>{
     if(!supabase)return
     const {error}=await supabase.rpc('mark_notification_read',{p_notification_id:id})
     if(error){setMessage('ما قدرنا نحدّث حالة التنبيه.');return}
     setItems(current=>current.map(item=>item.id===id?{...item,read_at:new Date().toISOString()}:item))
   }
-  return <View style={s.orderCard}><View style={s.orderTop}><Text style={s.sectionTitle}>تنبيهاتك</Text><Pressable onPress={()=>void refresh()} accessibilityRole="button" accessibilityLabel="تحديث التنبيهات" style={{minWidth:44,minHeight:44,alignItems:"center",justifyContent:"center"}}><Text style={s.orderFee}>تحديث ↻</Text></Pressable></View>{message?<Text accessibilityRole="alert" style={s.formMessage}>{message}</Text>:null}{loading?<ActivityIndicator color={c.primary}/>:items.length?items.map(item=><Pressable key={item.id} disabled={!!item.read_at} onPress={()=>void markRead(item.id)} accessibilityRole="button" accessibilityLabel={item.title+', '+item.body} style={{paddingVertical:10,borderTopWidth:1,borderTopColor:c.border,opacity:item.read_at?0.65:1}}><Text style={s.orderCategory}>{item.read_at?'':'• '}{item.title}</Text><Text style={s.offerExpiry}>{item.body}</Text><Text style={s.orderDate}>{new Intl.DateTimeFormat('ar-SY',{dateStyle:'medium',timeStyle:'short'}).format(new Date(item.created_at))}{item.order_id?' · طلب #'+item.order_id.slice(0,8):''}</Text></Pressable>):<Text style={s.offerExpiry}>ما في تنبيهات جديدة.</Text>}</View>
+  const unreadCount=items.filter(item=>!item.read_at).length
+  useEffect(()=>{onUnreadCountChange?.(unreadCount)},[onUnreadCountChange,unreadCount])
+  const loadMore=async()=>{
+    if(!supabase||!online||loadingMore||!hasMore)return
+    setLoadingMore(true)
+    const start=items.length
+    const {data,error}=await supabase.from('notifications').select('id,title,body,created_at,read_at,order_id').order('created_at',{ascending:false}).range(start,start+19)
+    if(error)setMessage('ما قدرنا نحمّل التنبيهات الأقدم.')
+    else {const more=data??[];setItems(current=>{const seen=new Set(current.map(item=>item.id));return [...current,...more.filter(item=>!seen.has(item.id))]});setHasMore((data??[]).length===20)}
+    setLoadingMore(false)
+  }
+  return <View style={s.notificationCard}>
+    <View style={s.notificationHeader}>
+      <Pressable disabled={standalone} onPress={()=>setExpanded(value=>!value)} accessibilityRole={standalone?'summary':'button'} accessibilityState={{expanded}} style={[s.notificationSummary,standalone&&s.notificationSummaryStandalone]}>
+        <View style={s.notificationIcon}><SymbolView name={{ios:unreadCount?'bell.badge.fill':'bell.fill',android:unreadCount?'notifications_active':'notifications',web:unreadCount?'notifications_active':'notifications'}} tintColor={c.primary} size={19}/></View>
+        <View style={s.notificationCopy}>
+          <Text style={s.notificationTitle}>{standalone?'كل تنبيهاتك':'التنبيهات'}</Text>
+          <Text style={s.notificationSubtitle}>{loading?'عم نحمّل آخر التحديثات':unreadCount?`عندك ${unreadCount} تنبيه غير مقروء`:'ما في تنبيهات جديدة'}</Text>
+        </View>
+        <View style={s.notificationCount}>{loading ? <SkeletonBlock width={15} height={14} style={{ alignSelf: 'auto' }} /> : <Text style={s.notificationCountText}>{unreadCount}</Text>}</View>
+        {!standalone&&<View style={s.notificationExpandIcon}><SymbolView name={{ios:expanded?'chevron.up':'chevron.down',android:expanded?'expand_less':'expand_more',web:expanded?'expand_less':'expand_more'}} tintColor={c.muted} size={18}/></View>}
+      </Pressable>
+    </View>
+    {message?<Text accessibilityRole="alert" style={s.formMessage}>{message}</Text>:null}
+    <Pressable disabled={pushBusy||pushEnabled} onPress={()=>void enablePush()} accessibilityRole="button" style={{minHeight:42,justifyContent:'center',alignItems:'center',borderRadius:11,borderWidth:1,borderColor:c.border,marginTop:10,opacity:pushBusy||pushEnabled?0.65:1}}>
+      <Text style={s.orderFee}>{pushBusy?'عم نفعّل الإشعارات…':pushEnabled?'✓ إشعارات الطلبات مفعّلة':'فعّل إشعارات تحديثات الطلبات'}</Text>
+    </Pressable>
+    {(expanded||standalone) && <View style={[s.notificationList,standalone&&s.notificationListStandalone]}>
+      {loading?<View accessibilityRole="progressbar" accessibilityLabel="تحميل التنبيهات" style={{ gap: 12, paddingVertical: 12 }}>
+        {[0, 1, 2].map((item) => <View key={item} style={[s.notificationItem, standalone && s.notificationItemStandalone, { minHeight: 76, justifyContent: 'center', gap: 9, paddingHorizontal: 12, borderWidth: 1, borderColor: c.border, borderRadius: 14, backgroundColor: c.raised }]}>
+          <View style={{ flex: 1, gap: 9 }}><SkeletonBlock width="43%" height={12} /><SkeletonBlock width="88%" height={10} /><SkeletonBlock width="62%" height={9} /></View>
+          <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: c.primary, opacity: 0.55 }} />
+        </View>)}
+      </View>:items.length?items.map(item=><Pressable key={item.id} onPress={()=>{if(!item.read_at)void markRead(item.id);if(item.order_id)openOrderRef.current?.(item.order_id)}} accessibilityRole="button" accessibilityLabel={item.title+', '+item.body+(item.read_at?'، مقروء':'، جديد')} style={[s.notificationItem,standalone&&s.notificationItemStandalone,standalone&&!item.read_at&&s.notificationItemUnread,!standalone&&item.read_at&&s.notificationItemRead]}>
+        <View style={[s.notificationDot,item.read_at&&s.notificationDotRead]}/>
+        <View style={s.notificationItemCopy}>
+          <View style={s.notificationItemHeading}><Text style={s.notificationItemTitle}>{item.title}</Text>{!item.read_at&&<View style={s.notificationUnreadPill}><Text style={s.notificationUnreadPillText}>جديد</Text></View>}</View>
+          <Text style={s.notificationItemBody}>{item.body}</Text>
+          <Text style={s.notificationItemMeta}>{item.order_id?'طلب #'+item.order_id.slice(0,8)+' · ':''}{shortDateTimeFormatter.format(new Date(item.created_at))}</Text>
+        </View>
+      </Pressable>):<Text style={s.notificationEmpty}>ما في تنبيهات جديدة.</Text>}
+      {standalone&&hasMore&&<Pressable onPress={()=>void loadMore()} disabled={loadingMore||!online} style={s.notificationLoadMore} accessibilityRole="button"><Text style={s.notificationLoadMoreText}>{loadingMore?'عم نحمّل…':'تحميل تنبيهات أقدم'}</Text></Pressable>}
+    </View>}
+  </View>
 }
 
 function SupportIssueForm({orderId,status,disabled=false}:{orderId:string;status:string;disabled?:boolean}) {
+  const { styles: s } = useMobileTheme();
   const online = useInternetAvailable();
-  const [expanded,setExpanded]=useState(false);const [reason,setReason]=useState('');const [details,setDetails]=useState('');const [busy,setBusy]=useState(false);const [message,setMessage]=useState('');const [idempotencyKey]=useState(newRequestKey());const [submitted,setSubmitted]=useState(false)
+  const [expanded,setExpanded]=useState(false);const [reason,setReason]=useState('');const [details,setDetails]=useState('');const [busy,setBusy]=useState(false);const [message,setMessage]=useToastMessage();const [idempotencyKey]=useState(newRequestKey());const [submitted,setSubmitted]=useState(false)
   const submit=async()=>{
     if(!supabase)return
     if(disabled || !online){setMessage('إرسال البلاغ يحتاج اتصالاً مؤكداً بالخادم. تفاصيلك ما زالت على هالجهاز.');return}
@@ -145,45 +477,60 @@ function SupportIssueForm({orderId,status,disabled=false}:{orderId:string;status
   return <View style={{marginTop:10}}>{submitted?<Text accessibilityRole="status" style={s.offerExpiry}>{message}</Text>:!expanded?<Pressable onPress={()=>setExpanded(true)} accessibilityRole="button" style={{minHeight:44,alignSelf:"flex-start",justifyContent:"center",paddingVertical:8}}><Text style={s.orderFee}>في مشكلة بهالطلب؟ تواصل مع الدعم</Text></Pressable>:<View style={s.dropoff}><Text style={s.dropoffTitle}>إرسال بلاغ للدعم</Text><View style={s.zoneList}>{['مشكلة بالمشتريات','تأخير أو مشكلة بالتوصيل','مبلغ أو تحصيل غير صحيح','مشكلة ثانية'].map(item=><Pressable key={item} onPress={()=>setReason(item)} accessibilityRole="button" accessibilityState={{selected:reason===item}} style={[s.zoneOption,reason===item&&s.zoneSelected]}><Text style={[s.zoneName,reason===item&&s.zoneNameSelected]}>{item}</Text></Pressable>)}</View><TextInput value={details} onChangeText={setDetails} multiline textAlignVertical="top" maxLength={2000} placeholder="اشرح المشكلة لفريق الدعم" placeholderTextColor="#839188" style={[s.field,{minHeight:85}]} accessibilityLabel="تفاصيل المشكلة"/><Pressable disabled={busy || !online || disabled} onPress={()=>void submit()} style={[s.acceptOffer,(busy || !online || disabled)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>{busy?'عم نرسل البلاغ…':online && !disabled?'إرسال البلاغ':'بانتظار الاتصال'}</Text></Pressable><Pressable onPress={()=>{setExpanded(false);setMessage('')}} accessibilityRole="button" style={{minHeight:44,alignSelf:"flex-start",justifyContent:"center",paddingVertical:8}}><Text style={s.offerExpiry}>إغلاق</Text></Pressable>{message?<Text accessibilityRole="alert" style={s.formMessage}>{message}</Text>:null}</View>}</View>
 }
 
-function DriverOperations({ userId }: { userId: string }) {
+function DriverOperations({ userId, screen = 'orders', profileComplete = true, onCompleteProfile = () => {}, onOpenOrders = () => {} }: { userId: string; screen?: 'home' | 'orders'; profileComplete?: boolean; onCompleteProfile?: () => void; onOpenOrders?: () => void }) {
+  const { colors: c, styles: s } = useMobileTheme();
   const online = useInternetAvailable();
-  const [profile, setProfile] = useState<{ is_online: boolean; service_zone_id: string | null }>({ is_online: false, service_zone_id: null });
-  const [zones, setZones] = useState<ServiceZone[]>([]);
+  const [profile, setProfile] = useState<{ is_online: boolean }>({ is_online: false });
   const [offers, setOffers] = useState<DriverOfferCard[]>([]);
   const [activeOrders, setActiveOrders] = useState<DriverActiveOrder[]>([]);
   const [operationsAreStale, setOperationsAreStale] = useState(false);
-  const [operationsSyncedAt, setOperationsSyncedAt] = useState('');
   const [purchaseDrafts, setPurchaseDrafts] = useState<Record<string,string>>({});
   const [deliveryDrafts, setDeliveryDrafts] = useState<Record<string,string>>({});
   const [loading, setLoading] = useState(true);
+  const [showInitialSkeleton, setShowInitialSkeleton] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useToastMessage();
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
+  const [walletUnavailable, setWalletUnavailable] = useState(false);
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const channelTopic = useRef(`driver-orders-${userId}-${newRequestKey()}`);
+  useEffect(() => {
+    if (!loading) { setShowInitialSkeleton(false); return; }
+    const timer = setTimeout(() => setShowInitialSkeleton(true), 350);
+    return () => clearTimeout(timer);
+  }, [loading]);
   const refresh = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
+    try {
     if (!online) {
       const snapshot = await loadDriverOrdersSnapshot(userId);
-      if (snapshot) { setActiveOrders(snapshot.orders); setOperationsSyncedAt(snapshot.syncedAt); }
+      if (snapshot) setActiveOrders(snapshot.orders);
       else setActiveOrders([]);
       setOperationsAreStale(true); setLoading(false); return;
     }
-    setLoading(true);
-    setOperationsAreStale(true);
-    const [driver, zoneRows, offerRows, assigned] = await Promise.all([
-      supabase.from('driver_profiles').select('is_online,service_zone_id').eq('user_id', userId).single(),
-      supabase.from('service_zones').select('id,name,governorate,city,neighborhood,delivery_surcharge_minor,currency').eq('active', true).order('name'),
+    const [driver, offerRows, assigned, wallet] = await Promise.all([
+      supabase.from('driver_profiles').select('is_online').eq('user_id', userId).single(),
       supabase.from('order_offers').select('id,order_id,expires_at').eq('driver_id', userId).eq('status', 'pending').gt('expires_at', new Date().toISOString()).order('expires_at'),
       supabase.from('orders').select('id,status,category,request_text,delivery_fee_minor,budget_ceiling_minor,purchase_amount_minor,purchase_approved_at,created_at,address_id').eq('driver_id', userId).neq('status', 'delivered').neq('status', 'settled').neq('status', 'cancelled').order('created_at', { ascending: false }),
+      supabase.rpc('get_driver_wallet_balances'),
     ]);
-    const { data: walletRows, error: walletError } = await supabase.rpc('get_driver_wallet_balances');
-    if (!walletError) setWalletBalance(walletRows?.find((row) => row.driver_id === userId)?.balance_minor ?? 0);
+    const { data: walletRows, error: walletError } = wallet;
+    if (!walletError) { setWalletBalance(walletRows?.find((row) => row.driver_id === userId)?.balance_minor ?? 0); setWalletUnavailable(false); }
+    else { setWalletBalance(null); setWalletUnavailable(true); }
     if (driver.data) setProfile(driver.data);
-    if (!zoneRows.error) setZones(zoneRows.data ?? []);
+    const [addressResult, offerOrderResult] = await Promise.all([
+      assigned.data?.length
+        ? supabase.from('addresses').select('id,label,street,city,neighborhood,contact_phone,building,landmark').in('id', assigned.data.map((order) => order.address_id))
+        : Promise.resolve(null),
+      offerRows.data?.length
+        ? supabase.from('orders').select('id,status,category,request_text,delivery_fee_minor,budget_ceiling_minor').in('id', offerRows.data.map((offer) => offer.order_id))
+        : Promise.resolve(null),
+    ]);
     let addressError = false;
     let currentOrders: DriverActiveOrder[] | null = null;
     if (assigned.error) addressError = true;
     else if (assigned.data?.length) {
-      const { data: addressRows, error } = await supabase.from('addresses').select('id,label,street,city,neighborhood,contact_phone,building,landmark').in('id', assigned.data.map((order) => order.address_id));
+      const { data: addressRows, error } = addressResult!;
       if (error) addressError = true;
       else {
         const addressMap = new Map((addressRows ?? []).map((address) => [address.id, address]));
@@ -192,42 +539,51 @@ function DriverOperations({ userId }: { userId: string }) {
     } else currentOrders = [];
     if (currentOrders) {
       setActiveOrders(currentOrders);
-      const snapshot = await saveDriverOrdersSnapshot(userId, currentOrders).catch(() => null);
-      setOperationsSyncedAt(snapshot?.syncedAt ?? new Date().toISOString());
+      void saveDriverOrdersSnapshot(userId, currentOrders).catch(() => {});
     }
     if (offerRows.data?.length) {
-      const { data: orderRows, error } = await supabase.from('orders').select('id,status,category,request_text,delivery_fee_minor,budget_ceiling_minor').in('id', offerRows.data.map((offer) => offer.order_id));
+      const { data: orderRows, error } = offerOrderResult!;
       if (!error) {
         const orderMap = new Map((orderRows ?? []).map((order) => [order.id, order]));
         setOffers(offerRows.data.flatMap((offer) => { const order = orderMap.get(offer.order_id); return order ? [{ id: offer.id, expires_at: offer.expires_at, order }] : []; }));
       }
     } else if (!offerRows.error) setOffers([]);
-    const syncFailed = !!driver.error || !!zoneRows.error || !!offerRows.error || !!assigned.error || addressError || !!walletError;
+    const syncFailed = !!driver.error || !!offerRows.error || !!assigned.error || addressError || !!offerOrderResult?.error;
     setOperationsAreStale(syncFailed);
     if (!syncFailed) setMessage('');
     if (syncFailed) {
       const snapshot = await loadDriverOrdersSnapshot(userId);
-      if (snapshot && !currentOrders) { setActiveOrders(snapshot.orders); setOperationsSyncedAt(snapshot.syncedAt); }
-      setMessage('بعض بيانات التشغيل غير مؤكدة من الخادم. راجع آخر مزامنة قبل متابعة أي إجراء.');
+      if (snapshot && !currentOrders) setActiveOrders(snapshot.orders);
     }
-    setLoading(false);
-  }, [online, userId]);
+    } catch {
+      setOperationsAreStale(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [online, userId, setMessage]);
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(() => { refreshTimer.current = null; void refresh(); }, 250);
+  }, [refresh]);
+  useEffect(() => () => { if (refreshTimer.current) clearTimeout(refreshTimer.current); }, []);
+  // Initial load and realtime refresh are server synchronization, not derived render state.
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
     if (!supabase || !online) return;
-    const channel = supabase.channel(`driver-orders-${userId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_offers', filter: `driver_id=eq.${userId}` }, () => { void refresh(); })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_events' }, () => { void refresh(); })
+    const channel = supabase.channel(channelTopic.current)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_offers', filter: `driver_id=eq.${userId}` }, scheduleRefresh)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_events' }, scheduleRefresh)
       .subscribe();
     return () => { void supabase?.removeChannel(channel); };
-  }, [online, refresh, userId]);
-  const setAvailability = async (updates: { is_online: boolean; service_zone_id: string | null }) => {
+  }, [online, scheduleRefresh, userId]);
+  const setAvailability = async (is_online: boolean) => {
+    if (!profileComplete) { onCompleteProfile(); return; }
     if (!supabase || !online || operationsAreStale) return;
     setBusy(true); setMessage('');
-    const { error } = await supabase.from('driver_profiles').update(updates).eq('user_id', userId);
+    const { error } = await supabase.from('driver_profiles').update({ is_online }).eq('user_id', userId);
     setBusy(false);
     if (error) { setMessage('ما قدرنا نحدّث التوفر. حاول مرة ثانية.'); return; }
-    setProfile(updates);
+    setProfile({ is_online });
   };
   const accept = async (offerId: string) => {
     if (!supabase || !online || operationsAreStale) return;
@@ -256,7 +612,7 @@ function DriverOperations({ userId }: { userId: string }) {
   const recordPurchase = async (orderId: string) => {
     if (!supabase || !online || operationsAreStale) return;
     const amount = Number(purchaseDrafts[orderId]);
-    if (!Number.isSafeInteger(amount) || amount < 0) { setMessage('أدخل قيمة المشتريات بالقروش كرقم صحيح.'); return; }
+    if (!Number.isSafeInteger(amount) || amount < 0) { setMessage('أدخل قيمة المشتريات بالليرة السورية كرقم صحيح.'); return; }
     setBusy(true); setMessage('');
     const { data, error } = await supabase.rpc('record_order_purchase', { p_order_id: orderId, p_purchase_amount_minor: amount });
     setBusy(false);
@@ -288,30 +644,36 @@ function DriverOperations({ userId }: { userId: string }) {
     if (error || !data) { setMessage('رمز التسليم غير صحيح أو منتهي. خليه يطلع رمز جديد من حساب الزبون.'); return; }
     setMessage('تأكد التسليم من السيرفر.'); await refresh();
   };
-  return <View style={s.driverPanel}><NotificationInbox userId={userId}/><View style={s.driverPanelTop}><View><Text style={s.driverApplyTitle}>جاهز للطلبات؟</Text><Text style={s.driverApplyCopy}>اختار منطقة خدمتك وفعّل التوفر.</Text></View><Pressable disabled={busy} onPress={() => void refresh()} style={s.driverRefresh} accessibilityRole="button" accessibilityLabel="تحديث طلبات السائق"><Text style={s.driverRefreshGlyph}>↻</Text></Pressable></View>{operationsAreStale && <View style={s.offlineOrders}><Text style={s.offlineOrdersTitle}>{operationsSyncedAt ? 'معلومات السائق محفوظة وقديمة للعرض فقط' : 'ما في بيانات تشغيل محفوظة'}</Text><Text style={s.offlineOrdersCopy}>{operationsSyncedAt ? `آخر مزامنة ${new Intl.DateTimeFormat('ar-SY',{dateStyle:'medium',timeStyle:'short'}).format(new Date(operationsSyncedAt))} · العنوان والهاتف آخر معلومات معروفة؛ لا تقبل ولا تؤكد أي إجراء بدون اتصال.` : 'اتصل بالخادم لعرض الطلبات والمحفظة الحالية.'}</Text><Pressable disabled={busy} onPress={() => void refresh()} accessibilityRole="button" style={{alignSelf:'flex-start',marginTop:7,borderWidth:1,borderColor:'#A58A50',borderRadius:8,paddingHorizontal:11,paddingVertical:7}}><Text style={s.offlineOrdersTitle}>إعادة المحاولة ↻</Text></Pressable></View>}
-    <View style={s.dropoff}><Text style={s.dropoffTitle}>رصيد محفظتك</Text><Text style={s.dropoffText}>{walletBalance === null ? online ? 'عم نتحقق من الرصيد.' : 'الرصيد غير متاح دون اتصال.' : `${operationsAreStale ? 'آخر رصيد معروف: ' : ''}${new Intl.NumberFormat('ar-SY').format(walletBalance)} قرش${operationsAreStale ? ' · قد يكون تغيّر' : ' · يُخصم منه رسم العمولة بعد التسوية'}`}</Text></View>
-    <Text style={s.label}>منطقة الخدمة</Text>{zones.length ? <View style={s.zoneList}>{zones.map((zone) => <Pressable key={zone.id} disabled={busy || !online || operationsAreStale} onPress={() => void setAvailability({ is_online: false, service_zone_id: zone.id })} style={[s.zoneOption, profile.service_zone_id === zone.id && s.zoneSelected, (!online || operationsAreStale) && s.disabled]} accessibilityRole="button" accessibilityState={{ selected: profile.service_zone_id === zone.id }}><Text style={[s.zoneName, profile.service_zone_id === zone.id && s.zoneNameSelected]}>{zone.name}</Text><Text style={s.zoneMeta}>{zone.city}، {zone.governorate}</Text></Pressable>)}</View> : <Text style={s.driverApplyCopy}>ما في مناطق خدمة فعّالة حالياً.</Text>}
-    <Pressable disabled={busy || !online || operationsAreStale || (!profile.service_zone_id && !profile.is_online)} onPress={() => void setAvailability({ ...profile, is_online: !profile.is_online })} style={[s.availabilityButton, profile.is_online && s.availabilityOn, (busy || !profile.service_zone_id || !online || operationsAreStale) && s.disabled]} accessibilityRole="switch" accessibilityState={{ checked: profile.is_online }} aria-checked={profile.is_online}><View style={[s.availabilityDot, profile.is_online && s.availabilityDotOn]}/><Text style={[s.availabilityText, profile.is_online && s.availabilityTextOn]}>{profile.is_online ? 'متصل — عم تستقبل طلبات' : 'غير متصل'}</Text></Pressable>
-    {message ? <Text accessibilityRole="alert" style={s.formMessage}>{message}</Text> : null}
-    <View style={s.driverOffersHead}><Text style={s.sectionTitle}>عروض قريبة منك</Text><Text style={s.offerCount}>{offers.length}</Text></View>
-    {loading ? <ActivityIndicator color={c.primary}/> : offers.length ? offers.map((offer) => <View key={offer.id} style={s.offerCard}><View style={s.orderTop}><Text style={s.orderCategory}>{offer.order.category}</Text><Text style={s.orderFee}>{new Intl.NumberFormat('ar-SY').format(offer.order.delivery_fee_minor)} قرش توصيل</Text></View><Text style={s.orderRequest}>{offer.order.request_text}</Text><Text style={s.offerExpiry}>انتهاؤه {new Intl.DateTimeFormat('ar-SY',{timeStyle:'short'}).format(new Date(offer.expires_at))}</Text><Pressable disabled={busy || !profile.is_online || !online || operationsAreStale} onPress={() => void accept(offer.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>قبول الطلب <Text style={s.submitArrow}>←</Text></Text></Pressable><Pressable disabled={busy || !online || operationsAreStale} onPress={() => void decline(offer.id)} style={[s.declineOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.declineOfferText}>اعتذار عن العرض</Text></Pressable></View>) : <View style={s.noOffers}><Text style={s.noOffersGlyph}>⌁</Text><Text style={s.noOffersTitle}>ما في عروض حالياً</Text><Text style={s.noOffersCopy}>لما يوصلك عرض جديد بيظهر هون. فيك تحدّث القائمة بأي وقت.</Text></View>}
-    {!!activeOrders.length && <><Text style={s.sectionTitle}>طلباتك النشطة</Text>{activeOrders.map((order) => <View key={order.id} style={s.offerCard}><Text style={s.orderCategory}>{order.category} · {orderStatus[order.status] ?? order.status}</Text><Text style={s.orderRequest}>{order.request_text}</Text><OrderImageGallery orderId={order.id}/><Text style={s.offerExpiry}>ميزانية الزبون: {new Intl.NumberFormat('ar-SY').format(order.budget_ceiling_minor)} قرش</Text><SupportIssueForm orderId={order.id} status={order.status} disabled={operationsAreStale}/>{order.address && <View style={s.dropoff}><Text style={s.dropoffTitle}>عنوان التوصيل</Text><Text style={s.dropoffText}>{order.address.label} · {order.address.street}{order.address.building ? `، بناء ${order.address.building}` : ''}</Text><Text style={s.dropoffText}>{order.address.neighborhood}، {order.address.city}{order.address.landmark ? ` · ${order.address.landmark}` : ''}</Text><Text style={s.dropoffPhone} selectable>{order.address.contact_phone}</Text></View>}{['accepted','assigned'].includes(order.status) && <Pressable disabled={busy || !online || operationsAreStale} onPress={() => void startShopping(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>بدء التسوق ←</Text></Pressable>}{order.status === 'shopping' && <><Text style={s.label}>المبلغ المتوقع عند الصندوق · قرش</Text><TextInput value={purchaseDrafts[order.id] ?? ''} onChangeText={(value) => setPurchaseDrafts((current) => ({...current,[order.id]:value}))} keyboardType="number-pad" textAlign="left" placeholder="مثال: 25000" placeholderTextColor="#839188" style={s.field} accessibilityLabel="قيمة المشتريات"/><Pressable disabled={busy || !online || operationsAreStale} onPress={() => void recordPurchase(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>تسجيل قيمة المشتريات ←</Text></Pressable>{order.purchase_amount_minor !== null && (order.purchase_amount_minor <= order.budget_ceiling_minor || order.purchase_approved_at !== null) && <Pressable disabled={busy || !online || operationsAreStale} onPress={() => void confirmPurchase(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>تأكيد الشراء بعد الدفع ←</Text></Pressable>}</>}{order.status === 'awaiting_approval' && <Text style={s.offerExpiry}>المبلغ المقترح {new Intl.NumberFormat('ar-SY').format(order.purchase_amount_minor ?? 0)} قرش · ناطرين موافقة الزبون.</Text>}{order.status === 'purchased' && <><Text style={s.offerExpiry}>مشتريات: {new Intl.NumberFormat('ar-SY').format(order.purchase_amount_minor ?? 0)} قرش</Text><Pressable disabled={busy || !online || operationsAreStale} onPress={() => void startDelivery(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>بدء التوصيل ←</Text></Pressable></>}{order.status === 'delivering' && <><Text style={s.label}>رمز التأكيد من الزبون · 8 أرقام</Text><TextInput value={deliveryDrafts[order.id] ?? ''} onChangeText={(value) => setDeliveryDrafts((current) => ({...current,[order.id]:value.replace(/\D/g,'').slice(0,8)}))} keyboardType="number-pad" textAlign="left" maxLength={8} placeholder="••••••••" placeholderTextColor="#839188" style={s.field} accessibilityLabel="رمز تأكيد التسليم"/><Pressable disabled={busy || !online || operationsAreStale || (deliveryDrafts[order.id] ?? '').length !== 8} onPress={() => void confirmDelivery(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>تأكيد التسليم ←</Text></Pressable></>}</View>)}</>}
+  return <View style={[s.driverPanel,screen==='home'&&s.driverHomePanel]}><View style={s.driverPanelTop}><View><Text style={s.driverApplyTitle}>{screen==='home'?'استقبال الطلبات':'ملخص الطلبات'}</Text><Text style={s.driverApplyCopy}>{screen==='home'?'بدّل حالتك من هون لتبدأ أو توقف استقبال العروض.':'العروض والطلبات المفتوحة بتظهر تحت.'}</Text></View><Pressable disabled={busy} onPress={() => void refresh()} style={s.driverRefresh} accessibilityRole="button" accessibilityLabel="تحديث طلبات السائق"><Text style={s.driverRefreshGlyph}>↻</Text></Pressable></View>
+    {loading ? showInitialSkeleton ? <View accessibilityRole="progressbar" accessibilityLabel="مزامنة بيانات السائق" style={{gap:12,marginTop:8}}><View style={[s.driverOrdersSkeleton,{minHeight:screen==='home'?142:106,marginBottom:0}]}><View style={s.driverSkeletonTop}><View style={s.driverSkeletonPill}/><View style={s.driverSkeletonLine}/></View><View style={[s.driverSkeletonLine,{width:'88%'}]}/><View style={[s.driverSkeletonLine,{width:'61%'}]}/></View><View style={s.driverStatsRow}><View style={[s.driverStat,{minHeight:68}]}><View style={[s.driverSkeletonLine,{width:'65%',marginBottom:0}]}/></View><View style={[s.driverStat,{minHeight:68}]}><View style={[s.driverSkeletonLine,{width:'65%',marginBottom:0}]}/></View></View>{screen==='home'&&<View style={[s.driverOrdersSkeleton,{minHeight:72,marginBottom:0}]}><View style={[s.driverSkeletonLine,{width:'42%'}]}/><View style={[s.driverSkeletonLine,{width:'72%',marginBottom:0}]}/></View>}</View> : <View style={{minHeight:screen==='home'?340:250}}/> : <StaggeredSections transitionKey={`${screen}-${loading ? 'loading' : 'ready'}`}><>
+    {screen==='home'&&<View style={[s.driverAvailabilityHero,profile.is_online&&s.driverAvailabilityHeroOn]}>
+      <View style={s.driverAvailabilityHeroTop}><View style={[s.driverAvailabilityHeroIcon,profile.is_online&&s.driverAvailabilityHeroIconOn]}><SymbolView name={{ios:profile.is_online?'checkmark':'pause.fill',android:profile.is_online?'check':'pause',web:profile.is_online?'check':'pause'}} tintColor={profile.is_online?'#0B1411':c.muted} size={22}/></View><View style={s.driverAvailabilityHeroCopy}><Text style={[s.driverAvailabilityState,profile.is_online&&s.driverAvailabilityStateOn]}>{profile.is_online?'متاح لاستقبال الطلبات':'متوقف عن استقبال الطلبات'}</Text><Text style={s.driverAvailabilityHint}>{profile.is_online?'العروض الجديدة توصلك فوراً':'فعّل التوفر وقت ما تكون جاهز للشغل'}</Text></View></View>
+      {profileComplete&&<Pressable disabled={busy||!online||operationsAreStale} onPress={()=>void setAvailability(!profile.is_online)} style={[s.driverAvailabilityAction,profile.is_online&&s.driverAvailabilityActionOn,(busy||!online||operationsAreStale)&&s.disabled]} accessibilityRole="switch" accessibilityLabel={profile.is_online?'إيقاف استقبال الطلبات':'بدء استقبال الطلبات'} accessibilityState={{checked:profile.is_online,disabled:busy||!online||operationsAreStale}} aria-checked={profile.is_online}><Text style={[s.driverAvailabilityActionText,profile.is_online&&s.driverAvailabilityActionTextOn]}>{busy?'عم نحدّث حالتك…':profile.is_online?'إيقاف الاستقبال':'تفعيل استقبال الطلبات'}</Text><View style={[s.driverSwitchTrack,profile.is_online&&s.driverSwitchTrackOn]}><View style={[s.driverSwitchThumb,profile.is_online&&s.driverSwitchThumbOn]}/></View></Pressable>}
+      {operationsAreStale&&<Text style={s.driverAvailabilityOffline}>الاتصال بالخادم مطلوب لتغيير حالة التوفر.</Text>}
+    </View>}
+    <View style={s.driverStatsRow}><View style={s.driverStat}><Text style={s.driverStatValue}>{offers.length}</Text><Text style={s.driverStatLabel}>عروض جديدة</Text></View><View style={s.driverStat}><Text style={s.driverStatValue}>{activeOrders.length}</Text><Text style={s.driverStatLabel}>طلبات نشطة</Text></View></View>
+    {screen === 'home' && <View style={s.driverCommissionSummary}><View style={s.driverCommissionBadge}><SymbolView name={{ios:'banknote.fill',android:'payments',web:'payments'}} tintColor={c.primary} size={18}/></View><View style={{flex:1,alignItems:'flex-end'}}><Text style={s.driverCommissionTitle}>العمولة المستحقة</Text><Text style={s.driverCommissionCopy}>{walletUnavailable?'تعذر تحميل رصيد العمولة. أعد المحاولة.':walletBalance === null ? online ? 'عم نتحقق من رصيدك.' : 'الرصيد يظهر عند الاتصال.' : walletBalance < 0 ? `عليك ${numberFormatter.format(Math.abs(walletBalance))} ل.س بعد تسوية الطلبات.` : walletBalance > 0 ? `إلك رصيد ${numberFormatter.format(walletBalance)} ل.س.` : 'ما عليك عمولات مستحقة حالياً.'}</Text></View></View>}
+    {screen === 'home' && <Pressable onPress={onOpenOrders} style={s.driverOrdersShortcut} accessibilityRole="button"><View style={s.driverShortcutIcon}><SymbolView name={{ ios: 'shippingbox.fill', android: 'local_shipping', web: 'local_shipping' }} tintColor={c.primary} size={20}/></View><View style={{flex:1,alignItems:'flex-start'}}><Text style={s.driverShortcutTitle}>طلباتك وعروضك</Text><Text style={s.driverShortcutCopy}>افتح قائمة المتابعة وقبول الطلبات</Text></View><Text style={s.appearanceArrow}>←</Text></Pressable>}
+    {screen === 'orders' && <><View style={s.driverOffersHead}><Text style={s.sectionTitle}>عروض قريبة منك</Text><Text style={s.offerCount}>{offers.length}</Text></View>
+    {offers.length ? offers.map((offer) => <View key={offer.id} style={s.offerCard}><View style={s.orderTop}><Text style={s.orderCategory}>{offer.order.category}</Text><Text style={s.orderFee}>{numberFormatter.format(offer.order.delivery_fee_minor)} ل.س توصيل</Text></View><Text style={s.orderRequest}>{offer.order.request_text}</Text><Text style={s.offerExpiry}>انتهاؤه {shortTimeFormatter.format(new Date(offer.expires_at))}</Text><Pressable disabled={busy || !profile.is_online || !online || operationsAreStale} onPress={() => void accept(offer.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>قبول الطلب <Text style={s.submitArrow}>←</Text></Text></Pressable><Pressable disabled={busy || !online || operationsAreStale} onPress={() => void decline(offer.id)} style={[s.declineOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.declineOfferText}>اعتذار عن العرض</Text></Pressable></View>) : <View style={s.noOffers}><Text style={s.noOffersGlyph}>⌁</Text><Text style={s.noOffersTitle}>ما في عروض حالياً</Text><Text style={s.noOffersCopy}>لما يوصلك عرض جديد بيظهر هون. فيك تحدّث القائمة بأي وقت.</Text></View>}
+    {!!activeOrders.length && <><Text style={s.sectionTitle}>طلباتك النشطة</Text>{activeOrders.map((order) => <View key={order.id} style={s.offerCard}><Text style={s.orderCategory}>{order.category} · {orderStatus[order.status] ?? order.status}</Text><Text style={s.orderRequest}>{order.request_text}</Text><OrderImageGallery orderId={order.id}/><Text style={s.offerExpiry}>ميزانية الزبون: {numberFormatter.format(order.budget_ceiling_minor)} ل.س</Text><SupportIssueForm orderId={order.id} status={order.status} disabled={operationsAreStale}/>{order.address && <View style={s.dropoff}><Text style={s.dropoffTitle}>عنوان التوصيل</Text><Text style={s.dropoffText}>{order.address.label} · {order.address.street}{order.address.building ? `، بناء ${order.address.building}` : ''}</Text><Text style={s.dropoffText}>{order.address.neighborhood}، {order.address.city}{order.address.landmark ? ` · ${order.address.landmark}` : ''}</Text><Text style={s.dropoffPhone} selectable>{order.address.contact_phone}</Text></View>}{['accepted','assigned'].includes(order.status) && <Pressable disabled={busy || !online || operationsAreStale} onPress={() => void startShopping(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>بدء التسوق ←</Text></Pressable>}{order.status === 'shopping' && <><Text style={s.label}>المبلغ المتوقع عند الصندوق · ل.س</Text><TextInput value={purchaseDrafts[order.id] ?? ''} onChangeText={(value) => setPurchaseDrafts((current) => ({...current,[order.id]:value}))} keyboardType="number-pad" textAlign="left" placeholder="مثال: 25000" placeholderTextColor="#839188" style={s.field} accessibilityLabel="قيمة المشتريات"/><Pressable disabled={busy || !online || operationsAreStale} onPress={() => void recordPurchase(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>تسجيل قيمة المشتريات ←</Text></Pressable>{order.purchase_amount_minor !== null && (order.purchase_amount_minor <= order.budget_ceiling_minor || order.purchase_approved_at !== null) && <Pressable disabled={busy || !online || operationsAreStale} onPress={() => void confirmPurchase(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>تأكيد الشراء بعد الدفع ←</Text></Pressable>}</>}{order.status === 'awaiting_approval' && <Text style={s.offerExpiry}>المبلغ المقترح {numberFormatter.format(order.purchase_amount_minor ?? 0)} ل.س · ناطرين موافقة الزبون.</Text>}{order.status === 'purchased' && <><Text style={s.offerExpiry}>مشتريات: {numberFormatter.format(order.purchase_amount_minor ?? 0)} ل.س</Text><Pressable disabled={busy || !online || operationsAreStale} onPress={() => void startDelivery(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>بدء التوصيل ←</Text></Pressable></>}{order.status === 'delivering' && <><Text style={s.label}>رمز التأكيد من الزبون · 8 أرقام</Text><TextInput value={deliveryDrafts[order.id] ?? ''} onChangeText={(value) => setDeliveryDrafts((current) => ({...current,[order.id]:value.replace(/\D/g,'').slice(0,8)}))} keyboardType="number-pad" textAlign="left" maxLength={8} placeholder="••••••••" placeholderTextColor="#839188" style={s.field} accessibilityLabel="رمز تأكيد التسليم"/><Pressable disabled={busy || !online || operationsAreStale || (deliveryDrafts[order.id] ?? '').length !== 8} onPress={() => void confirmDelivery(order.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>تأكيد التسليم ←</Text></Pressable></>}</View>)}</>}</>}
+    </></StaggeredSections>}
   </View>;
 }
 
 function DriverApplicationFlow({ userId, initialToken }: { userId: string; initialToken?: string }) {
+  const { colors: c, styles: s } = useMobileTheme();
   const online = useInternetAvailable();
   const [status, setStatus] = useState<string | null>(null);
   const [inviteCode, setInviteCode] = useState(initialToken ?? '');
   const [vehicle, setVehicle] = useState('');
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useToastMessage();
   const [checked, setChecked] = useState(false);
   useEffect(() => {
     if (!supabase || !online) return;
     supabase.from('driver_profiles').select('review_status').eq('user_id', userId).maybeSingle().then(({ data }) => { setStatus(data?.review_status ?? null); setChecked(true); });
   }, [online, userId]);
-  useEffect(() => { if (initialToken) setInviteCode(initialToken); }, [initialToken]);
   const apply = async () => {
     if (!supabase) return;
     const token = inviteCode.replace(/\s/g, '').toLowerCase();
@@ -322,34 +684,227 @@ function DriverApplicationFlow({ userId, initialToken }: { userId: string; initi
     if (error) { setMessage('الدعوة غير صالحة أو منتهية أو مستخدمة من قبل. راجع الرمز مع فريق لَبّيك.'); return; }
     setStatus(data); setInviteCode(''); setMessage('وصل طلب انضمامك لفريق لَبّيك. رح نراجع معلوماتك.');
   };
-  if (!checked) return <View style={s.driverApplyCard}><ActivityIndicator color={c.primary}/></View>;
+  if (!checked) return <View accessibilityRole="progressbar" accessibilityLabel="تحميل حالة طلب الانضمام" style={[s.driverApplyCard, { minHeight: 166, justifyContent: 'center', gap: 14 }]}><SkeletonBlock width="46%" height={18} /><SkeletonBlock width="82%" height={12} /><SkeletonBlock width="66%" height={12} /></View>;
   if (status === 'approved') return <DriverOperations userId={userId}/>;
   return <View style={s.driverApplyCard}><View style={s.driverApplyMark}><Text style={s.driverApplyIcon}>♙</Text></View><Text style={s.driverApplyTitle}>انضم لفريق السائقين</Text>{status ? <><Text style={s.driverApplyCopy}>{status === 'pending' ? 'طلبك قيد المراجعة. رح يتواصل معك الفريق بعد التحقق.' : status === 'approved' ? 'تم اعتماد حسابك. واجهة السائق قيد التجهيز.' : status === 'suspended' ? 'حساب السائق موقوف حالياً. تواصل مع فريق لَبّيك.' : 'تمت مراجعة الطلب. تواصل مع الفريق إذا بدك تعرف التفاصيل.'}</Text><Text style={s.driverStatus}>{status === 'pending' ? 'بانتظار المراجعة' : status === 'approved' ? 'سائق معتمد' : status === 'suspended' ? 'موقوف' : 'مرفوض'}</Text></> : <><Text style={s.driverApplyCopy}>إذا وصلك رمز دعوة من فريق لَبّيك، دخّله حتى نبدأ مراجعة طلبك.</Text><Text style={s.label}>رمز الدعوة</Text><TextInput value={inviteCode} onChangeText={setInviteCode} autoCapitalize="none" autoCorrect={false} textAlign="left" placeholder="64 حرفاً" placeholderTextColor="#839188" style={s.field} accessibilityLabel="رمز دعوة السائق"/><Text style={s.label}>نوع المركبة <Text style={s.optional}>اختياري</Text></Text><TextInput value={vehicle} onChangeText={setVehicle} placeholder="دراجة، سيارة..." placeholderTextColor="#839188" style={s.field} accessibilityLabel="نوع المركبة" maxLength={160}/><Pressable disabled={busy} onPress={() => void apply()} style={[s.saveAddress,busy&&s.disabled]} accessibilityRole="button"><Text style={s.saveAddressText}>{busy?'عم نتحقق…':'إرسال طلب الانضمام'} <Text style={s.submitArrow}>←</Text></Text></Pressable>{message ? <Text accessibilityRole="alert" style={s.formMessage}>{message}</Text> : null}</>}</View>;
 }
 
-function CustomerHome({ onSignOut, userId, inviteToken }: { onSignOut: () => void; userId: string; inviteToken?: string }) {
+type DriverProfileDraft = { name: string; phone: string; age: string; avatarPath: string | null; avatarUrl: string | null; avatarDraft: ProfileAvatarDraft | null };
+function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { userId: string; email: string; onSignOut: () => void; theme: 'dark' | 'light'; onToggleTheme: () => void }) {
+  const { colors: c, styles: s } = useMobileTheme();
+  const online = useInternetAvailable();
+  const [tab, setTab] = useState<'home' | 'orders' | 'notifications' | 'profile'>('home');
+  const [notificationCount,setNotificationCount]=useState(0);
+  const [profile, setProfile] = useState<DriverProfileDraft>({ name: '', phone: '', age: '', avatarPath: null, avatarUrl: null, avatarDraft: null });
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [age, setAge] = useState('');
+  const [avatarDraft, setAvatarDraft] = useState<ProfileAvatarDraft | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useToastMessage();
+  const [tabScale] = useState(() => new Animated.Value(1));
+  const [activeTabAnimation, setActiveTabAnimation] = useState<'home' | 'orders' | 'notifications' | 'profile'>('home');
+  useEffect(() => {
+    if (!supabase || !online) { setLoading(false); return; }
+    let active = true;
+    void Promise.all([
+      supabase.from('profiles').select('display_name,avatar_path').eq('id', userId).maybeSingle(),
+      supabase.from('driver_profiles').select('phone_e164,age').eq('user_id', userId).maybeSingle(),
+    ]).then(async ([account, driver]) => {
+      if (!active) return;
+      const avatarPath = account.data?.avatar_path ?? null;
+      const avatar = avatarPath ? await supabase!.storage.from('profile-avatars').createSignedUrl(avatarPath, 60 * 60 * 24 * 30) : null;
+      if (!active) return;
+      const loaded: DriverProfileDraft = {
+        name: account.data?.display_name ?? '',
+        phone: (driver.data?.phone_e164 ?? '').replace(/^\+963/, ''),
+        age: driver.data?.age == null ? '' : String(driver.data.age),
+        avatarPath,
+        avatarUrl: avatar?.data?.signedUrl ?? null,
+        avatarDraft: null,
+      };
+      setProfile(loaded); setName(loaded.name); setPhone(loaded.phone); setAge(loaded.age);
+    }).catch(() => setMessage('ما قدرنا نحمّل بيانات الملف. أعد المحاولة.')).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [online, userId, setMessage]);
+  const profileComplete = profile.name.trim().length >= 2 && /^9\d{8}$/.test(profile.phone) && Number(profile.age) >= 18 && Number(profile.age) <= 80;
+  const goTab = (next: 'home' | 'orders' | 'notifications' | 'profile') => {
+    setTab(next); setActiveTabAnimation(next); tabScale.setValue(0.84);
+    Animated.spring(tabScale, { toValue: 1, useNativeDriver: true, speed: 22, bounciness: 7 }).start();
+  };
+  const choosePhoto = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.78, exif: false });
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+    if (asset.fileSize && asset.fileSize > 5 * 1024 * 1024) { setMessage('حجم الصورة أكبر من 5 ميغابايت. اختار صورة أصغر.'); return; }
+    const mimeType = asset.mimeType?.toLowerCase() ?? 'image/jpeg';
+    const extension = ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic', 'image/heif': 'heif' } as Record<string, string>)[mimeType];
+    if (!extension) { setMessage('اختار صورة JPEG أو PNG أو WebP أو HEIC.'); return; }
+    setAvatarDraft({ uri: asset.uri, mimeType, extension }); setMessage('اختيرت الصورة. احفظ الملف الشخصي لتثبيتها.');
+  };
+  const save = async () => {
+    const normalizedPhone = normalizeDigits(phone).slice(0, 9);
+    const parsedAge = Number(normalizeDigits(age));
+    if (name.trim().length < 2) { setMessage('اكتب اسمك الكامل حتى يتعرف عليك الزبون.'); return; }
+    if (!/^9\d{8}$/.test(normalizedPhone)) { setMessage('أدخل رقم موبايل سوري من 9 أرقام يبدأ بـ 9.'); return; }
+    if (!Number.isInteger(parsedAge) || parsedAge < 18 || parsedAge > 80) { setMessage('العمر لازم يكون بين 18 و80 سنة.'); return; }
+    if (!supabase || !online) { setMessage('حفظ الملف يحتاج اتصالاً بالإنترنت.'); return; }
+    setBusy(true); setMessage('');
+    let uploadedAvatarPath: string | null = null;
+    if (avatarDraft) {
+      try {
+        const body = await fetch(avatarDraft.uri).then((response) => response.arrayBuffer());
+        const path = `${userId}/${newRequestKey()}.${avatarDraft.extension}`;
+        const { error } = await supabase.storage.from('profile-avatars').upload(path, body, { contentType: avatarDraft.mimeType, cacheControl: '3600', upsert: false });
+        if (error) throw error;
+        uploadedAvatarPath = path;
+      } catch { setBusy(false); setMessage('ما قدرنا نرفع الصورة. جرّب صورة ثانية.'); return; }
+    }
+    const { error: accountError } = await supabase.from('profiles').update({ display_name: name.trim(), ...(uploadedAvatarPath ? { avatar_path: uploadedAvatarPath } : {}) }).eq('id', userId);
+    if (accountError) {
+      if (uploadedAvatarPath) await supabase.storage.from('profile-avatars').remove([uploadedAvatarPath]);
+      setBusy(false); setMessage('ما قدرنا نحفظ الاسم والصورة. حاول مرة ثانية.'); return;
+    }
+    const { error: driverError } = await supabase.from('driver_profiles').update({ phone_e164: `+963${normalizedPhone}`, age: parsedAge }).eq('user_id', userId);
+    if (driverError) { setBusy(false); setMessage('انحفظ الاسم والصورة، بس ما قدرنا نحفظ رقم الهاتف والعمر. أعد المحاولة.'); return; }
+    let avatarUrl = profile.avatarUrl;
+    if (uploadedAvatarPath) {
+      const { data } = await supabase.storage.from('profile-avatars').createSignedUrl(uploadedAvatarPath, 60 * 60 * 24 * 30);
+      avatarUrl = data?.signedUrl ?? null;
+      if (profile.avatarPath) await supabase.storage.from('profile-avatars').remove([profile.avatarPath]);
+    }
+    const saved = { name: name.trim(), phone: normalizedPhone, age: String(parsedAge), avatarPath: uploadedAvatarPath ?? profile.avatarPath, avatarUrl, avatarDraft: null };
+    setProfile(saved); setPhone(normalizedPhone); setAge(String(parsedAge)); setAvatarDraft(null); setBusy(false); setMessage('تم حفظ ملف السائق. صار فيك تفعّل استقبال الطلبات.'); goTab('home');
+  };
+  const avatar = avatarDraft?.uri ?? profile.avatarUrl;
+  const initial = (profile.name.trim()[0] ?? email[0] ?? 'س').toLocaleUpperCase('ar');
+  return <SafeAreaView style={s.safe}>
+    <View accessibilityRole="main" style={{ flex: 1 }}>
+      <View style={s.header}>
+        <Pressable onPress={() => goTab('profile')} accessibilityRole="button" accessibilityLabel="فتح الملف الشخصي للسائق" style={s.driverHeaderProfile}>
+          <View style={s.driverHeaderAvatar}>{avatar ? <Image source={{ uri: avatar }} style={s.avatarImage} contentFit="cover"/> : <Text style={s.accountAvatarLargeText}>{initial}</Text>}</View>
+          <Text style={s.driverHeaderHint}>حسابي</Text>
+        </Pressable>
+        <View style={s.brand}><View style={s.brandMark}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={s.brandLogo} contentFit="contain" accessibilityLabel="شعار لَبّيك"/></View><View><Text style={s.brandName}>لَبّيك</Text><Text style={s.brandTag}>مساحة السائق</Text></View></View>
+      </View>
+      <ScrollView style={s.bodyScroll} contentContainerStyle={s.driverContent} keyboardShouldPersistTaps="handled">
+        <StaggeredSections transitionKey={`${tab}-${loading ? 'loading' : 'ready'}`} animateSingle>
+        {tab === 'home' ? <>
+          {loading ? <View accessibilityRole="progressbar" accessibilityLabel="تحميل ملف السائق" style={[s.driverProfileLoading,{padding:16}]}><View style={[s.driverSkeletonLine,{width:'46%'}]}/><View style={[s.driverSkeletonLine,{width:'76%'}]}/><View style={[s.driverSkeletonLine,{width:'58%',marginBottom:0}]}/></View> : !profileComplete ? <View style={s.driverOnboardingCard}>
+            <View style={s.driverOnboardingIcon}><SymbolView name={{ ios: 'person.text.rectangle.fill', android: 'badge', web: 'badge' }} tintColor="#0B1411" size={27}/></View>
+            <Text style={s.driverOnboardingStep}>الخطوة الأولى · قبل استقبال الطلبات</Text>
+            <Text style={s.driverOnboardingTitle}>كمّل ملف السائق</Text>
+            <Text style={s.driverOnboardingCopy}>ضيف اسمك، رقم موبايل سوري، وعمرك. بعدها منفعّل خيار التوفر وبتوصلك طلبات دمشق وريفها.</Text>
+            <View style={s.driverOnboardingList}><Text style={s.driverOnboardingListItem}>١  الاسم والبريد الإلكتروني</Text><Text style={s.driverOnboardingListItem}>٢  رقم الموبايل مع نداء سوريا ‎+963</Text><Text style={s.driverOnboardingListItem}>٣  العمر · لازم يكون 18 سنة أو أكثر</Text><Text style={s.driverOnboardingListItem}>٤  صورة شخصية · فيك تضيفها من حسابك</Text></View>
+            <Pressable onPress={() => goTab('profile')} style={s.driverOnboardingButton} accessibilityRole="button"><Text style={s.driverOnboardingButtonText}>إكمال ملفي الآن <Text style={s.submitArrow}>←</Text></Text></Pressable>
+          </View> : <>
+            <View style={s.driverHero}><View style={[s.driverHeroCopy,{alignItems:'flex-end'}]}><Text style={s.driverHeroEyebrow}>أهلاً {profile.name.trim().split(/\s+/)[0] || 'بالسائق'}</Text><Text style={s.driverHeroTitle}>طريقك لطلب جديد</Text><Text style={s.driverHeroSubtitle}>توفرك والعروض والطلبات بمكان واحد.</Text></View><View style={s.driverHeroOrb}><SymbolView name={{ ios: 'bicycle', android: 'two_wheeler', web: 'two_wheeler' }} tintColor="#0B1411" size={36}/></View></View>
+          </>}
+        </> : tab === 'orders' ? <>
+          <View style={s.driverPageIntro}><Text style={s.driverHeroEyebrow}>تشغيلك اليومي</Text><Text style={s.accountPageTitle}>الطلبات</Text><Text style={s.accountPageSubtitle}>العروض الجديدة والطلبات اللي عم توصلها.</Text></View>
+        </> : tab === 'profile' ? <>
+          <View style={s.driverPageIntro}><Text style={s.driverHeroEyebrow}>بياناتك الأساسية</Text><Text style={s.accountPageTitle}>ملف السائق</Text><Text style={s.accountPageSubtitle}>الزبون وفريق لَبّيك بيستخدموا هالمعلومات للتواصل.</Text></View>
+          <View style={s.driverProfileCard}>
+            <View style={s.driverPhotoRing}>{avatar ? <Image source={{ uri: avatar }} style={s.driverPhotoImage} contentFit="cover" accessibilityLabel="صورة السائق"/> : <Text style={s.driverPhotoInitial}>{initial}</Text>}</View>
+            <Pressable onPress={() => void choosePhoto()} disabled={busy} style={s.driverPhotoButton} accessibilityRole="button"><SymbolView name={{ ios: 'camera.fill', android: 'photo_camera', web: 'photo_camera' }} tintColor={c.primary} size={16}/><Text style={s.driverPhotoButtonText}>{avatar ? 'تغيير الصورة' : 'إضافة صورة شخصية'}</Text></Pressable>
+            <Text style={s.label}>الاسم الكامل</Text><TextInput value={name} onChangeText={setName} maxLength={120} textAlign="right" placeholder="الاسم كما يظهر للزبائن" placeholderTextColor={c.muted} style={s.driverInput} accessibilityLabel="الاسم الكامل للسائق"/>
+            <Text style={[s.label,s.driverRightText]}>البريد الإلكتروني</Text><View style={[s.driverReadOnlyField,s.driverRightContent]}><Text selectable style={s.driverEmailText}>{email}</Text><Text style={s.driverFieldHint}>مرتبط بحسابك وما بيتغيّر من هون</Text></View>
+            <Text style={[s.label,s.driverRightText]}>رقم الموبايل السوري <Text style={s.driverRequired}>إلزامي</Text></Text><View style={s.driverPhoneRow}><TextInput value={formatSyrianMobile(phone)} onChangeText={(value) => setPhone(normalizeDigits(value).slice(0, 9))} keyboardType="phone-pad" maxLength={11} textAlign="right" placeholder="944 123 456" placeholderTextColor={c.muted} style={s.driverPhoneInput} accessibilityLabel="رقم الموبايل السوري"/><View style={s.driverCountryCode}><Text style={s.driverCountryCodeText}>+963</Text><Text style={s.driverCountryFlag}>🇸🇾</Text></View></View><Text style={s.driverFieldHint}>اكتب 9 أرقام، مثل 944 123 456. لا تكتب الصفر الأول.</Text>
+            <Text style={s.label}>العمر <Text style={s.driverRequired}>إلزامي · 18 سنة أو أكثر</Text></Text><TextInput value={age} onChangeText={(value) => setAge(normalizeDigits(value).slice(0, 2))} keyboardType="number-pad" maxLength={2} textAlign="right" placeholder="العمر بالسنوات" placeholderTextColor={c.muted} style={s.driverInput} accessibilityLabel="عمر السائق"/>
+            <Pressable disabled={busy || loading} onPress={() => void save()} style={[s.driverSaveButton, (busy || loading) && s.disabled]} accessibilityRole="button"><Text style={s.driverSaveButtonText}>{busy ? 'عم نحفظ بياناتك…' : 'حفظ الملف الشخصي'}</Text></Pressable>
+            <Pressable onPress={onToggleTheme} style={s.profileThemeRow} accessibilityRole="button" accessibilityLabel={theme === 'dark' ? 'تفعيل الوضع الفاتح' : 'تفعيل الوضع الداكن'}><View style={s.profileThemeIcon}><SymbolView name={{ ios: theme === 'dark' ? 'sun.max.fill' : 'moon.fill', android: theme === 'dark' ? 'light_mode' : 'dark_mode', web: theme === 'dark' ? 'light_mode' : 'dark_mode' }} tintColor={c.primary} size={20}/></View><View style={s.profileThemeCopy}><Text style={s.profileThemeTitle}>المظهر · {theme === 'dark' ? 'داكن' : 'فاتح'}</Text><Text style={s.profileThemeHint}>اضغط للتبديل إلى الوضع {theme === 'dark' ? 'الفاتح' : 'الداكن'}</Text></View><Text style={s.profileThemeStateText}>تغيير</Text></Pressable>
+            <Pressable onPress={onSignOut} style={s.profileLogout} accessibilityRole="button"><SymbolView name={{ ios: 'rectangle.portrait.and.arrow.right', android: 'logout', web: 'logout' }} tintColor={c.danger} size={18}/><Text style={s.profileLogoutText}>تسجيل الخروج</Text></Pressable>
+          </View>
+        </> : null}
+        </StaggeredSections>
+        <View style={loading || (tab === 'home' && !profileComplete) || (tab !== 'home' && tab !== 'orders') ? s.hidden : undefined}>
+          <DriverOperations key={userId} userId={userId} screen={tab === 'home' ? 'home' : 'orders'} profileComplete={profileComplete} onCompleteProfile={() => goTab('profile')} onOpenOrders={() => goTab('orders')}/>
+        </View>
+        {tab === 'notifications' && <View style={s.driverPageIntro}><Text style={s.driverHeroEyebrow}>تحديثات طلباتك</Text><Text style={s.accountPageTitle}>التنبيهات</Text><Text style={s.accountPageSubtitle}>كل تنبيه لحاله مع وقت وصوله ورقم الطلب. اضغط عليه لتفتح الطلب.</Text></View>}
+        <View style={tab === 'notifications' ? undefined : s.hidden}><EntranceSection transitionKey={tab === 'notifications' ? 'notifications-visible' : 'notifications-hidden'}><NotificationInbox userId={userId} standalone onUnreadCountChange={setNotificationCount} onOpenOrder={() => goTab('orders')}/></EntranceSection></View>
+      </ScrollView>
+      <View style={s.driverFooter}>{([{ key: 'home', label: 'الرئيسية', ios: 'house.fill', android: 'home' }, { key: 'orders', label: 'الطلبات', ios: 'shippingbox.fill', android: 'local_shipping' }, { key: 'notifications', label: 'التنبيهات', ios: 'bell.fill', android: 'notifications' }, { key: 'profile', label: 'حسابي', ios: 'person.crop.circle.fill', android: 'person' }] as const).map(({ key, label, ios, android }) => <Pressable key={key} accessibilityRole="button" accessibilityLabel={key === 'notifications' && notificationCount > 0 ? `${label}، ${notificationCount} تنبيه غير مقروء` : label} accessibilityState={{ selected: tab === key }} onPress={() => goTab(key)} style={[s.driverFooterButton, tab === key && s.driverFooterButtonActive]}><View style={s.driverFooterIconWrap}><Animated.View style={[s.footerIcon, { transform: [{ scale: activeTabAnimation === key ? tabScale : 1 }] }]}><SymbolView name={{ ios, android, web: android }} tintColor={tab === key ? (theme === 'light' ? '#17210F' : c.background) : c.muted} size={20}/></Animated.View>{key==='notifications'&&notificationCount>0?<View style={s.driverTabBadge}><Text style={s.driverTabBadgeText}>{notificationCount>99?'99+':notificationCount}</Text></View>:null}</View><Text style={[s.driverFooterLabel, tab === key && s.driverFooterLabelActive]}>{label}</Text></Pressable>)}</View>
+    </View>
+  </SafeAreaView>;
+}
+
+function SignedInHome({ userId, email, inviteToken, openOrderId, onSignOut, theme, onToggleTheme }: { userId: string; email: string; inviteToken?: string; openOrderId?: string; onSignOut: () => void; theme: 'dark' | 'light'; onToggleTheme: () => void }) {
+  const { colors: c, styles: s } = useMobileTheme();
+  const online = useInternetAvailable();
+  const [reviewStatus, setReviewStatus] = useState<string | null>(null);
+  const [checked, setChecked] = useState(false);
+  useEffect(() => {
+    if (!supabase || !online) return;
+    let active = true;
+    void (async () => {
+      try {
+        const { data } = await supabase!.from('driver_profiles').select('review_status').eq('user_id', userId).maybeSingle();
+        if (active) setReviewStatus(data?.review_status ?? null);
+      } finally { if (active) setChecked(true); }
+    })();
+    return () => { active = false; };
+  }, [online, userId]);
+  if (supabase && online && !checked) return <SafeAreaView style={s.safe}><View accessibilityRole="progressbar" accessibilityLabel="تحميل مساحة حسابك" style={{ flex: 1, justifyContent: 'center', padding: 24, gap: 18 }}><View style={[s.brand, { alignSelf: 'flex-end' }]}><View style={s.brandMark}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={s.brandLogo} contentFit="contain" accessibilityLabel="شعار لَبّيك" /></View><View><Text style={s.brandName}>لَبّيك</Text><Text style={s.brandTag}>عم نجهّز مساحتك</Text></View></View><View style={[s.formCard, { minHeight: 164, justifyContent: 'center', gap: 16 }]}><SkeletonBlock width="46%" height={22} /><SkeletonBlock width="88%" height={12} /><SkeletonBlock width="67%" height={12} /></View><View style={[s.formCard, { minHeight: 92, justifyContent: 'center', gap: 14 }]}><SkeletonBlock width="62%" height={13} /><SkeletonBlock width="82%" height={11} /></View></View></SafeAreaView>;
+  if (reviewStatus !== 'approved') return <CustomerHome key={inviteToken ?? 'customer-home'} userId={userId} email={email} inviteToken={inviteToken} openOrderId={openOrderId} showDriverFlow={!!inviteToken || !!reviewStatus} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
+  return <DriverWorkspace userId={userId} email={email} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
+}
+
+function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, showDriverFlow, theme, onToggleTheme }: { onSignOut: () => void; userId: string; email: string; inviteToken?: string; openOrderId?: string; showDriverFlow: boolean; theme: 'dark' | 'light'; onToggleTheme: () => void }) {
+  const { colors: c, styles: s } = useMobileTheme();
   const online = useInternetAvailable();
   const [request, setRequest] = useState('');
   const [category, setCategory] = useState('');
   const [budgetCeiling, setBudgetCeiling] = useState('');
-  const [tab, setTab] = useState('home');
+  const [tab, setTab] = useState(() => inviteToken ? 'profile' : 'home');
+  const [tabHistory, setTabHistory] = useState<string[]>([]);
   const [addressSummary, setAddressSummary] = useState('ما تحدد لسه');
   const [addressId, setAddressId] = useState('');
+  const addressIdRef = useRef('');
+  const [selectedAddress, setSelectedAddress] = useState<Pick<Address, 'id'|'label'|'street'|'city'|'neighborhood'|'contact_phone'|'building'|'landmark'> | null>(null);
+  const [profileName, setProfileName] = useState('');
+  const [profileNameDraft, setProfileNameDraft] = useState('');
+  const [profileAvatarPath, setProfileAvatarPath] = useState<string | null>(null);
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null);
+  const [profileAvatarDraft, setProfileAvatarDraft] = useState<ProfileAvatarDraft | null>(null);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [, setProfileMessage] = useToastMessage();
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const ordersLoaded = useRef(false);
+  const [notificationsRefreshKey, setNotificationsRefreshKey] = useState(0);
   const [ordersSyncedAt, setOrdersSyncedAt] = useState('');
   const [ordersAreStale, setOrdersAreStale] = useState(false);
   const [deliveryCodes, setDeliveryCodes] = useState<Record<string,string>>({});
   const [orderActionBusy, setOrderActionBusy] = useState('');
-  const [orderActionMessage, setOrderActionMessage] = useState('');
+  const [orderActionMessage, setOrderActionMessage] = useToastMessage();
   const [sending, setSending] = useState(false);
-  const [requestMessage, setRequestMessage] = useState('');
+  const [requestMessage, setRequestMessage] = useToastMessage();
   const [orderImages, setOrderImages] = useState<OrderImage[]>([]);
   const [pendingOrderId, setPendingOrderId] = useState('');
   const requestKey = useRef(newRequestKey());
-  const [draftReady, setDraftReady] = useState(false);
+  const [draftLoadedFor, setDraftLoadedFor] = useState('');
+  const draftReady = draftLoadedFor === userId;
   const [draftSaveError, setDraftSaveError] = useState(false);
+  const [tabScale] = useState(() => new Animated.Value(1));
+  const [activeTabAnimation, setActiveTabAnimation] = useState('home');
+  const navigate = (nextTab: string) => {
+    if (nextTab !== tab) setTabHistory((history) => [...history, tab]);
+    setTab(nextTab);
+    setActiveTabAnimation(nextTab);
+    tabScale.setValue(0.82);
+    Animated.spring(tabScale, { toValue: 1, useNativeDriver: true, speed: 22, bounciness: 7 }).start();
+  };
+  useEffect(() => {
+    if (openOrderId) navigate('orders');
+  }, [openOrderId]);
+  const goBack = () => {
+    const previous = tabHistory[tabHistory.length - 1] ?? 'home';
+    setTabHistory((history) => history.slice(0, -1));
+    setTab(previous);
+    setActiveTabAnimation(previous);
+  };
   const draftDirty = useRef(false);
-  useEffect(() => { if (inviteToken) setTab('profile'); }, [inviteToken]);
   useEffect(() => {
     if (!supabase) return;
     let active = true;
@@ -361,39 +916,107 @@ function CustomerHome({ onSignOut, userId, inviteToken }: { onSignOut: () => voi
   useEffect(() => {
     let active = true;
     draftDirty.current = false;
-    setDraftReady(false);
     void loadCustomerOrderDraft(userId).then((draft) => {
       if (!active) return;
       if (draft && !draftDirty.current) {
         setRequest(draft.request);
         setCategory(draft.category);
         setBudgetCeiling(draft.budgetCeiling);
+        addressIdRef.current = draft.addressId;
         setAddressId(draft.addressId);
         requestKey.current = draft.idempotencyKey;
       }
-      setDraftReady(true);
+      setDraftLoadedFor(userId);
     });
     return () => { active = false; };
   }, [userId]);
   useEffect(() => {
     if (!draftReady) return;
-    setDraftSaveError(false);
     const timeout = setTimeout(() => {
       void saveCustomerOrderDraft(userId, { request, category, budgetCeiling, addressId, idempotencyKey: requestKey.current })
+        .then(() => setDraftSaveError(false))
         .catch(() => setDraftSaveError(true));
     }, 250);
     return () => clearTimeout(timeout);
   }, [userId, draftReady, request, category, budgetCeiling, addressId]);
   useEffect(() => {
-    if (tab !== 'home' || !supabase || !online) return;
-    supabase.from('addresses').select('id,label,city,neighborhood,is_default').order('is_default', { ascending: false }).order('updated_at', { ascending: false })
-      .then(({ data }) => { const rows = data ?? []; const address = rows.find((row) => row.id === addressId) ?? rows[0]; if (addressId && addressId !== address?.id) requestKey.current = newRequestKey(); setAddressId(address?.id ?? ''); setAddressSummary(address ? `${address.label} · ${address.neighborhood}، ${address.city}` : 'ما تحدد لسه'); });
-  }, [online, tab, userId, addressId]);
-  const applyCustomerOrders = useCallback(async (rows: CustomerOrder[]) => {
+    if (!draftReady || tab !== 'home' || !supabase || !online) return;
+    let active = true;
+    void supabase.from('addresses').select('id,label,city,neighborhood,is_default,street,contact_phone,building,landmark').eq('user_id', userId).order('is_default', { ascending: false }).order('updated_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) { setRequestMessage('ما قدرنا نحمّل عنوان التوصيل. العنوان المحفوظ ما تغيّر؛ جرّب تحدّث الصفحة.'); return; }
+        const rows = data ?? [];
+        const currentAddressId = addressIdRef.current;
+        const address = rows.find((row) => row.id === currentAddressId) ?? rows[0];
+        const nextAddressId = address?.id ?? '';
+        if (currentAddressId && currentAddressId !== nextAddressId) requestKey.current = newRequestKey();
+        if (currentAddressId !== nextAddressId) { addressIdRef.current = nextAddressId; setAddressId(nextAddressId); }
+        setSelectedAddress((current) => current?.id === address?.id ? current : address ?? null);
+        const nextSummary = address ? `${address.label} · ${address.neighborhood}` : 'ما تحدد لسه';
+        setAddressSummary((current) => current === nextSummary ? current : nextSummary);
+      });
+    return () => { active = false; };
+  }, [draftReady, online, tab, userId, setRequestMessage]);
+  useEffect(() => {
+    if (!supabase) return;
+    let active = true;
+    void supabase.from('profiles').select('display_name,avatar_path').eq('id', userId).maybeSingle().then(async ({ data }) => {
+      if (!active) return;
+      const name = data?.display_name ?? '';
+      const avatarPath = data?.avatar_path ?? null;
+      setProfileName(name); setProfileNameDraft(name); setProfileAvatarPath(avatarPath);
+      if (!avatarPath) { setProfileAvatarUrl(null); return; }
+      const { data: signedAvatar } = await supabase!.storage.from('profile-avatars').createSignedUrl(avatarPath, 60 * 60 * 24 * 30);
+      if (active) setProfileAvatarUrl(signedAvatar?.signedUrl ?? null);
+    });
+    return () => { active = false; };
+  }, [userId]);
+  const pickProfileAvatar = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.78, exif: false });
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+    if (asset.fileSize && asset.fileSize > 5 * 1024 * 1024) { setProfileMessage('حجم الصورة أكبر من 5 ميغابايت. اختار صورة أصغر.'); return; }
+    const mimeType = asset.mimeType?.toLowerCase() ?? 'image/jpeg';
+    const extension = ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic', 'image/heif': 'heif' } as Record<string, string>)[mimeType];
+    if (!extension) { setProfileMessage('اختار صورة JPEG أو PNG أو WebP أو HEIC.'); return; }
+    setProfileAvatarDraft({ uri: asset.uri, mimeType, extension });
+    setProfileMessage('اختيرت الصورة. احفظ التعديلات لتثبيتها.');
+  };
+  const saveProfile = async () => {
+    if (!supabase || !online) { setProfileMessage('تعديل الحساب يحتاج اتصالاً بالإنترنت.'); return; }
+    if (profileNameDraft.trim().length < 2) { setProfileMessage('اكتب اسمك بشكل صحيح.'); return; }
+    setProfileBusy(true); setProfileMessage('');
+    let uploadedAvatarPath: string | null = null;
+    if (profileAvatarDraft) {
+      try {
+        const body = await fetch(profileAvatarDraft.uri).then((response) => response.arrayBuffer());
+        const path = `${userId}/${newRequestKey()}.${profileAvatarDraft.extension}`;
+        const { error: uploadError } = await supabase.storage.from('profile-avatars').upload(path, body, { contentType: profileAvatarDraft.mimeType, cacheControl: '3600', upsert: false });
+        if (uploadError) throw uploadError;
+        uploadedAvatarPath = path;
+      } catch {
+        setProfileBusy(false); setProfileMessage('ما قدرنا نرفع الصورة. جرّب صورة ثانية أو أعد المحاولة.'); return;
+      }
+    }
+    const { data, error } = await supabase.from('profiles').update({ display_name: profileNameDraft.trim(), ...(uploadedAvatarPath ? { avatar_path: uploadedAvatarPath } : {}) }).eq('id', userId).select('display_name,avatar_path').single();
+    if (error || !data) {
+      if (uploadedAvatarPath) await supabase.storage.from('profile-avatars').remove([uploadedAvatarPath]);
+      setProfileBusy(false); setProfileMessage('ما قدرنا نحفظ التعديلات. جرّب مرة ثانية.'); return;
+    }
+    const previousAvatarPath = profileAvatarPath;
+    setProfileName(data.display_name); setProfileNameDraft(data.display_name); setProfileAvatarPath(data.avatar_path); setProfileAvatarDraft(null);
+    if (uploadedAvatarPath && data.avatar_path) {
+      const { data: signedAvatar } = await supabase.storage.from('profile-avatars').createSignedUrl(data.avatar_path, 60 * 60 * 24 * 30);
+      setProfileAvatarUrl(signedAvatar?.signedUrl ?? null);
+      if (previousAvatarPath && previousAvatarPath !== data.avatar_path) await supabase.storage.from('profile-avatars').remove([previousAvatarPath]);
+    }
+    setProfileBusy(false); setProfileMessage('تم حفظ تعديلات الحساب.'); goBack();
+  };
+  const applyCustomerOrders = useCallback((rows: CustomerOrder[]) => {
     setOrders(rows);
-    const snapshot = await saveCustomerOrdersSnapshot(userId, rows).catch(() => null);
-    if (snapshot) setOrdersSyncedAt(snapshot.syncedAt);
     setOrdersAreStale(false);
+    void saveCustomerOrdersSnapshot(userId, rows).then((snapshot) => { if (snapshot) setOrdersSyncedAt(snapshot.syncedAt); }).catch(() => {});
   }, [userId]);
   const fetchCustomerOrders = useCallback(async () => {
     if (!supabase || !online) return null;
@@ -403,39 +1026,52 @@ function CustomerHome({ onSignOut, userId, inviteToken }: { onSignOut: () => voi
   useEffect(() => {
     if (tab !== 'orders') return;
     let active = true;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     let hasServerOrders = false;
+    if (!ordersLoaded.current) setOrdersLoading(true);
     void loadCustomerOrdersSnapshot(userId).then((snapshot: CustomerOrderSnapshot | null) => {
       if (!active) return;
-      if (!snapshot) { if (!online) setOrdersAreStale(true); return; }
-      if (hasServerOrders) return;
+      if (!snapshot) { if (!online) { setOrdersAreStale(true); ordersLoaded.current = true; setOrdersLoading(false); } return; }
+      if (hasServerOrders || online) return;
       setOrders(snapshot.orders.map((order) => ({ ...order, request_text: '' })));
       setOrdersSyncedAt(snapshot.syncedAt);
       setOrdersAreStale(true);
+      if (!online) { ordersLoaded.current = true; setOrdersLoading(false); }
     });
     const refresh = async () => {
       const rows = await fetchCustomerOrders();
-      if (active && rows) { hasServerOrders = true; await applyCustomerOrders(rows); }
+      if (active && rows) { hasServerOrders = true; ordersLoaded.current = true; applyCustomerOrders(rows); }
       else if (active) setOrdersAreStale(true);
+      if (active && online) setOrdersLoading(false);
     };
     void refresh();
     if (!online || !supabase) return () => { active = false; };
-    const channel = supabase.channel(`customer-orders-${userId}`).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_events' }, () => { void refresh(); }).subscribe();
-    return () => { active = false; void supabase?.removeChannel(channel); };
+    const scheduleRefresh = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => { refreshTimer = null; void refresh(); }, 250);
+    };
+    const channel = supabase.channel(`customer-orders-${userId}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_events' }, scheduleRefresh)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${userId}` }, scheduleRefresh)
+      .subscribe();
+    const appStateSubscription = AppState.addEventListener('change', (state) => { if (state === 'active') scheduleRefresh(); });
+    return () => { active = false; appStateSubscription.remove(); if (refreshTimer) clearTimeout(refreshTimer); void supabase?.removeChannel(channel); };
   }, [online, tab, userId, fetchCustomerOrders, applyCustomerOrders]);
   const submitOrder = async () => {
     const budget = Number(budgetCeiling);
     if (!draftReady) { setRequestMessage('عم نسترجع مسودتك المحفوظة. جرّب بعد لحظة.'); return; }
     if (!online) { setRequestMessage('إرسال الطلب يحتاج اتصالاً. مسودتك محفوظة على هالجهاز.'); return; }
     if (!supabase) return;
+    if (!pendingOrderId && !addressReadyForOrder) { setRequestMessage('أضف عنوان تسليم بدمشق أو ريف دمشق حتى نكمل الطلب.'); return; }
     if (!pendingOrderId && (!addressId || !category || !request.trim())) { setRequestMessage('اختار العنوان والقسم واكتب تفاصيل طلبك.'); return; }
-    if (!pendingOrderId && (!Number.isSafeInteger(budget) || budget < 1 || budget > 100000000)) { setRequestMessage('حدد سقف ميزانية صحيح بالقروش حتى ما يضطر السائق يدفع مبلغ غير متفق عليه.'); return; }
+    if (!pendingOrderId && (!Number.isSafeInteger(budget) || budget < 1 || budget > 100000000)) { setRequestMessage('حدد سقف ميزانية صحيح بالليرة السورية حتى ما يضطر السائق يدفع مبلغ غير متفق عليه.'); return; }
     setSending(true); setRequestMessage('');
     let orderId = pendingOrderId;
     if (!orderId) {
       const { data, error } = await supabase.rpc('create_customer_order', { p_idempotency_key: requestKey.current, p_address_id: addressId, p_category: category, p_request_text: request.trim(), p_budget_ceiling_minor: budget });
       if (error || !data) {
         setSending(false);
-        setRequestMessage(error?.message.includes('inactive') ? 'منطقة عنوانك ما عادت متاحة للتوصيل. حدّث العنوان.' : 'ما قدرنا نرسل الطلب. تأكد من العنوان والاتصال وحاول مرة ثانية.');
+        setRequestMessage(error?.message.includes('Damascus and Rif Dimashq') ? 'التوصيل متاح حالياً بدمشق وريف دمشق فقط. عدّل عنوان التسليم.' : 'ما قدرنا نرسل الطلب. تأكد من العنوان والاتصال وحاول مرة ثانية.');
         return;
       }
       orderId = data;
@@ -457,7 +1093,7 @@ function CustomerHome({ onSignOut, userId, inviteToken }: { onSignOut: () => voi
     }
     setSending(false);
     await clearCustomerOrderDraft(userId);
-    requestKey.current = newRequestKey(); setRequest(''); setCategory(''); setBudgetCeiling(''); setOrderImages([]); setPendingOrderId(''); setRequestMessage('وصلنا طلبك! الإدارة رح تقدّر أجرة الطريق وتبعتها إلك للموافقة قبل توزيع السائق.'); setTab('orders');
+    requestKey.current = newRequestKey(); setRequest(''); setCategory(''); setBudgetCeiling(''); setOrderImages([]); setPendingOrderId(''); setRequestMessage('وصلنا طلبك! الإدارة رح تقدّر أجرة الطريق وتبعتها إلك للموافقة قبل توزيع السائق.'); navigate('orders');
   };
   const pickOrderImages = async () => {
     if (pendingOrderId || sending) return;
@@ -470,6 +1106,22 @@ function CustomerHome({ onSignOut, userId, inviteToken }: { onSignOut: () => voi
     });
     setOrderImages((current) => [...current, ...accepted].slice(0, 3));
     if (accepted.length < result.assets.length) setRequestMessage('الصور المدعومة: JPEG وPNG وWebP وHEIC.');
+    else if (accepted.length) setRequestMessage('انضافت الصور لطلبك. فيك تبدّلها أو تحذفها قبل الإرسال.');
+  };
+  const replaceOrderImage = async (imageId: string) => {
+    if (pendingOrderId || sending) return;
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: false, quality: 0.8, exif: false });
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+    const mimeType = asset.mimeType?.toLowerCase() ?? 'image/jpeg';
+    const extension = ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic', 'image/heif': 'heif' } as Record<string, string>)[mimeType];
+    if (!extension) { setRequestMessage('اختار صورة JPEG أو PNG أو WebP أو HEIC.'); return; }
+    setOrderImages((current) => current.map((image) => image.id === imageId ? { ...image, uri: asset.uri, mimeType, extension, uploaded: false } : image));
+    setRequestMessage('تبدّلت الصورة.');
+  };
+  const removeOrderImage = (imageId: string) => {
+    setOrderImages((current) => current.filter((image) => image.id !== imageId));
+    setRequestMessage('انحذفت الصورة من الطلب.');
   };
   const respondPurchase = async (orderId: string, approved: boolean) => {
     if (!supabase) return;
@@ -508,32 +1160,157 @@ function CustomerHome({ onSignOut, userId, inviteToken }: { onSignOut: () => voi
     setOrderActionMessage('انلغى الطلب قبل إتمام الشراء.');
     const rows = await fetchCustomerOrders(); if (rows) await applyCustomerOrders(rows);
   };
+  const hasAddress = !!addressId;
+  const addressReadyForOrder = hasAddress;
+  const accountInitial = (profileName.trim()[0] || email.trim()[0] || 'ح').toLocaleUpperCase('ar');
   return <SafeAreaView style={s.safe}>
     <View accessibilityRole="main" style={{flex:1}}>
-    <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-      <View style={s.header}><View style={s.brand}><View style={s.brandMark}><Text style={s.brandMarkText}>ل</Text></View><View><Text style={s.brandName}>لَبّيك</Text><Text style={s.brandTag}>اطلب، والباقي علينا.</Text></View></View><View style={s.bell} accessibilityElementsHidden aria-hidden><Text style={s.bellText}>♧</Text></View></View>
-      {tab === 'addresses' ? <AddressBook userId={userId} onBack={() => setTab('profile')} /> : tab === 'home' ? <>
-      <Pressable style={s.address} onPress={() => setTab('addresses')} accessibilityRole="button"><Text style={s.pin}>⌖</Text><View style={s.addressCopy}><Text style={s.muted}>عنوان التوصيل</Text><Text style={s.addressName}>{addressSummary}</Text><Text style={s.addressHint}>إدارة العناوين المحفوظة</Text></View><Text style={s.addressChevron}>←</Text></Pressable>
+      <View style={s.header}><View style={s.brand}><View style={s.brandMark}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={s.brandLogo} contentFit="contain" accessibilityLabel="شعار لَبّيك"/></View><View><Text style={s.brandName}>لَبّيك</Text><Text style={s.brandTag}>اطلب، والباقي علينا.</Text></View></View><View style={s.headerActions}><Pressable onPress={() => navigate('profile')} style={s.accountAvatar} accessibilityRole="button" accessibilityLabel="فتح حسابي">{profileAvatarUrl ? <Image source={{uri:profileAvatarUrl}} style={s.avatarImage} contentFit="cover" accessibilityLabel="صورة الحساب"/> : <Text style={s.accountAvatarText}>{accountInitial}</Text>}</Pressable></View></View>
+      <ScrollView style={s.bodyScroll} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+      <StaggeredSections transitionKey={`${tab}-${tab === 'orders' && ordersLoading ? 'loading' : 'ready'}`}>
+      {tab === 'addresses' ? <EntranceSection transitionKey={tab}><AddressBook userId={userId} onBack={goBack} backLabel={`العودة إلى ${tabHistory[tabHistory.length - 1] === 'profile' ? 'حسابي' : 'الرئيسية'}`} onAddressSaved={(address) => { addressIdRef.current = address.id; setAddressId(address.id); setAddressSummary(`${address.label} · ${address.neighborhood}`); setSelectedAddress(address); }} /></EntranceSection> : tab === 'home' ? <>
+      {selectedAddress && <Pressable style={s.address} onPress={() => navigate('addresses')} accessibilityRole="button" accessibilityLabel={`تغيير عنوان التوصيل: ${addressSummary}`} accessibilityHint="يفتح تفاصيل العنوان لتعديله"><View style={s.pin}><SymbolView name={{ios:'house.fill',android:'home',web:'home'}} tintColor={theme === 'light' ? '#385616' : c.primary} size={17}/></View><View style={s.addressCopy}><Text style={s.addressEyebrow}>عنوان التوصيل الحالي</Text><Text style={s.addressName} numberOfLines={1}>{addressSummary}</Text></View><View style={s.addressChangeButton}><SymbolView name={{ios:'pencil',android:'edit',web:'edit'}} tintColor="#17210F" size={14}/><Text style={s.addressChange}>تغيير</Text></View></Pressable>}
       <View style={s.hero}>
         <View style={s.heroCopy}><Text style={s.heroEyebrow}>لَبّيك لاحتياجات يومك</Text><Text style={s.heroTitle}>كل شي ناقصك، بطلب واحد.</Text><Text style={s.heroDescription}>اكتب طلبك ومنهتم بالباقي.</Text></View>
-        <View style={s.heroArt} accessibilityElementsHidden><View style={s.heroOrbit}><View style={s.heroCore}><Text style={s.heroMark}>ل</Text></View><View style={s.heroPin}><Text style={s.heroPinText}>⌖</Text></View><View style={s.heroSpark}/><View style={s.heroDot}/></View></View>
+        <View style={s.heroArt} accessibilityElementsHidden><View style={s.heroOrbit}><View style={s.heroCore}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={s.heroLogo} contentFit="contain" accessibilityLabel="شعار لَبّيك"/></View><View style={s.heroPin}><Text style={s.heroPinText}>⌖</Text></View><View style={s.heroSpark}/><View style={s.heroDot}/></View></View>
         <View style={s.heroFoot}><View style={s.heroDash}/><Text style={s.heroFootText}>من حارتك لباب بيتك</Text></View>
       </View>
-      <View style={s.formCard}><Text style={s.draftNotice}>طلب جديد · الدفع كاش عند الاستلام</Text>{draftSaveError ? <Text style={s.formMessage}>تعذّر حفظ المسودة على هذا الجهاز.</Text> : null}
-        <Text style={s.label}>طلبك</Text>
-        <TextInput editable={draftReady && !pendingOrderId} value={request} onChangeText={(value) => { draftDirty.current = true; setRequest(value); }} multiline textAlignVertical="top" placeholder="مثلاً: خبز، حليب، وبندورة..." placeholderTextColor="#809087" style={s.input} accessibilityLabel="اكتب أغراض طلبك" />
-        <View style={s.chips}>{categories.map((item) => <Pressable key={item} disabled={!draftReady || !!pendingOrderId} onPress={() => { draftDirty.current = true; setCategory(item); if (!request) setRequest(item + ': '); }} style={[s.chip, category === item && s.chipActive]} accessibilityRole="button" accessibilityState={{ selected: category === item }}><Text style={[s.chipText, category === item && s.chipTextActive]}>{item}</Text></Pressable>)}</View>
-        <Text style={s.label}>أعلى ميزانية للمشتريات · قرش</Text><TextInput editable={draftReady && !pendingOrderId} value={budgetCeiling} onChangeText={(value) => { draftDirty.current = true; setBudgetCeiling(value.replace(/\D/g,'')); }} keyboardType="number-pad" textAlign="left" placeholder="مثال: 50000" placeholderTextColor="#809087" style={s.input} accessibilityLabel="سقف ميزانية المشتريات" />
-        <View style={s.divider}/>
-        <Pressable onPress={() => void pickOrderImages()} disabled={sending || !!pendingOrderId || orderImages.length >= 3} style={s.attachment} accessibilityRole="button"><Text style={s.attachmentIcon}>＋</Text><Text style={s.attachmentText}>إرفاق الصور <Text style={s.optional}>{orderImages.length}/3 · اختياري</Text></Text></Pressable>
-        {!!orderImages.length && <View style={s.orderImageList}>{orderImages.map((image) => <View key={image.id} style={s.orderImageTile}><Image source={{ uri: image.uri }} style={s.orderImagePreview} contentFit="cover" accessibilityLabel="صورة مرفقة بالطلب"/><Text style={s.orderImageStatus}>{image.uploaded ? 'تم الرفع' : 'جاهزة'}</Text><Pressable disabled={sending || !!pendingOrderId} onPress={() => setOrderImages((current) => current.filter((item) => item.id !== image.id))} accessibilityRole="button" accessibilityLabel="إزالة الصورة"><Text style={s.orderImageRemove}>×</Text></Pressable></View>)}</View>}
+      <View style={s.formCard}><View style={s.formHeader}><View style={s.formStep}><Text style={s.formStepText}>01</Text></View><View style={s.formHeaderCopy}><Text style={s.formTitle}>شو بدك نجيبلك؟</Text><Text style={s.formSubtitle}>اكتب طلبك بالتفصيل، والصورة بتساعدنا نفهمك أسرع.</Text></View><View style={s.cashBadge}><Text style={s.cashBadgeText}>دفع كاش</Text></View></View>{draftSaveError ? <Text style={s.formMessage}>تعذّر حفظ المسودة على هذا الجهاز.</Text> : null}
+        <View style={s.formSection}><Text style={s.label}>تفاصيل الطلب</Text><TextInput editable={draftReady && !pendingOrderId} value={request} onChangeText={(value) => { draftDirty.current = true; setRequest(value); }} multiline textAlignVertical="top" placeholder="مثال: جرة غاز ممتلئة مع توصيلها للبيت..." placeholderTextColor="#809087" style={[s.input,s.orderRequestInput]} accessibilityLabel="اكتب تفاصيل طلبك" /></View>
+        <View style={s.formSection}><View style={s.sectionHead}><Text style={s.label}>اختار القسم</Text><Text style={s.sectionHint}>بيساعدنا نجهّز طلبك</Text></View><View style={[s.chips,s.categoryChips]}>{categories.map((item) => <Pressable key={item} disabled={!draftReady || !!pendingOrderId} onPress={() => { draftDirty.current = true; setCategory(item); if (!request) setRequest(item + ': '); }} style={[s.chip, category === item && s.chipActive]} accessibilityRole="button" accessibilityState={{ selected: category === item, disabled: !draftReady || !!pendingOrderId }}><Text style={[s.chipText, category === item && s.chipTextActive]}>{category === item ? '✓  ' : ''}{item}</Text></Pressable>)}</View></View>
+        <View style={s.formSection}><View style={s.sectionHead}><Text style={s.label}>أعلى ميزانية للمشتريات</Text><Text style={s.sectionHint}>حتى يضلّ السعر بإيدك</Text></View><View style={s.moneyField}><TextInput editable={draftReady && !pendingOrderId} value={budgetCeiling ? numberFormatter.format(Number(budgetCeiling)) : ''} onChangeText={(value) => { draftDirty.current = true; setBudgetCeiling(normalizeDigits(value)); }} keyboardType="number-pad" textAlign="left" placeholder="100,000" placeholderTextColor="#809087" style={s.moneyInput} accessibilityLabel="سقف الميزانية بالليرة السورية"/><View style={s.currencyBadge}><Text style={s.currencyBadgeText}>ل.س</Text></View></View><Text style={s.budgetHint}>مثال: 100,000 ليرة سورية</Text></View>
+        <View style={s.photoSection}><View style={s.photoHead}><View><Text style={s.label}>صور تساعدنا نفهم طلبك</Text><Text style={s.sectionHint}>اختياري · حتى 3 صور</Text></View><Text style={s.photoCount}>{orderImages.length}/3</Text></View>
+          {!!orderImages.length && <View style={s.uploadedPhotoList}>{orderImages.map((image, index) => <View key={image.id} style={s.uploadedPhotoTile}><Image source={{ uri: image.uri }} style={s.uploadedPhotoPreview} contentFit="cover" accessibilityLabel={`صورة ${index + 1} من الطلب`}/><View style={s.uploadedPhotoStatus}><View style={[s.imageStatusDot,image.uploaded&&s.imageStatusUploaded]}/><Text style={s.orderImageStatusText}>{image.uploaded ? 'تم الرفع' : 'جاهزة'}</Text></View><View style={s.imageActions}><Pressable disabled={sending || !!pendingOrderId} onPress={() => void replaceOrderImage(image.id)} style={s.replaceImageButton} accessibilityRole="button" accessibilityLabel={`استبدال الصورة ${index + 1}`}><Text style={s.replaceImageText}>↻ استبدال</Text></Pressable><Pressable disabled={sending || !!pendingOrderId} onPress={() => removeOrderImage(image.id)} style={s.removeImageButton} accessibilityRole="button" accessibilityLabel={`حذف الصورة ${index + 1}`}><Text style={s.removeImageText}>× حذف</Text></Pressable></View></View>)}</View>}
+          {orderImages.length < 3 && <Pressable onPress={() => void pickOrderImages()} disabled={sending || !!pendingOrderId} style={s.addImageCard} accessibilityRole="button"><View style={s.addImageIcon}><Text style={s.attachmentIcon}>＋</Text></View><View style={s.addImageCopy}><Text style={s.addImageTitle}>إضافة صورة</Text><Text style={s.addImageHint}>من معرض الصور · JPEG أو PNG</Text></View><Text style={s.addImageArrow}>←</Text></Pressable>}
+        </View>
       </View>
       <View style={s.note}><Text style={s.noteIcon}>ⓘ</Text><Text style={s.noteText}>الدفع كاش عند الاستلام. الإدارة بتقدّر أجرة التوصيل حسب مسافة الطريق وتعرضها عليك قبل إرسال الطلب للسائق.</Text></View>
-      <Pressable disabled={sending || !draftReady || !online} onPress={() => void submitOrder()} style={[s.submit, (sending || !draftReady || !online)&&s.disabled]} accessibilityRole="button"><Text style={s.submitText}>{!online?'بانتظار الاتصال':sending?'عم نرسل الطلب والصور…':pendingOrderId?'إكمال رفع الصور وإرسال الطلب':'إرسال الطلب'} <Text style={s.submitArrow}>←</Text></Text></Pressable>
+      <Pressable disabled={sending || !draftReady || !online} onPress={() => { if (!hasAddress) { navigate('addresses'); return; } void submitOrder(); }} style={[s.submit, (sending || !draftReady || !online)&&s.disabled]} accessibilityRole="button"><Text style={s.submitText}>{!hasAddress?'إضافة عنوان تسليم':!online?'بانتظار الاتصال':sending?'عم نرسل الطلب والصور…':pendingOrderId?'إكمال رفع الصور وإرسال الطلب':'إرسال الطلب'} <Text style={s.submitArrow}>←</Text></Text></Pressable>
       {requestMessage ? <Text accessibilityRole="alert" style={s.requestMessage}>{requestMessage}</Text> : null}
-      </> : tab === 'orders' ? <View style={s.orderPage}><Text style={s.pageTitle}>طلباتي</Text><Text style={s.pageDescription}>تابع حالة طلباتك أول بأول.</Text>{ordersAreStale && <View style={s.offlineOrders}><Text style={s.offlineOrdersTitle}>{ordersSyncedAt ? 'بيانات محفوظة وقديمة للعرض فقط' : 'ما في نسخة محفوظة من طلباتك'}</Text><Text style={s.offlineOrdersCopy}>{ordersSyncedAt ? `آخر مزامنة ${new Intl.DateTimeFormat('ar-SY',{dateStyle:'medium',timeStyle:'short'}).format(new Date(ordersSyncedAt))} · الموافقات والإلغاء تحتاج اتصال.` : 'حالة الطلب تحتاج اتصالاً بالخادم في أول مرة.'}</Text>{online && <Pressable onPress={() => { void fetchCustomerOrders().then((rows) => rows && applyCustomerOrders(rows)); }} accessibilityRole="button" style={{alignSelf:'flex-start',marginTop:7,borderWidth:1,borderColor:'#A58A50',borderRadius:8,paddingHorizontal:11,paddingVertical:7}}><Text style={s.offlineOrdersTitle}>إعادة المحاولة ↻</Text></Pressable>}</View>}<NotificationInbox userId={userId}/>{orderActionMessage ? <Text accessibilityRole="status" style={s.formMessage}>{orderActionMessage}</Text> : null}{orders.length ? orders.map((order) => <View key={order.id} style={s.orderCard}><View style={s.orderTop}><Text style={s.orderCategory}>{order.category}</Text><Text style={s.orderStatus}>{order.status === 'requested' && !order.delivery_quote_set_at ? 'بانتظار تحديد أجرة الطريق' : orderStatus[order.status] ?? order.status}</Text></View>{ordersAreStale ? <Text style={s.orderRequest}>تفاصيل الطلب والصور تظهر عند رجوع الاتصال.</Text> : <Text style={s.orderRequest} numberOfLines={3}>{order.request_text}</Text>}<OrderImageGallery orderId={order.id}/><View style={s.orderBottom}><Text style={s.orderDate}>{new Intl.DateTimeFormat('ar-SY',{dateStyle:'medium',timeStyle:'short'}).format(new Date(order.created_at))}</Text><Text style={s.orderFee}>{order.delivery_quote_set_at ? `التوصيل: ${new Intl.NumberFormat('ar-SY').format(order.delivery_fee_minor)} قرش` : 'أجرة التوصيل حسب مسافة الطريق'}</Text></View><Text style={s.offerExpiry}>سقف المشتريات: {new Intl.NumberFormat('ar-SY').format(order.budget_ceiling_minor)} قرش{order.purchase_amount_minor !== null ? ` · المقترح/الفعلي: ${new Intl.NumberFormat('ar-SY').format(order.purchase_amount_minor)} قرش` : ''}</Text>{order.status === 'quoted' && <View style={s.reviewActions}><Pressable disabled={orderActionBusy===order.id || !online || ordersAreStale} onPress={() => void respondDeliveryQuote(order.id,true)} accessibilityRole="button" style={[s.approvePurchase,(orderActionBusy===order.id || !online || ordersAreStale)&&s.disabled]}><Text style={s.acceptOfferText}>موافقة على أجرة التوصيل</Text></Pressable><Pressable disabled={orderActionBusy===order.id || !online || ordersAreStale} onPress={() => void respondDeliveryQuote(order.id,false)} accessibilityRole="button" style={[s.rejectPurchase,(orderActionBusy===order.id || !online || ordersAreStale)&&s.disabled]}><Text style={s.rejectPurchaseText}>رفض وإلغاء</Text></Pressable></View>}{order.status === 'awaiting_approval' && <View style={s.reviewActions}><Pressable disabled={orderActionBusy===order.id || !online || ordersAreStale} onPress={() => void respondPurchase(order.id,true)} accessibilityRole="button" style={[s.approvePurchase,(orderActionBusy===order.id || !online || ordersAreStale)&&s.disabled]}><Text style={s.acceptOfferText}>موافقة</Text></Pressable><Pressable disabled={orderActionBusy===order.id || !online || ordersAreStale} onPress={() => void respondPurchase(order.id,false)} accessibilityRole="button" style={[s.rejectPurchase,(orderActionBusy===order.id || !online || ordersAreStale)&&s.disabled]}><Text style={s.rejectPurchaseText}>رفض</Text></Pressable></View>}{order.status === 'delivering' && <><Pressable disabled={orderActionBusy===order.id || !online || ordersAreStale} onPress={() => void showDeliveryCode(order.id)} accessibilityRole="button" style={[s.acceptOffer,(orderActionBusy===order.id || !online || ordersAreStale)&&s.disabled]}><Text style={s.acceptOfferText}>{deliveryCodes[order.id] ? 'تجديد رمز التسليم' : 'إظهار رمز التسليم'} ←</Text></Pressable>{deliveryCodes[order.id] && <Text selectable style={s.deliveryCode}>{deliveryCodes[order.id]}</Text>}</>}{(['requested','quoted','searching','accepted','assigned','awaiting_approval'].includes(order.status) || (order.status === 'shopping' && order.purchase_amount_minor === null)) && <Pressable disabled={orderActionBusy === order.id || !online || ordersAreStale} onPress={() => void cancelOrder(order.id)} style={[s.cancelOrder, (orderActionBusy === order.id || !online || ordersAreStale) && s.disabled]} accessibilityRole="button"><Text style={s.cancelOrderText}>إلغاء الطلب</Text></Pressable>}<SupportIssueForm orderId={order.id} status={order.status} disabled={ordersAreStale}/></View>) : <View style={s.empty}><Text style={s.emptyMark}>≋</Text><Text style={s.emptyTitle}>{ordersAreStale ? 'ما في طلبات محفوظة للعرض' : 'ما عندك طلبات حالياً'}</Text><Text style={s.emptyCopy}>{ordersAreStale ? 'اتصل بالإنترنت حتى نحمّل أحدث حالة.' : 'أول طلب إلك رح يظهر هون.'}</Text><Pressable onPress={() => setTab('home')} style={s.profileAction} accessibilityRole="button"><Text style={s.profileActionText}>ابدأ طلب جديد <Text style={s.submitArrow}>←</Text></Text></Pressable></View>}</View> : <View style={s.profilePage}><View style={s.empty}><Text style={s.emptyMark}>ل</Text><Text style={s.emptyTitle}>ملفك الشخصي</Text><Text style={s.emptyCopy}>إدارة حسابك وعناوينك المحفوظة.</Text><Pressable onPress={() => setTab('addresses')} style={s.profileAction} accessibilityRole="button"><Text style={s.profileActionText}>إدارة عناويني <Text style={s.submitArrow}>←</Text></Text></Pressable><Pressable onPress={onSignOut} style={s.signOut} accessibilityRole="button"><Text style={s.signOutText}>تسجيل الخروج</Text></Pressable></View><DriverApplicationFlow userId={userId} initialToken={inviteToken}/></View>}
-      <View style={s.footer}>{[['home','الرئيسية'],['orders','طلباتي'],['profile','حسابي']].map(([key, label]) => <Pressable key={key} accessibilityRole="button" accessibilityState={{ selected: tab === key }} onPress={() => setTab(key)} style={s.footerButton}><Text style={[s.footerItem, tab === key && s.footerActive]}>{label}</Text></Pressable>)}</View>
-    </ScrollView>
+      </> : tab === 'orders' ? <View style={s.orderPage}><StaggeredSections transitionKey={`${tab}-orders`}>
+        <View style={[s.ordersIntro,s.ordersIntroCard]}>
+          <View style={s.ordersIntroTop}>
+            <View style={s.ordersEyebrowLine}><View style={s.ordersEyebrowDot}/><Text style={s.ordersEyebrow}>متابعة الطلبات</Text></View>
+            <Pressable onPress={goBack} style={s.ordersBackButton} accessibilityRole="button" accessibilityLabel={`العودة إلى ${tabHistory[tabHistory.length - 1] === 'profile' ? 'حسابي' : 'الرئيسية'}`}><SymbolView name={{ios:'arrow.left',android:'arrow_back',web:'arrow_back'}} tintColor={theme === 'light' ? '#385616' : c.primary} size={15}/><Text style={s.ordersBackButtonText}>{tabHistory[tabHistory.length - 1] === 'profile' ? 'حسابي' : 'الرئيسية'}</Text></Pressable>
+          </View>
+          <View style={s.ordersIntroMain}>
+            <View style={s.ordersIntroCopy}>
+              <Text style={s.ordersTitle}>طلباتي</Text>
+              <Text style={s.ordersDescription}>كل طلب وتفاصيله وتحديثاته بمكان واحد.</Text>
+            </View>
+            <View style={s.ordersIntroTools}>
+              <View style={s.ordersCountBadge}>{ordersLoading ? <SkeletonBlock width={21} height={22} style={{ alignSelf: 'auto' }} /> : <Text style={s.ordersCountValue}>{orders.length}</Text>}<Text style={s.ordersCountLabel}>طلب</Text></View>
+              <Pressable onPress={() => { setNotificationsRefreshKey((value) => value + 1); void fetchCustomerOrders().then((rows) => rows && applyCustomerOrders(rows)); }} accessibilityRole="button" accessibilityLabel="تحديث الطلبات والتنبيهات" style={s.ordersRefreshButton}>
+                <SymbolView name={{ios:'arrow.clockwise',android:'refresh',web:'refresh'}} tintColor={c.primary} size={19}/>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+        {ordersAreStale && <View style={s.offlineOrders}>
+          <Text style={s.offlineOrdersTitle}>{ordersSyncedAt ? 'بيانات محفوظة وقديمة للعرض فقط' : 'ما في نسخة محفوظة من طلباتك'}</Text>
+          <Text style={s.offlineOrdersCopy}>{ordersSyncedAt ? 'آخر مزامنة ' + shortDateTimeFormatter.format(new Date(ordersSyncedAt)) + ' · الموافقات والإلغاء تحتاج اتصال.' : 'اتصل بالإنترنت حتى نحمّل أحدث حالة لطلباتك.'}</Text>
+          {online && <Pressable onPress={() => { void fetchCustomerOrders().then((rows) => rows && applyCustomerOrders(rows)); }} accessibilityRole="button" style={s.retryOrdersButton}>
+            <Text style={s.retryOrdersText}>تحديث الطلبات ↻</Text>
+          </Pressable>}
+        </View>}
+        <NotificationInbox userId={userId} refreshKey={notificationsRefreshKey} onOpenOrder={() => navigate('orders')}/>
+        {orderActionMessage ? <Text accessibilityRole="status" style={s.formMessage}>{orderActionMessage}</Text> : null}
+        {ordersLoading ? <OrdersSkeleton styles={s} /> : orders.length ? orders.map((order) => <View key={order.id} style={s.orderCard}>
+          <View style={s.orderCardHead}>
+            <View style={s.orderMeta}>
+              <Text style={s.orderMetaId}>طلب #{order.id.slice(0,8)}</Text>
+              <Text style={s.orderDate}>{shortDateTimeFormatter.format(new Date(order.created_at))}</Text>
+            </View>
+            <View style={[s.orderStatusPill,order.status==='cancelled'&&s.orderStatusCancelled]}>
+              <View style={[s.orderStatusDot,order.status==='cancelled'&&s.orderStatusDotCancelled]}/>
+              <Text style={[s.orderStatus,order.status==='cancelled'&&s.orderStatusTextCancelled]}>{order.status === 'requested' && !order.delivery_quote_set_at ? 'بانتظار أجرة الطريق' : orderStatus[order.status] ?? order.status}</Text>
+            </View>
+          </View>
+          <View style={s.orderRequestBlock}>
+            <Text style={s.orderCategory}>{order.category}</Text>
+            <Text style={s.orderRequest} numberOfLines={3}>{ordersAreStale ? 'تفاصيل الطلب تظهر عند رجوع الاتصال.' : order.request_text}</Text>
+          </View>
+          {!ordersAreStale && <OrderImageGallery orderId={order.id}/>}
+          <View style={s.orderFacts}>
+            <View style={s.orderFact}>
+              <Text style={s.orderFactLabel}>أجرة التوصيل</Text>
+              <Text style={s.orderFactValue}>{order.delivery_quote_set_at ? numberFormatter.format(order.delivery_fee_minor) + ' ل.س' : 'تتحدد حسب الطريق'}</Text>
+            </View>
+            <View style={s.orderFact}>
+              <Text style={s.orderFactLabel}>ميزانية المشتريات</Text>
+              <Text style={s.orderFactValue}>{numberFormatter.format(order.budget_ceiling_minor)} ل.س</Text>
+            </View>
+          </View>
+          {order.purchase_amount_minor !== null && <Text style={s.purchaseAmountLine}>المبلغ بعد الشراء: {numberFormatter.format(order.purchase_amount_minor)} ل.س</Text>}
+          {order.status === 'quoted' && <View style={s.reviewActions}>
+            <Pressable disabled={orderActionBusy===order.id || !online || ordersAreStale} onPress={() => void respondDeliveryQuote(order.id,true)} accessibilityRole="button" style={[s.approvePurchase,(orderActionBusy===order.id || !online || ordersAreStale)&&s.disabled]}><Text style={s.acceptOfferText}>موافقة على أجرة التوصيل</Text></Pressable>
+            <Pressable disabled={orderActionBusy===order.id || !online || ordersAreStale} onPress={() => void respondDeliveryQuote(order.id,false)} accessibilityRole="button" style={[s.rejectPurchase,(orderActionBusy===order.id || !online || ordersAreStale)&&s.disabled]}><Text style={s.rejectPurchaseText}>رفض وإلغاء</Text></Pressable>
+          </View>}
+          {order.status === 'awaiting_approval' && <View style={s.reviewActions}>
+            <Pressable disabled={orderActionBusy===order.id || !online || ordersAreStale} onPress={() => void respondPurchase(order.id,true)} accessibilityRole="button" style={[s.approvePurchase,(orderActionBusy===order.id || !online || ordersAreStale)&&s.disabled]}><Text style={s.acceptOfferText}>موافقة على المشتريات</Text></Pressable>
+            <Pressable disabled={orderActionBusy===order.id || !online || ordersAreStale} onPress={() => void respondPurchase(order.id,false)} accessibilityRole="button" style={[s.rejectPurchase,(orderActionBusy===order.id || !online || ordersAreStale)&&s.disabled]}><Text style={s.rejectPurchaseText}>رفض الطلب</Text></Pressable>
+          </View>}
+          {order.status === 'delivering' && <>
+            <Pressable disabled={orderActionBusy===order.id || !online || ordersAreStale} onPress={() => void showDeliveryCode(order.id)} accessibilityRole="button" style={[s.acceptOffer,(orderActionBusy===order.id || !online || ordersAreStale)&&s.disabled]}><Text style={s.acceptOfferText}>{deliveryCodes[order.id] ? 'تجديد رمز التسليم' : 'إظهار رمز التسليم'} ←</Text></Pressable>
+            {Boolean(deliveryCodes[order.id]) && <Text selectable style={s.deliveryCode}>{deliveryCodes[order.id]}</Text>}
+          </>}
+          {(['requested','quoted','searching','accepted','assigned','awaiting_approval'].includes(order.status) || (order.status === 'shopping' && order.purchase_amount_minor === null)) && <Pressable disabled={orderActionBusy === order.id || !online || ordersAreStale} onPress={() => void cancelOrder(order.id)} style={[s.cancelOrder, (orderActionBusy === order.id || !online || ordersAreStale) && s.disabled]} accessibilityRole="button"><Text style={s.cancelOrderText}>إلغاء الطلب</Text></Pressable>}
+          <SupportIssueForm orderId={order.id} status={order.status} disabled={ordersAreStale}/>
+        </View>) : <View style={s.empty}>
+          <Text style={s.emptyMark}>≋</Text>
+          <Text style={s.emptyTitle}>{ordersAreStale ? 'ما في طلبات محفوظة للعرض' : 'ما عندك طلبات حالياً'}</Text>
+          <Text style={s.emptyCopy}>{ordersAreStale ? 'اتصل بالإنترنت حتى نحمّل أحدث حالة.' : 'أول طلب إلك رح يظهر هون.'}</Text>
+          <Pressable onPress={() => navigate('home')} style={s.profileAction} accessibilityRole="button"><Text style={s.profileActionText}>ابدأ طلب جديد <Text style={s.submitArrow}>←</Text></Text></Pressable>
+        </View>}
+      </StaggeredSections></View> : tab === 'profile-edit' ? <View style={s.profilePage}><StaggeredSections transitionKey={`${tab}-edit`}>
+        <Pressable onPress={() => navigate('profile')} style={s.backNavigation} accessibilityRole="button"><Text style={s.backNavigationText}>→ العودة إلى حسابي</Text></Pressable>
+        <Text style={s.pageTitle}>تعديل الملف الشخصي</Text>
+        <Text style={s.pageDescription}>حدّث اسمك وصورتك. بريدك الإلكتروني للعرض فقط.</Text>
+        <View style={s.profileCard}>
+          <View style={s.profileEditPhotoWrap}>
+            {profileAvatarDraft ? <Image source={{ uri: profileAvatarDraft.uri }} style={s.profileEditPhoto} contentFit="cover" accessibilityLabel="معاينة الصورة الجديدة"/> : profileAvatarUrl ? <Image source={{ uri: profileAvatarUrl }} style={s.profileEditPhoto} contentFit="cover" accessibilityLabel="صورة الحساب"/> : <Text style={s.profileEditInitial}>{accountInitial}</Text>}
+          </View>
+          <Pressable onPress={() => void pickProfileAvatar()} disabled={profileBusy} style={[s.profilePhotoButton, profileBusy && s.disabled]} accessibilityRole="button"><Text style={s.profilePhotoButtonText}>{profileAvatarDraft || profileAvatarPath ? 'تغيير الصورة' : 'اختيار صورة'}</Text></Pressable>
+          <Text style={s.label}>البريد الإلكتروني</Text>
+          <View style={s.readOnlyEmail}><Text selectable style={s.readOnlyEmailText}>{email}</Text><Text style={s.readOnlyEmailHint}>ما بيتغيّر من هون</Text></View>
+          <Text style={s.label}>اسم صاحب الحساب</Text>
+          <TextInput value={profileNameDraft} onChangeText={setProfileNameDraft} maxLength={120} placeholder="اكتب اسمك" placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="اسم صاحب الحساب"/>
+          <Pressable disabled={profileBusy} onPress={() => void saveProfile()} style={[s.saveAddress, profileBusy && s.disabled]} accessibilityRole="button"><Text style={s.saveAddressText}>{profileBusy ? 'عم نحفظ…' : 'حفظ التعديلات'}</Text></Pressable>
+        </View>
+      </StaggeredSections></View> : <View style={s.profilePage}><StaggeredSections transitionKey={`${tab}-profile`}>
+        <View style={s.accountIntro}><Text style={s.accountPageTitle}>حسابي</Text><Text style={s.accountPageSubtitle}>معلوماتك وعنوانك وإعدادات التطبيق بمكان واحد.</Text></View>
+        <View style={s.profileSectionCard}>
+          <View style={s.profileSectionHeading}><View style={s.profileHeadingIcon}><SymbolView name={{ ios: 'person.crop.circle.fill', android: 'account_circle', web: 'account_circle' }} tintColor={c.primary} size={21}/></View><Text style={s.profileSectionTitle}>الملف الشخصي</Text><Text style={s.profileSectionTag}>حساب العميل</Text></View>
+          <View style={s.profileIdentityRow}>
+            <View style={s.accountAvatarLarge}>{profileAvatarUrl ? <Image source={{ uri: profileAvatarUrl }} style={s.avatarImage} contentFit="cover" accessibilityLabel="صورة الحساب"/> : <Text style={s.accountAvatarLargeText}>{accountInitial}</Text>}</View>
+            <View style={s.profileIdentityCopy}><Text style={s.profileIdentityName} numberOfLines={1}>{profileName || 'حساب لَبّيك'}</Text><Text style={s.profileEmail} numberOfLines={1}>{email}</Text></View>
+          </View>
+          <Pressable onPress={() => { setProfileNameDraft(profileName); setProfileAvatarDraft(null); navigate('profile-edit'); }} style={s.profileSectionAction} accessibilityRole="button"><Text style={s.profileSectionActionText}>تعديل الاسم والصورة</Text><SymbolView name={{ ios: 'pencil', android: 'edit', web: 'edit' }} tintColor={c.primary} size={17}/></Pressable>
+        </View>
+        <View style={s.profileSectionCard}>
+          <View style={s.profileSectionHeading}><View style={s.profileHeadingIcon}><SymbolView name={{ ios: 'mappin.and.ellipse', android: 'location_on', web: 'location_on' }} tintColor={c.primary} size={21}/></View><Text style={s.profileSectionTitle}>عنوان التوصيل</Text></View>
+          {selectedAddress ? <View style={s.profileAddressSummary}><Text style={s.profileAddressName}>{selectedAddress.label}</Text><Text style={s.profileAddressLine}>{selectedAddress.neighborhood}، {selectedAddress.city}</Text><Text style={s.profileAddressLine}>{selectedAddress.street}{selectedAddress.building ? '، بناء ' + selectedAddress.building : ''}</Text><Text style={s.profileAddressPhone}>للتواصل: {selectedAddress.contact_phone}</Text></View> : <View style={s.profileAddressEmpty}><Text style={s.profileAddressEmptyTitle}>ما أضفت عنوان توصيل بعد</Text><Text style={s.profileAddressLine}>أضف عنوانك حتى يصير إرسال الطلب أسرع.</Text></View>}
+          <Pressable onPress={() => navigate('addresses')} style={[s.profileSectionAction, !selectedAddress && s.profileSectionActionPrimary]} accessibilityRole="button"><Text style={[s.profileSectionActionText, !selectedAddress && s.profileSectionActionTextPrimary]}>{selectedAddress ? 'إدارة العناوين' : 'إضافة عنوان توصيل'}</Text><SymbolView name={{ ios: 'arrow.left', android: 'arrow_back', web: 'arrow_back' }} tintColor={!selectedAddress ? c.background : c.primary} size={17}/></Pressable>
+        </View>
+        <View style={s.profileSectionCard}>
+          <View style={s.profileSectionHeading}><View style={s.profileHeadingIcon}><SymbolView name={{ ios: 'circle.lefthalf.filled', android: 'contrast', web: 'contrast' }} tintColor={c.primary} size={21}/></View><Text style={s.profileSectionTitle}>المظهر</Text></View>
+          <Pressable onPress={onToggleTheme} style={s.profileThemeRow} accessibilityRole="button" accessibilityLabel={theme === 'dark' ? 'تفعيل الوضع الفاتح' : 'تفعيل الوضع الداكن'}><View style={s.profileThemeIcon}><SymbolView name={{ ios: theme === 'dark' ? 'sun.max.fill' : 'moon.fill', android: theme === 'dark' ? 'light_mode' : 'dark_mode', web: theme === 'dark' ? 'light_mode' : 'dark_mode' }} tintColor={c.primary} size={20}/></View><View style={s.profileThemeCopy}><Text style={s.profileThemeTitle}>الوضع {theme === 'dark' ? 'الداكن' : 'الفاتح'}</Text><Text style={s.profileThemeHint}>اضغط للتبديل إلى الوضع {theme === 'dark' ? 'الفاتح' : 'الداكن'}</Text></View><View style={s.profileThemeState}><Text style={s.profileThemeStateText}>{theme === 'dark' ? 'داكن' : 'فاتح'}</Text></View></Pressable>
+        </View>
+        <Pressable onPress={onSignOut} style={s.profileLogout} accessibilityRole="button"><SymbolView name={{ ios: 'rectangle.portrait.and.arrow.right', android: 'logout', web: 'logout' }} tintColor={c.danger} size={19}/><Text style={s.profileLogoutText}>تسجيل الخروج</Text></Pressable>
+        {showDriverFlow && <DriverApplicationFlow key={inviteToken ?? 'driver-application'} userId={userId} initialToken={inviteToken}/>}
+      </StaggeredSections></View>}
+      </StaggeredSections>
+      </ScrollView>
+      <View style={s.footer}>
+        {[{ key: 'home', label: 'الرئيسية', symbol: 'house.fill' }, { key: 'orders', label: 'طلباتي', symbol: 'list.bullet.rectangle' }, { key: 'profile', label: 'حسابي', symbol: 'person.crop.circle.fill' }].map(({ key, label, symbol }) => {
+          const materialSymbol = (key === 'home' ? 'home' : key === 'orders' ? 'receipt_long' : 'person') as AndroidSymbol;
+          const selected = tab === key || ((tab === 'addresses' || tab === 'profile-edit') && key === 'profile');
+          return <Pressable key={key} accessibilityRole="button" accessibilityState={{ selected }} onPress={() => navigate(key)} style={[s.footerButton, selected && s.footerButtonActive]}>
+            <Animated.View style={[s.footerIcon, { transform: [{ scale: activeTabAnimation === key ? tabScale : 1 }] }]}><SymbolView name={{ ios: symbol as SFSymbol, android: materialSymbol, web: materialSymbol }} tintColor={selected ? (theme === 'light' ? '#17210F' : c.background) : c.muted} size={21}/></Animated.View>
+            <Text style={[s.footerItem, selected && s.footerActive]}>{label}</Text>
+          </Pressable>;
+        })}
+      </View>
     </View>
   </SafeAreaView>;
 }
@@ -544,39 +1321,76 @@ function useInternetAvailable() {
 }
 
 function OrderImageGallery({ orderId }: { orderId: string }) {
+  const { styles: s } = useMobileTheme();
   const online = useInternetAvailable();
   const [urls, setUrls] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   useEffect(() => {
-    if (!supabase || !online) return;
+    if (!expanded || !supabase || !online) return;
     let active = true;
+    setLoading(true);
     void supabase.storage.from('order-images').list(orderId, { limit: 3, sortBy: { column: 'name', order: 'asc' } }).then(async ({ data, error }) => {
-      if (error || !data?.length) { if (active) setUrls([]); return; }
-      const signed = await Promise.all(data.map((file) => supabase!.storage.from('order-images').createSignedUrl(`${orderId}/${file.name}`, 600)));
-      if (active) setUrls(signed.flatMap(({ data: item, error: signedError }) => item && !signedError ? [item.signedUrl] : []));
-    });
+      if (error || !data?.length) { if (active) { setUrls([]); setLoading(false); } return; }
+      const { data: signed, error: signedError } = await supabase!.storage.from('order-images').createSignedUrls(data.map((file) => `${orderId}/${file.name}`), 600);
+      if (active) {
+        setUrls(signedError ? [] : (signed ?? []).flatMap((item) => item.signedUrl ? [item.signedUrl] : []));
+        setLoading(false);
+      }
+    }).catch(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [online, orderId]);
-  if (!urls.length) return null;
-  return <View style={s.orderGallery}><Text style={s.orderGalleryTitle}>صور الطلب</Text><View style={s.orderImageList}>{urls.map((uri) => <Image key={uri} source={{ uri }} style={s.orderGalleryImage} contentFit="cover" accessibilityLabel="صورة من الطلب"/>)}</View></View>;
-}
-
-function NetworkStatusBanner() {
-  const online = useInternetAvailable();
-  const offline = !online;
-  if (!offline) return null;
-  return <View accessibilityRole="alert" style={{ backgroundColor: '#3A2D18', borderBottomWidth: 1, borderBottomColor: '#745C2C', paddingHorizontal: 16, paddingVertical: 10 }}>
-    <Text style={{ color: '#FFE2A0', textAlign: 'center', fontSize: 12, lineHeight: 19 }}>الاتصال بالإنترنت منقطع. الإجراءات تحتاج اتصال وما رح تنرسل تلقائياً؛ مسودة الطلب محفوظة على هالجهاز.</Text>
+  }, [expanded, online, orderId]);
+  return <View style={s.orderGallery}>
+    <Pressable onPress={() => setExpanded((current) => !current)} accessibilityRole="button" accessibilityState={{ expanded }} style={{ minHeight: 38, justifyContent: 'center' }}>
+      <Text style={s.orderGalleryTitle}>{expanded ? 'إخفاء صور الطلب ↑' : 'عرض صور الطلب ↓'}</Text>
+    </Pressable>
+    {expanded && (loading ? <ActivityIndicator color={c.primary}/> : urls.length ? <View style={s.uploadedPhotoList}>{urls.map((uri) => <Image key={uri} source={{ uri }} style={s.orderGalleryImage} contentFit="cover" accessibilityLabel="صورة من الطلب"/>)}</View> : <Text style={s.orderGalleryTitle}>{online ? 'ما في صور مرفقة بهالطلب.' : 'الاتصال مطلوب لعرض الصور.'}</Text>)}
   </View>;
 }
 
+function NetworkStatusBanner() {
+  const { colors: c } = useMobileTheme();
+  const online = useInternetAvailable();
+  const offline = !online;
+  if (!offline) return null;
+  const light = c.background === lightPalette.background;
+  return <View accessibilityRole="alert" style={{ backgroundColor: light ? '#FFF5D9' : '#3A2D18', borderBottomWidth: 1, borderBottomColor: light ? '#E7D39B' : '#745C2C', paddingHorizontal: 16, paddingVertical: 10 }}>
+    <Text style={{ color: light ? '#735500' : '#FFE2A0', textAlign: 'center', fontSize: 12, lineHeight: 19 }}>الاتصال بالإنترنت منقطع. الإجراءات تحتاج اتصال وما رح تنرسل تلقائياً؛ مسودة الطلب محفوظة على هالجهاز.</Text>
+  </View>;
+}
+
+function ThemeToggle({ theme, onToggle }: { theme: 'dark' | 'light'; onToggle: () => void }) {
+  const { colors: c, styles: s } = useMobileTheme();
+  return <Pressable onPress={onToggle} style={s.themeToggle} accessibilityRole="button" accessibilityLabel={theme === 'dark' ? 'تفعيل الوضع الفاتح' : 'تفعيل الوضع الداكن'}><SymbolView name={{ios:theme === 'dark' ? 'sun.max.fill' : 'moon.fill',android:theme === 'dark' ? 'light_mode' : 'dark_mode',web:theme === 'dark' ? 'light_mode' : 'dark_mode'}} tintColor={c.primary} size={20}/></Pressable>;
+}
+
 export default function HomeScreen() {
-  const { invite: rawInvite } = useLocalSearchParams<{ invite?: string | string[] }>();
+  const { invite: rawInvite, openOrder: rawOpenOrder } = useLocalSearchParams<{ invite?: string | string[]; openOrder?: string | string[] }>();
   const router = useRouter();
   const inviteFromLink = Array.isArray(rawInvite) ? rawInvite[0] : rawInvite;
+  const openOrderId = Array.isArray(rawOpenOrder) ? rawOpenOrder[0] : rawOpenOrder;
   const [inviteToken, setInviteToken] = useState('');
   const [session, setSession] = useState<Session | null>(null);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
   const [ready, setReady] = useState(false);
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const colors = theme === 'light' ? lightPalette : tokens.color;
+  const styles = useMemo(() => stylesForTheme(styleDefinitions as unknown as Record<string, Record<string, unknown>>, theme), [theme]);
+  const themeContext = useMemo(() => ({ colors, styles }), [colors, styles]);
+  const applyTheme = useCallback((nextTheme: 'dark' | 'light') => {
+    setTheme(nextTheme);
+    void AsyncStorage.setItem(mobileThemeKey, nextTheme).catch(() => {});
+  }, []);
+  useEffect(() => {
+    let active = true;
+    void AsyncStorage.getItem(mobileThemeKey).then((savedTheme) => {
+      if (active && savedTheme === 'light') setTheme('light');
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    if (typeof document !== 'undefined') { document.documentElement.dataset.theme = theme; document.documentElement.style.colorScheme = theme; }
+  }, [theme]);
   useEffect(() => {
     if (!inviteFromLink) return;
     if (/^[a-f0-9]{64}$/i.test(inviteFromLink)) setInviteToken(inviteFromLink.toLowerCase());
@@ -594,25 +1408,40 @@ export default function HomeScreen() {
     return () => { active = false; clearTimeout(readyTimeout); subscription.unsubscribe(); };
   }, []);
   const screen = !supabaseConfigured
-    ? <AuthScreen inviteToken={inviteToken || undefined} />
+    ? <AuthScreen inviteToken={inviteToken || undefined} theme={theme} />
     : !ready
-      ? <SafeAreaView style={s.safe}><ActivityIndicator color={c.primary} /></SafeAreaView>
+      ? <SafeAreaView style={styles.safe}><ActivityIndicator color={colors.primary} /></SafeAreaView>
       : passwordRecovery
-        ? <PasswordRecoveryScreen onDone={() => setPasswordRecovery(false)} />
+        ? <PasswordRecoveryScreen onDone={() => setPasswordRecovery(false)} theme={theme} />
       : !session
-        ? <AuthScreen inviteToken={inviteToken || undefined} />
-        : <CustomerHome userId={session.user.id} inviteToken={inviteToken || undefined} onSignOut={async () => { await Promise.allSettled([clearCustomerOrderDraft(session.user.id), clearCustomerOrdersSnapshot(session.user.id), clearDriverOrdersSnapshot(session.user.id)]); await supabase?.auth.signOut(); }} />;
-  return <View style={{ flex: 1, backgroundColor: c.background }}><NetworkStatusBanner />{screen}</View>;
+        ? <AuthScreen inviteToken={inviteToken || undefined} theme={theme} />
+        : <SignedInHome userId={session.user.id} email={session.user.email ?? ''} inviteToken={inviteToken || undefined} openOrderId={openOrderId} onSignOut={async () => { await Promise.allSettled([clearCustomerOrderDraft(session.user.id), clearCustomerOrdersSnapshot(session.user.id), clearDriverOrdersSnapshot(session.user.id), unregisterPushNotifications(session.user.id)]); await supabase?.auth.signOut(); }} theme={theme} onToggleTheme={() => applyTheme(theme === 'dark' ? 'light' : 'dark')} />;
+  return <MobileThemeContext.Provider value={themeContext}><ToastProvider theme={theme}><View style={{ flex: 1, backgroundColor: colors.background }}><NetworkStatusBanner />{screen}</View></ToastProvider></MobileThemeContext.Provider>;
 }
 
-const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: c.background }, content: { width: '100%', maxWidth: 520, alignSelf: 'center', paddingHorizontal: 22, paddingTop: 12, paddingBottom: 38 },
-  header: { height: 54, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, brand: { flexDirection: 'row', alignItems: 'center', gap: 10 }, brandMark: { width: 40, height: 40, borderRadius: 13, backgroundColor: c.primary, alignItems: 'center', justifyContent: 'center' }, brandMarkText: { fontSize: 25, fontWeight: '800', color: c.background }, brandName: { color: c.text, fontSize: 17, fontWeight: '800' }, brandTag: { color: c.muted, fontSize: 11, marginTop: 1 }, bell: { height: 42, width: 42, borderRadius: 14, backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center' }, bellText: { color: c.text, fontSize: 20 },
-  address: { flexDirection: 'row', alignItems: 'center', marginTop: 25, padding: 14, backgroundColor: c.surface, borderRadius: 16, borderWidth: 1, borderColor: c.border }, pin: { color: c.primary, fontSize: 22, marginRight: 11 }, addressCopy: { flex: 1 }, muted: { color: c.muted, fontSize: 11 }, addressName: { color: c.text, fontSize: 14, fontWeight: '700', marginTop: 3 }, addressHint: { color: c.muted, fontSize: 10, marginTop: 3 }, addressChevron:{color:c.muted,fontSize:18,paddingHorizontal:6},
-  hero: { minHeight: 206, borderRadius: 24, backgroundColor: '#B7FF30', marginTop: 23, marginBottom: 19, padding: 20, overflow: 'hidden', justifyContent: 'center' }, heroCopy: { width: '57%', marginLeft: 'auto', zIndex: 2 }, heroEyebrow: { color: '#43552C', fontSize: 12, fontWeight: '700' }, heroTitle: { color: '#0B1411', fontSize: 23, lineHeight: 31, fontWeight: '800', marginTop: 10 }, heroDescription: { color: '#2F3F27', fontSize: 13, marginTop: 7 }, heroFoot: { position: 'absolute', right: 20, bottom: 17, flexDirection: 'row', alignItems: 'center', gap: 7 }, heroDash: { width: 18, height: 2, backgroundColor: '#526936', borderRadius: 2 }, heroFootText: { color: '#3F512A', fontSize: 11, fontWeight: '700' }, heroArt: { position: 'absolute', left: -7, top: 1, bottom: 0, width: '40%', alignItems: 'center', justifyContent: 'center' }, heroOrbit: { width: 134, height: 134, borderRadius: 67, borderWidth: 1, borderColor: 'rgba(11,20,17,.14)', alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '-14deg' }] }, heroCore: { width: 84, height: 84, borderRadius: 28, backgroundColor: '#E7FFB6', transform: [{ rotate: '14deg' }], alignItems: 'center', justifyContent: 'center', shadowColor: '#31451B', shadowOpacity: .18, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 5 }, heroMark: { fontSize: 51, lineHeight: 66, color: '#18251A', fontWeight: '800' }, heroPin: { position: 'absolute', right: 3, top: 9, height: 35, width: 35, borderRadius: 12, backgroundColor: '#18251A', alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '14deg' }] }, heroPinText: { fontSize: 19, color: '#B7FF30' }, heroSpark: { position: 'absolute', left: 5, top: 26, height: 10, width: 10, borderRadius: 4, backgroundColor: '#F7FFE9', transform: [{ rotate: '30deg' }] }, heroDot: { position: 'absolute', right: 24, bottom: 10, height: 8, width: 8, borderRadius: 4, backgroundColor: '#4D622D' },
-  formCard: { padding: 17, borderRadius: 18, backgroundColor: c.surface, borderColor: c.border, borderWidth: 1 }, draftNotice: { color: '#b6c3ba', fontSize: 10, marginBottom: 13, textAlign: 'left' }, label: { color: c.text, fontSize: 13, fontWeight: '700', marginBottom: 11 }, input: { fontFamily: 'Tajawal_400Regular', minHeight: 98, borderWidth: 1, borderColor: '#405449', borderRadius: 12, backgroundColor: '#17231c', padding: 13, color: c.text, fontSize: 15, lineHeight: 23 }, chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }, chip: { paddingHorizontal: 16, minHeight: 44, justifyContent: 'center', alignItems: 'center', borderRadius: 18, borderWidth: 1, borderColor: '#405348', backgroundColor: '#223128' }, chipActive: { backgroundColor: '#344629', borderColor: c.primary }, chipText: { fontSize: 12, color: '#d4ddd7' }, chipTextActive: { color: '#e1ffc0', fontWeight: '700' }, divider: { height: 1, backgroundColor: c.border, marginTop: 16 }, attachment: { flexDirection: 'row', alignItems: 'center', minHeight: 48, gap: 8 }, orderImageList: { flexDirection: 'row', gap: 10, flexWrap: 'wrap', marginBottom: 8 }, orderImageTile: { width: 76, height: 76, borderRadius: 11, overflow: 'hidden', backgroundColor: '#223128' }, orderImagePreview: { width: 76, height: 76 }, orderImageStatus: { position: 'absolute', bottom: 2, right: 2, color: '#fff', fontSize: 9, backgroundColor: '#16221b', paddingHorizontal: 4, borderRadius: 4 }, orderImageRemove: { position: 'absolute', top: 2, right: 4, color: '#fff', fontSize: 18, textShadowColor: '#000', textShadowRadius: 3 }, offlineOrders: { padding: 13, marginTop: 12, borderRadius: 12, borderWidth: 1, borderColor: '#745C2C', backgroundColor: '#3A2D18', gap: 4 }, offlineOrdersTitle: { color: '#FFE2A0', fontSize: 12, fontWeight: '700' }, offlineOrdersCopy: { color: '#E9D8AA', fontSize: 11, lineHeight: 17 }, orderGallery: { marginTop: 10, gap: 6 }, orderGalleryTitle: { color: c.muted, fontSize: 11 }, orderGalleryImage: { width: 84, height: 84, borderRadius: 10, backgroundColor: '#223128' }, attachmentIcon: { color: c.primary, fontSize: 21 }, attachmentText: { color: c.text, fontSize: 13, fontWeight: '600' }, optional: { color: c.muted, fontSize: 11, fontWeight: '400' }, endArrow: { color: c.muted, marginLeft: 'auto' },
-  note: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, marginTop: 15, paddingHorizontal: 2 }, noteIcon: { color: '#99bd75', fontSize: 15 }, noteText: { color: c.muted, fontSize: 12, lineHeight: 19, flex: 1 }, submit: { height: 54, marginTop: 20, backgroundColor: '#526043', borderRadius: 14, alignItems: 'center', justifyContent: 'center', opacity: 0.75 }, submitText: { color: '#d9e7c2', fontSize: 15, fontWeight: '800' }, submitArrow: { fontSize: 17 }, pending: { color: '#819087', textAlign: 'center', fontSize: 10, lineHeight: 16, marginTop: 9 }, footer: { flexDirection: 'row', justifyContent: 'space-around', borderTopWidth: 1, borderTopColor: c.border, marginTop: 27, paddingTop: 10 }, footerButton: { minWidth: 75, minHeight: 44, alignItems: 'center', justifyContent: 'center' }, footerActive: { color: c.primary, fontSize: 12, fontWeight: '700' }, footerItem: { color: c.muted, fontSize: 12 }, empty: { minHeight: 320, marginTop: 26, borderWidth: 1, borderColor: c.border, borderRadius: 18, backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center', padding: 24 }, emptyMark: { color: c.primary, backgroundColor: '#344629', overflow: 'hidden', borderRadius: 16, padding: 10, fontSize: 26, fontWeight: '800' }, emptyTitle: { color: c.text, fontWeight: '700', fontSize: 16, marginTop: 18 }, emptyCopy: { color: c.muted, fontSize: 12, marginTop: 7 }, signOut: { marginTop: 22, borderWidth: 1, borderColor: c.danger, borderRadius: 10, paddingHorizontal: 18, minHeight: 44, justifyContent: 'center' }, signOutText: { color: c.danger, fontWeight: '700', fontSize: 13 },
-  addressPage:{marginTop:24},backLink:{flexDirection:'row',alignItems:'center',gap:8,minHeight:44,alignSelf:'flex-start'},backArrow:{fontSize:18,color:c.primary},backText:{fontSize:12,color:'#D3EFA4',fontWeight:'700'},pageTitle:{color:c.text,fontSize:25,fontWeight:'800',textAlign:'right',marginTop:10},pageDescription:{color:c.muted,fontSize:13,textAlign:'right',marginTop:5,marginBottom:17},savedAddress:{flexDirection:'row',alignItems:'center',gap:11,padding:14,marginBottom:10,borderRadius:15,borderWidth:1,borderColor:c.border,backgroundColor:c.surface},savedPin:{width:36,height:36,borderRadius:12,backgroundColor:'#344629',alignItems:'center',justifyContent:'center'},savedCopy:{flex:1},savedLabel:{color:c.text,fontSize:14,fontWeight:'700'},savedDetail:{color:c.muted,fontSize:11,marginTop:3},deleteAddress:{minWidth:44,minHeight:44,padding:0,alignItems:"center",justifyContent:"center"},deleteText:{color:c.danger,fontSize:11,fontWeight:'700'},sectionTitle:{color:c.text,fontWeight:'800',fontSize:16,marginBottom:17},zoneList:{gap:8,marginBottom:17},zoneOption:{minHeight:44,paddingHorizontal:12,paddingVertical:8,justifyContent:"center",borderWidth:1,borderColor:'#405348',borderRadius:12,backgroundColor:'#1A2920'},zoneSelected:{borderColor:c.primary,backgroundColor:'#283922'},zoneName:{color:c.text,fontWeight:'700',fontSize:13},zoneNameSelected:{color:'#DFFFAD'},zoneMeta:{color:c.muted,fontSize:11,marginTop:4},field:{fontFamily:'Tajawal_400Regular',minHeight:48,borderWidth:1,borderColor:'#405449',borderRadius:12,backgroundColor:'#17231c',paddingHorizontal:12,color:c.text,fontSize:14,marginBottom:14},inlineFields:{flexDirection:'row',gap:10},inline:{flex:1},saveAddress:{minHeight:50,borderRadius:13,backgroundColor:c.primary,alignItems:'center',justifyContent:'center',marginTop:5},disabled:{opacity:0.6},saveAddressText:{color:c.background,fontWeight:'800',fontSize:14},noZones:{padding:18,borderRadius:14,backgroundColor:'#17251C',borderWidth:1,borderColor:c.border,alignItems:'center'},noZonesTitle:{color:c.text,fontWeight:'700',fontSize:14},formMessage:{color:'#F6C76A',textAlign:'right',fontSize:12,marginTop:12,lineHeight:19},profileAction:{minHeight:44,borderRadius:12,borderWidth:1,borderColor:c.border,backgroundColor:'#1A2920',paddingHorizontal:15,justifyContent:'center',marginTop:20},profileActionText:{color:'#DFFFAE',fontSize:13,fontWeight:'700'},
-  requestMessage:{color:'#DFFFAD',fontSize:12,textAlign:'center',lineHeight:20,marginTop:11},orderPage:{marginTop:23},orderCard:{borderRadius:15,padding:15,backgroundColor:c.surface,borderWidth:1,borderColor:c.border,marginBottom:10},orderTop:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',gap:10},orderCategory:{color:c.text,fontWeight:'800',fontSize:14},orderStatus:{color:'#DFFFAD',fontSize:11,fontWeight:'700'},orderRequest:{color:'#C1CEC5',fontSize:12,lineHeight:19,marginTop:10},orderBottom:{borderTopWidth:1,borderTopColor:c.border,marginTop:12,paddingTop:10,flexDirection:'row',justifyContent:'space-between',gap:8},orderDate:{color:c.muted,fontSize:10},orderFee:{color:'#B7D58D',fontSize:10},reviewActions:{flexDirection:'row',gap:9,marginTop:12},approvePurchase:{flex:1,minHeight:42,borderRadius:11,backgroundColor:c.primary,alignItems:'center',justifyContent:'center'},rejectPurchase:{flex:1,minHeight:44,borderRadius:11,borderWidth:1,borderColor:'#755544',backgroundColor:'#28221e',alignItems:'center',justifyContent:'center'},rejectPurchaseText:{color:'#ffc6a9',fontSize:12,fontWeight:'700'},deliveryCode:{color:c.primary,fontSize:28,fontWeight:'800',letterSpacing:8,textAlign:'center',paddingVertical:8,marginTop:8,backgroundColor:'#263621',borderRadius:12},profilePage:{marginTop:23,gap:13},driverApplyCard:{borderRadius:18,padding:17,backgroundColor:c.surface,borderWidth:1,borderColor:c.border},driverApplyMark:{width:38,height:38,borderRadius:12,backgroundColor:'#344629',alignItems:'center',justifyContent:'center',marginBottom:12},driverApplyIcon:{color:c.primary,fontSize:19},driverApplyTitle:{color:c.text,fontSize:16,fontWeight:'800',textAlign:'right'},driverApplyCopy:{color:c.muted,fontSize:12,lineHeight:20,textAlign:'right',marginTop:6,marginBottom:16},driverStatus:{alignSelf:'flex-start',marginTop:13,borderRadius:20,overflow:'hidden',paddingHorizontal:12,paddingVertical:6,backgroundColor:'#2d4028',color:'#DFFFAD',fontSize:11,fontWeight:'700'},
-  driverPanel:{borderRadius:18,padding:17,backgroundColor:c.surface,borderWidth:1,borderColor:c.border},driverPanelTop:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:16},driverRefresh:{width:44,height:44,borderRadius:12,alignItems:'center',justifyContent:'center',backgroundColor:'#233229'},driverRefreshGlyph:{fontSize:20,color:c.primary},availabilityButton:{minHeight:50,flexDirection:'row',alignItems:'center',justifyContent:'center',gap:9,borderRadius:13,backgroundColor:'#243329',borderWidth:1,borderColor:'#425348',marginBottom:18},availabilityOn:{backgroundColor:'#283b22',borderColor:'#8fb558'},availabilityDot:{width:8,height:8,borderRadius:4,backgroundColor:'#87978b'},availabilityDotOn:{backgroundColor:'#B7FF30'},availabilityText:{fontSize:13,fontWeight:'700',color:'#B9C7BE'},availabilityTextOn:{color:'#DFFFAD'},driverOffersHead:{flexDirection:'row',alignItems:'center',gap:9,marginTop:8,marginBottom:12},offerCount:{color:c.primary,fontSize:11,fontWeight:'800'},offerCard:{borderRadius:15,padding:14,backgroundColor:'#17241C',borderWidth:1,borderColor:'#34473A',marginBottom:11},offerExpiry:{color:'#F0CC83',fontSize:10,marginTop:8},acceptOffer:{minHeight:44,borderRadius:11,backgroundColor:c.primary,alignItems:'center',justifyContent:'center',marginTop:12},acceptOfferText:{color:c.background,fontWeight:'800',fontSize:13},declineOffer:{minHeight:44,borderRadius:10,borderWidth:1,borderColor:'#5a4a3c',alignItems:'center',justifyContent:'center',marginTop:7},declineOfferText:{color:'#e8c3a9',fontSize:11,fontWeight:'700'},cancelOrder:{minHeight:44,borderRadius:10,borderWidth:1,borderColor:'#63443a',alignItems:'center',justifyContent:'center',marginTop:10,backgroundColor:'#261d1a'},cancelOrderText:{color:'#ffc6a9',fontSize:11,fontWeight:'700'},noOffers:{minHeight:150,borderRadius:14,backgroundColor:'#17241C',borderWidth:1,borderColor:c.border,alignItems:'center',justifyContent:'center',padding:18,marginBottom:15},noOffersGlyph:{color:c.primary,fontSize:23},noOffersTitle:{color:c.text,fontWeight:'800',fontSize:13,marginTop:7},noOffersCopy:{color:c.muted,textAlign:'center',fontSize:11,lineHeight:18,marginTop:5},dropoff:{borderTopWidth:1,borderTopColor:c.border,marginTop:12,paddingTop:11},dropoffTitle:{color:'#DFFFAD',fontSize:11,fontWeight:'800'},dropoffText:{color:'#C4D0C8',fontSize:11,lineHeight:18,marginTop:4},dropoffPhone:{color:c.primary,fontSize:12,fontWeight:'800',marginTop:6,textAlign:'left'},
-});
+const styleDefinitions = {
+  ordersIntroCard:{padding:17,borderRadius:22,borderWidth:1,borderColor:c.border,backgroundColor:c.surface},ordersEyebrowLine:{flexDirection:'row-reverse',alignItems:'center',gap:7},ordersEyebrowDot:{width:8,height:8,borderRadius:4,backgroundColor:c.primary},
+  addressEyebrow:{color:c.muted,fontSize:10,fontWeight:'700',textAlign:'right'},addressChangeButton:{minHeight:38,flexDirection:'row-reverse',alignItems:'center',justifyContent:'center',gap:5,paddingHorizontal:12,borderRadius:12,backgroundColor:'#B7FF30',borderWidth:1,borderColor:'#A3E51E'},
+  notificationItemHeading:{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',gap:8},notificationUnreadPill:{minHeight:21,alignItems:'center',justifyContent:'center',paddingHorizontal:8,borderRadius:11,backgroundColor:c.raised,borderWidth:1,borderColor:c.border},notificationUnreadPillText:{color:c.primary,fontSize:10,fontWeight:'900'},notificationItemUnread:{backgroundColor:c.raised,borderColor:c.border},
+  formHeader:{flexDirection:'row-reverse',alignItems:'center',gap:11,paddingBottom:16,borderBottomWidth:1,borderBottomColor:'#33473b'},formStep:{width:38,height:38,borderRadius:13,backgroundColor:'#B7FF30',alignItems:'center',justifyContent:'center'},formStepText:{color:'#0B1411',fontSize:12,fontWeight:'900'},formHeaderCopy:{flex:1},formTitle:{color:c.text,fontSize:18,fontWeight:'900',textAlign:'right'},formSubtitle:{color:c.muted,fontSize:12,lineHeight:17,textAlign:'right',marginTop:3},cashBadge:{borderRadius:18,paddingHorizontal:10,paddingVertical:6,backgroundColor:'#25382d',borderWidth:1,borderColor:'#405449'},cashBadgeText:{color:'#DFFFAD',fontSize:10,fontWeight:'800'},formSection:{marginTop:19},sectionHead:{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',marginBottom:9},sectionHeadLabel:{color:c.text,fontSize:13,fontWeight:'800',textAlign:'right'},sectionHint:{color:'#8fa196',fontSize:11,textAlign:'right'},orderRequestInput:{minHeight:124,backgroundColor:'#121d16',borderColor:'#3b5143',borderRadius:16,fontSize:15,lineHeight:23,textAlign:'right'},categoryChips:{marginTop:0,flexDirection:'row-reverse',gap:9},moneyField:{minHeight:64,flexDirection:'row-reverse',alignItems:'center',gap:11,paddingHorizontal:14,borderRadius:15,borderWidth:1,borderColor:'#42564a',backgroundColor:'#111c16'},moneyInput:{flex:1,minWidth:0,paddingVertical:12,color:c.text,fontSize:20,fontWeight:'800',fontFamily:'Tajawal_800ExtraBold'},currencyBadge:{paddingHorizontal:12,paddingVertical:8,borderRadius:10,backgroundColor:'#283b2d'},currencyBadgeText:{color:'#DFFFAD',fontSize:13,fontWeight:'900'},budgetHint:{color:'#8fa196',fontSize:11,marginTop:7,textAlign:'right'},photoSection:{marginTop:20,paddingTop:17,borderTopWidth:1,borderTopColor:'#33473b'},photoHead:{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',marginBottom:12},photoCount:{color:'#DFFFAD',fontSize:12,fontWeight:'800',paddingHorizontal:10,paddingVertical:6,borderRadius:12,backgroundColor:'#26382c'},uploadedPhotoList:{flexDirection:'row-reverse',flexWrap:'wrap',gap:10,marginBottom:10},uploadedPhotoTile:{width:144,padding:7,borderRadius:16,borderWidth:1,borderColor:'#405449',backgroundColor:'#15231a'},uploadedPhotoPreview:{width:'100%',height:102,borderRadius:11,backgroundColor:'#223128'},uploadedPhotoStatus:{position:'absolute',top:13,right:13,flexDirection:'row-reverse',alignItems:'center',gap:5,paddingHorizontal:7,paddingVertical:5,borderRadius:10,backgroundColor:'rgba(11,20,17,.88)'},imageStatusDot:{width:6,height:6,borderRadius:3,backgroundColor:'#F6C76A'},imageStatusUploaded:{backgroundColor:'#B7FF30'},orderImageStatusText:{color:'#fff',fontSize:9,fontWeight:'700'},imageActions:{flexDirection:'row-reverse',gap:6,marginTop:7},replaceImageButton:{flex:1,minHeight:42,alignItems:'center',justifyContent:'center',borderRadius:10,backgroundColor:'#263b2c',borderWidth:1,borderColor:'#547044'},replaceImageText:{color:'#DFFFAD',fontSize:10,fontWeight:'800'},removeImageButton:{flex:1,minHeight:42,alignItems:'center',justifyContent:'center',borderRadius:10,backgroundColor:'#302321',borderWidth:1,borderColor:'#65423a'},removeImageText:{color:'#FFC1AD',fontSize:10,fontWeight:'800'},addImageCard:{minHeight:76,flexDirection:'row-reverse',alignItems:'center',gap:11,paddingHorizontal:13,borderWidth:1,borderStyle:'dashed',borderColor:'#567148',borderRadius:15,backgroundColor:'#17251b'},addImageIcon:{width:42,height:42,borderRadius:13,backgroundColor:'#2c4128',alignItems:'center',justifyContent:'center'},addImageCopy:{flex:1},addImageTitle:{color:'#EAF5EC',fontSize:13,fontWeight:'800',textAlign:'right'},addImageHint:{color:'#91A397',fontSize:10,marginTop:3,textAlign:'right'},addImageArrow:{color:c.primary,fontSize:17},
+  tabIconBadge:{width:36,height:36,borderRadius:13,alignItems:'center',justifyContent:'center'},tabIconBadgeActive:{backgroundColor:c.primary},tabIconBadgeIdle:{backgroundColor:'#1D2B24',borderWidth:1,borderColor:'#30443A'},savedManualNotice:{marginTop:12,padding:14,borderRadius:14,borderWidth:1,borderColor:'#826b39',backgroundColor:'#292418'},savedManualTitle:{color:'#f5d98f',fontSize:13,fontWeight:'800',textAlign:'right'},savedManualCopy:{color:'#e4d4aa',fontSize:12,lineHeight:18,textAlign:'right',marginTop:4},formLocationHint:{color:'#B9C7BE',fontSize:12,lineHeight:18,marginTop:-5,marginBottom:15,textAlign:'right'},
+  safe: { flex: 1, backgroundColor: c.background }, bodyScroll:{flex:1}, content: { width: '100%', maxWidth: 520, alignSelf: 'center', paddingHorizontal: 22, paddingTop: 12, paddingBottom: 28 },
+  themeToggle:{width:44,height:44,borderRadius:14,borderWidth:1,borderColor:c.border,backgroundColor:c.surface,alignItems:'center',justifyContent:'center'},headerActions:{position:'absolute',left:14,top:10,flexDirection:'row',alignItems:'center',gap:6},backNavigation:{minHeight:40,alignSelf:'flex-end',flexDirection:'row-reverse',alignItems:'center',justifyContent:'center',gap:7,paddingHorizontal:12,marginBottom:8,borderRadius:12,borderWidth:1,borderColor:c.border,backgroundColor:c.surface},backNavigationText:{color:c.primary,fontSize:12,fontWeight:'800',textAlign:'right'},
+  header: { position:'relative',width:'100%',maxWidth:520,alignSelf:'center',height:64,borderBottomWidth:1,borderBottomColor:'#1a2820',backgroundColor:c.background,zIndex:5 }, brand: { position:'absolute',right:22,top:8,flexDirection: 'row-reverse', alignItems: 'center', gap: 9 }, brandMark: { width: 48, height: 48, borderRadius: 13, overflow:'hidden', backgroundColor:'#fff', alignItems: 'center', justifyContent: 'center' }, brandLogo:{width:'100%',height:'100%'}, brandMarkText: { fontSize: 25, fontWeight: '800', color: c.background }, brandName: { color: c.text, fontSize: 17, fontWeight: '800' }, brandTag: { color: c.muted, fontSize: 11, marginTop: 1 }, accountAvatar:{position:'relative',left:0,top:0,width:48,height:48,borderRadius:24,overflow:'hidden',alignItems:'center',justifyContent:'center',backgroundColor:'#27372D',borderWidth:1.5,borderColor:'#B7FF30'},accountAvatarText:{color:'#DFFFAD',fontSize:17,fontWeight:'800'},avatarImage:{width:'100%',height:'100%'},
+  address: { flexDirection: 'row-reverse', alignItems: 'center', gap: 9, marginTop: 7, marginBottom: 1, minHeight: 48, paddingVertical: 7, paddingHorizontal: 11, backgroundColor: c.surface, borderRadius: 14, borderWidth: 1, borderColor: c.border }, pin: { width: 30, height: 30, flexShrink: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: c.raised, borderRadius: 10 }, pinGlyph: { color: c.primary, fontSize: 17 }, addressCopy: { flex: 1, minWidth: 0 }, addressName: { color: c.text, fontSize: 12, fontWeight: '700', textAlign: 'right' }, addressChange: { color: '#17210F', fontSize: 11, fontWeight: '800' },
+  hero: { minHeight: 206, borderRadius: 24, backgroundColor: '#B7FF30', marginTop: 23, marginBottom: 19, padding: 20, overflow: 'hidden', justifyContent: 'center' }, heroCopy: { width: '57%', marginLeft: 'auto', zIndex: 2 }, heroEyebrow: { color: '#43552C', fontSize: 12, fontWeight: '700' }, heroTitle: { color: '#0B1411', fontSize: 23, lineHeight: 31, fontWeight: '800', marginTop: 10 }, heroDescription: { color: '#2F3F27', fontSize: 13, marginTop: 7 }, heroFoot: { position: 'absolute', right: 20, bottom: 17, flexDirection: 'row', alignItems: 'center', gap: 7 }, heroDash: { width: 18, height: 2, backgroundColor: '#526936', borderRadius: 2 }, heroFootText: { color: '#3F512A', fontSize: 11, fontWeight: '700' }, heroArt: { position: 'absolute', left: -7, top: 1, bottom: 0, width: '40%', alignItems: 'center', justifyContent: 'center' }, heroOrbit: { width: 134, height: 134, borderRadius: 67, borderWidth: 1, borderColor: 'rgba(11,20,17,.14)', alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '-14deg' }] }, heroCore: { width: 84, height: 84, borderRadius: 28, backgroundColor: '#fff', transform: [{ rotate: '14deg' }], alignItems: 'center', justifyContent: 'center', overflow:'hidden', shadowColor: '#31451B', shadowOpacity: .18, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 5 }, heroLogo:{width:80,height:80,borderRadius:23}, heroPin: { position: 'absolute', right: 3, top: 9, height: 35, width: 35, borderRadius: 12, backgroundColor: '#18251A', alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '14deg' }] }, heroPinText: { fontSize: 19, color: '#B7FF30' }, heroSpark: { position: 'absolute', left: 5, top: 26, height: 10, width: 10, borderRadius: 4, backgroundColor: '#F7FFE9', transform: [{ rotate: '30deg' }] }, heroDot: { position: 'absolute', right: 24, bottom: 10, height: 8, width: 8, borderRadius: 4, backgroundColor: '#4D622D' },
+  formCard: { padding: 17, borderRadius: 18, backgroundColor: c.surface, borderColor: c.border, borderWidth: 1 }, draftNotice: { color: '#b6c3ba', fontSize: 10, marginBottom: 13, textAlign: 'left' }, label: { color: c.text, fontSize: 13, fontWeight: '700', marginBottom: 11, textAlign: 'right' }, input: { fontFamily: 'Tajawal_400Regular', minHeight: 98, borderWidth: 1, borderColor: '#405449', borderRadius: 12, backgroundColor: '#17231c', padding: 13, color: c.text, fontSize: 15, lineHeight: 23, textAlign: 'right' }, chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }, chip: { paddingHorizontal: 16, minHeight: 44, justifyContent: 'center', alignItems: 'center', borderRadius: 18, borderWidth: 1, borderColor: '#405348', backgroundColor: '#223128' }, chipActive: { backgroundColor: '#344629', borderColor: c.primary }, chipText: { fontSize: 12, color: '#d4ddd7' }, chipTextActive: { color: '#e1ffc0', fontWeight: '700' }, divider: { height: 1, backgroundColor: c.border, marginTop: 16 }, attachment: { flexDirection: 'row', alignItems: 'center', minHeight: 48, gap: 8 }, orderImageList: { flexDirection: 'row', gap: 10, flexWrap: 'wrap', marginBottom: 8 }, orderImageTile: { width: 76, height: 76, borderRadius: 11, overflow: 'hidden', backgroundColor: '#223128' }, orderImagePreview: { width: 76, height: 76 }, orderImageStatus: { position: 'absolute', bottom: 2, right: 2, color: '#fff', fontSize: 9, backgroundColor: '#16221b', paddingHorizontal: 4, borderRadius: 4 }, orderImageRemove: { position: 'absolute', top: 2, right: 4, color: '#fff', fontSize: 18, textShadowColor: '#000', textShadowRadius: 3 }, offlineOrders: { padding: 13, marginTop: 12, borderRadius: 12, borderWidth: 1, borderColor: '#745C2C', backgroundColor: '#3A2D18', gap: 4 }, offlineOrdersTitle: { color: '#FFE2A0', fontSize: 12, fontWeight: '700' }, offlineOrdersCopy: { color: '#E9D8AA', fontSize: 11, lineHeight: 17 }, orderGallery: { marginTop: 10, gap: 6 }, orderGalleryTitle: { color: c.muted, fontSize: 11 }, orderGalleryImage: { width: 84, height: 84, borderRadius: 10, backgroundColor: '#223128' }, attachmentIcon: { color: c.primary, fontSize: 21 }, attachmentText: { color: c.text, fontSize: 13, fontWeight: '600' }, optional: { color: c.muted, fontSize: 11, fontWeight: '400' }, endArrow: { color: c.muted, marginLeft: 'auto' },
+  note: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, marginTop: 15, paddingHorizontal: 2 }, noteIcon: { color: '#99bd75', fontSize: 15 }, noteText: { color: c.muted, fontSize: 12, lineHeight: 19, flex: 1 }, submit: { height: 54, marginTop: 20, backgroundColor: c.primary, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }, submitText: { color: c.background, fontSize: 15, fontWeight: '800' }, submitArrow: { fontSize: 17 }, pending: { color: '#819087', textAlign: 'center', fontSize: 10, lineHeight: 16, marginTop: 9 }, footer: { flexDirection: 'row-reverse', alignItems: 'center', gap: 6, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 8, paddingBottom: 6, paddingHorizontal: 12, backgroundColor: c.background }, footerButton: { flex: 1, minWidth: 0, minHeight: 54, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 7, borderRadius: 16, paddingHorizontal: 5 }, footerButtonActive: { backgroundColor: c.primary }, footerIcon: { width: 25, height: 25, alignItems: 'center', justifyContent: 'center' }, footerActive: { color: c.background, fontSize: 12, fontWeight: '800' }, footerItem: { color: c.muted, fontSize: 12, fontWeight: '700' }, empty: { minHeight: 320, marginTop: 26, borderWidth: 1, borderColor: c.border, borderRadius: 18, backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center', padding: 24 }, emptyMark: { color: c.primary, backgroundColor: '#344629', overflow: 'hidden', borderRadius: 16, padding: 10, fontSize: 26, fontWeight: '800' }, emptyTitle: { color: c.text, fontWeight: '700', fontSize: 16, marginTop: 18 }, emptyCopy: { color: c.muted, fontSize: 12, marginTop: 7 }, signOut: { marginTop: 22, borderWidth: 1, borderColor: c.danger, borderRadius: 10, paddingHorizontal: 18, minHeight: 44, justifyContent: 'center' }, signOutText: { color: c.danger, fontWeight: '700', fontSize: 13 },
+  addressPage:{marginTop:24},addressPageHeader:{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',gap:10,marginBottom:4},backLink:{flexDirection:'row',alignItems:'center',gap:8,minHeight:44,alignSelf:'flex-start'},backArrow:{fontSize:18,color:c.primary},backText:{fontSize:12,color:'#D3EFA4',fontWeight:'700'},pageTitle:{color:c.text,fontSize:25,fontWeight:'800',textAlign:'right',marginTop:0,flexShrink:1},pageDescription:{color:c.muted,fontSize:13,textAlign:'right',marginTop:5,marginBottom:17},savedAddress:{flexDirection:'row-reverse',alignItems:'center',gap:11,padding:14,marginBottom:10,borderRadius:15,borderWidth:1,borderColor:c.border,backgroundColor:c.surface},savedPin:{width:36,height:36,borderRadius:12,backgroundColor:'#344629',alignItems:'center',justifyContent:'center'},savedCopy:{flex:1,alignItems:'flex-start'},savedLabel:{color:c.text,fontSize:14,fontWeight:'700',textAlign:'right'},savedDetail:{color:c.muted,fontSize:11,marginTop:3,textAlign:'right'},deleteAddress:{minWidth:44,minHeight:44,padding:0,alignItems:"center",justifyContent:"center"},deleteText:{color:c.danger,fontSize:11,fontWeight:'700'},sectionTitle:{color:c.text,fontWeight:'800',fontSize:16,marginBottom:17,textAlign:'right'},zoneList:{gap:8,marginBottom:17},zoneOption:{minHeight:44,paddingHorizontal:12,paddingVertical:8,justifyContent:"center",alignItems:'flex-end',borderWidth:1,borderColor:'#405348',borderRadius:12,backgroundColor:'#1A2920'},zoneSelected:{borderColor:c.primary,backgroundColor:'#283922'},zoneName:{color:c.text,fontWeight:'700',fontSize:13,textAlign:'right'},zoneNameSelected:{color:'#DFFFAD'},zoneMeta:{color:c.muted,fontSize:11,marginTop:4},field:{fontFamily:'Tajawal_400Regular',minHeight:48,borderWidth:1,borderColor:'#405449',borderRadius:12,backgroundColor:'#17231c',paddingHorizontal:12,color:c.text,fontSize:14,marginBottom:14},inlineFields:{flexDirection:'row',gap:10},inline:{flex:1},saveAddress:{minHeight:50,borderRadius:13,backgroundColor:c.primary,alignItems:'center',justifyContent:'center',marginTop:5},disabled:{opacity:0.6},saveAddressText:{color:c.background,fontWeight:'800',fontSize:14},noZones:{padding:18,borderRadius:14,backgroundColor:'#17251C',borderWidth:1,borderColor:c.border,alignItems:'center'},noZonesTitle:{color:c.text,fontWeight:'700',fontSize:14},formMessage:{color:'#F6C76A',textAlign:'right',fontSize:12,marginTop:12,lineHeight:19},profileAction:{minHeight:44,borderRadius:12,borderWidth:1,borderColor:c.border,backgroundColor:'#1A2920',paddingHorizontal:15,justifyContent:'center',marginTop:20},profileActionText:{color:'#DFFFAE',fontSize:13,fontWeight:'700'},addressBackButton:{minHeight:38,alignSelf:'center',flexDirection:'row-reverse',alignItems:'center',gap:7,paddingHorizontal:12,borderRadius:12,borderWidth:1,borderColor:c.border,backgroundColor:c.surface},addressBackArrow:{color:c.primary,fontSize:17,fontWeight:'800'},addressBackText:{color:c.primary,fontSize:12,fontWeight:'800'},addressHistoryHero:{flexDirection:'row-reverse',alignItems:'center',gap:12,padding:15,marginTop:12,marginBottom:15,borderRadius:18,borderWidth:1,borderColor:c.border,backgroundColor:c.surface},addressHistoryIcon:{width:46,height:46,borderRadius:15,alignItems:'center',justifyContent:'center',backgroundColor:c.raised},addressHistoryCopy:{flex:1,alignItems:'flex-start'},addressHistoryEyebrow:{color:c.accent,fontSize:10,fontWeight:'800',textAlign:'right'},addressHistoryTitle:{color:c.text,fontSize:19,fontWeight:'900',textAlign:'right',marginTop:2},addressHistorySubtitle:{color:c.muted,fontSize:11,lineHeight:17,textAlign:'right',marginTop:3},addressHistoryCount:{minWidth:48,alignItems:'center',justifyContent:'center',paddingHorizontal:8,paddingVertical:7,borderRadius:13,backgroundColor:c.raised},addressHistoryCountNumber:{color:c.primary,fontSize:17,fontWeight:'900'},addressHistoryCountLabel:{color:c.muted,fontSize:9,fontWeight:'700'},addressHistoryButton:{minHeight:70,flexDirection:'row-reverse',alignItems:'center',gap:12,paddingHorizontal:14,marginBottom:17,borderRadius:16,borderWidth:1,borderColor:c.border,backgroundColor:c.surface},addressHistoryButtonIcon:{width:42,height:42,borderRadius:13,alignItems:'center',justifyContent:'center',backgroundColor:c.raised},addressHistoryButtonCopy:{flex:1,alignItems:'flex-start'},addressHistoryButtonTitle:{color:c.text,fontSize:14,fontWeight:'900',textAlign:'right'},addressHistoryButtonHint:{color:c.muted,fontSize:10,lineHeight:15,textAlign:'right',marginTop:3},addressHistoryButtonEnd:{width:30,height:30,borderRadius:10,alignItems:'center',justifyContent:'center',backgroundColor:c.raised},addressHistoryArrow:{color:c.primary,fontSize:17,fontWeight:'900'},historyAddressCard:{padding:14,marginBottom:11,borderRadius:17,borderWidth:1,borderColor:c.border,backgroundColor:c.surface},historyAddressTop:{flexDirection:'row-reverse',alignItems:'center',gap:10},historyAddressDivider:{height:1,backgroundColor:c.border,marginVertical:11},historyAddressDetail:{color:c.text,fontSize:12,lineHeight:19,textAlign:'right'},historyAddressPhone:{color:c.muted,fontSize:11,marginTop:7,textAlign:'right'},historyEmpty:{minHeight:190,alignItems:'center',justifyContent:'center',padding:22,marginTop:5,borderRadius:18,borderWidth:1,borderColor:c.border,backgroundColor:c.surface},historyEmptyIcon:{width:48,height:48,borderRadius:15,alignItems:'center',justifyContent:'center',backgroundColor:c.raised,marginBottom:7},
+  ordersIntro:{marginTop:4,marginBottom:12},ordersIntroCopy:{flex:1,minWidth:0},ordersIntroTop:{minHeight:38,flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',gap:12,marginBottom:9},ordersIntroMain:{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',gap:12},ordersIntroTools:{flexDirection:'row',alignItems:'center',gap:8},ordersBackButton:{minHeight:36,justifyContent:'center',paddingHorizontal:10,borderRadius:11,borderWidth:1,borderColor:c.border,backgroundColor:c.surface},ordersBackButtonText:{color:c.primary,fontSize:11,fontWeight:'800',textAlign:'right'},ordersEyebrow:{color:c.accent,fontSize:12,fontWeight:'800',textAlign:'right'},ordersTitle:{color:c.text,fontSize:25,fontWeight:'900',textAlign:'right'},ordersDescription:{color:c.muted,fontSize:12,lineHeight:18,textAlign:'right',marginTop:4},ordersCountBadge:{width:58,height:58,borderRadius:17,alignItems:'center',justifyContent:'center',backgroundColor:c.raised,borderWidth:1,borderColor:c.border},ordersCountValue:{color:c.primary,fontSize:22,fontWeight:'900'},ordersCountLabel:{color:c.muted,fontSize:10,fontWeight:'700',marginTop:-2},ordersRefreshButton:{width:44,height:44,flexShrink:0,borderRadius:15,alignItems:'center',justifyContent:'center',backgroundColor:c.raised,borderWidth:1,borderColor:c.border},
+  notificationCard:{borderRadius:18,padding:14,backgroundColor:c.surface,borderWidth:1,borderColor:c.border,marginBottom:14},notificationHeader:{flexDirection:'row',alignItems:'center',gap:10},notificationSummary:{flex:1,minWidth:0,minHeight:54,flexDirection:'row',alignItems:'center',gap:9},notificationIcon:{width:40,height:40,borderRadius:13,alignItems:'center',justifyContent:'center',backgroundColor:c.raised,borderWidth:1,borderColor:c.border},notificationCopy:{flex:1,minWidth:0},notificationTitle:{color:c.text,fontSize:14,fontWeight:'900',textAlign:'right'},notificationSubtitle:{color:c.muted,fontSize:11,marginTop:3,textAlign:'right'},notificationCount:{minWidth:30,height:28,paddingHorizontal:8,borderRadius:14,alignItems:'center',justifyContent:'center',backgroundColor:c.raised,borderWidth:1,borderColor:c.border},notificationCountText:{color:c.primary,fontSize:12,fontWeight:'900'},notificationExpandIcon:{width:32,height:32,borderRadius:11,alignItems:'center',justifyContent:'center',backgroundColor:c.raised,borderWidth:1,borderColor:c.border},notificationList:{borderTopWidth:1,borderTopColor:c.border,marginTop:9},notificationItem:{minHeight:76,flexDirection:'row-reverse',alignItems:'flex-start',gap:10,paddingVertical:12,borderBottomWidth:1,borderBottomColor:c.border},notificationItemRead:{opacity:.62},notificationDot:{width:9,height:9,borderRadius:5,marginTop:5,backgroundColor:c.primary},notificationDotRead:{backgroundColor:c.muted},notificationItemCopy:{flex:1},notificationItemTitle:{color:c.text,fontSize:13,fontWeight:'800',textAlign:'right'},notificationItemBody:{color:c.muted,fontSize:12,lineHeight:18,marginTop:4,textAlign:'right'},notificationItemMeta:{color:c.muted,fontSize:10,marginTop:6,textAlign:'right'},notificationEmpty:{color:c.muted,fontSize:12,textAlign:'center',paddingVertical:16},
+  ordersLoading:{minHeight:190,alignItems:'center',justifyContent:'center',gap:10},retryOrdersButton:{minHeight:44,alignSelf:'flex-start',justifyContent:'center',marginTop:8,paddingHorizontal:12,borderRadius:12,borderWidth:1,borderColor:c.border,backgroundColor:c.surface},retryOrdersText:{color:c.primary,fontSize:12,fontWeight:'800'},
+  orderCardHead:{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',gap:10},orderMeta:{flex:1,alignItems:'flex-start'},orderMetaId:{color:c.muted,fontSize:10,fontWeight:'700'},orderStatusPill:{minHeight:34,maxWidth:'67%',flexDirection:'row-reverse',alignItems:'center',gap:7,paddingHorizontal:10,borderRadius:18,backgroundColor:c.raised,borderWidth:1,borderColor:c.border},orderStatusDot:{width:8,height:8,borderRadius:4,backgroundColor:c.primary},orderStatusCancelled:{backgroundColor:c.raised,borderColor:c.danger},orderStatusDotCancelled:{backgroundColor:c.danger},orderStatusTextCancelled:{color:c.danger},orderRequestBlock:{marginTop:13,padding:13,borderRadius:14,backgroundColor:c.raised},orderFacts:{flexDirection:'row-reverse',gap:9,marginTop:12},orderFact:{flex:1,minWidth:0,padding:11,borderRadius:13,backgroundColor:c.raised,borderWidth:1,borderColor:c.border},orderFactLabel:{color:c.muted,fontSize:10,textAlign:'right'},orderFactValue:{color:c.text,fontSize:12,fontWeight:'800',textAlign:'right',marginTop:5},purchaseAmountLine:{color:c.accent,fontSize:11,fontWeight:'800',textAlign:'right',marginTop:10},
+  requestMessage:{color:'#DFFFAD',fontSize:12,textAlign:'center',lineHeight:20,marginTop:11},orderPage:{marginTop:23},orderCard:{borderRadius:15,padding:15,backgroundColor:c.surface,borderWidth:1,borderColor:c.border,marginBottom:10},orderTop:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',gap:10},orderCategory:{color:c.text,fontWeight:'800',fontSize:14},orderStatus:{color:c.primary,fontSize:10,fontWeight:'800',flexShrink:1},orderRequest:{color:c.muted,fontSize:13,lineHeight:20,marginTop:6,textAlign:'right'},orderBottom:{borderTopWidth:1,borderTopColor:c.border,marginTop:12,paddingTop:10,flexDirection:'row',justifyContent:'space-between',gap:8},orderDate:{color:c.muted,fontSize:10},orderFee:{color:'#B7D58D',fontSize:10},reviewActions:{flexDirection:'row',gap:9,marginTop:12},approvePurchase:{flex:1,minHeight:42,borderRadius:11,backgroundColor:c.primary,alignItems:'center',justifyContent:'center'},rejectPurchase:{flex:1,minHeight:44,borderRadius:11,borderWidth:1,borderColor:'#755544',backgroundColor:'#28221e',alignItems:'center',justifyContent:'center'},rejectPurchaseText:{color:'#ffc6a9',fontSize:12,fontWeight:'700'},deliveryCode:{color:c.primary,fontSize:28,fontWeight:'800',letterSpacing:8,textAlign:'center',paddingVertical:8,marginTop:8,backgroundColor:'#263621',borderRadius:12},profilePage:{marginTop:23,gap:13},driverApplyCard:{borderRadius:18,padding:17,backgroundColor:c.surface,borderWidth:1,borderColor:c.border},driverApplyMark:{width:38,height:38,borderRadius:12,backgroundColor:'#344629',alignItems:'center',justifyContent:'center',marginBottom:12},driverApplyIcon:{color:c.primary,fontSize:19},driverApplyTitle:{color:c.text,fontSize:16,fontWeight:'800',textAlign:'right'},driverApplyCopy:{color:c.muted,fontSize:12,lineHeight:20,textAlign:'right',marginTop:6,marginBottom:16},driverStatus:{alignSelf:'flex-start',marginTop:13,borderRadius:20,overflow:'hidden',paddingHorizontal:12,paddingVertical:6,backgroundColor:'#2d4028',color:'#DFFFAD',fontSize:11,fontWeight:'700'},
+  driverPanel:{borderRadius:20,padding:16,backgroundColor:c.surface,borderWidth:1,borderColor:c.border},driverPanelTop:{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',gap:10,marginBottom:12},driverRefresh:{width:44,height:44,borderRadius:14,alignItems:'center',justifyContent:'center',backgroundColor:'#233229'},driverRefreshGlyph:{fontSize:20,color:c.primary},driverStatsRow:{flexDirection:'row-reverse',gap:10,marginBottom:14},driverStat:{flex:1,minHeight:68,flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',paddingHorizontal:13,borderRadius:14,backgroundColor:'#18261e',borderWidth:1,borderColor:'#304439'},driverStatValue:{color:c.primary,fontSize:22,fontWeight:'900'},driverStatLabel:{color:'#B8C7BD',fontSize:11,fontWeight:'700'},driverWelcome:{marginTop:14,marginBottom:16,padding:18,borderRadius:20,backgroundColor:'#17271d',borderWidth:1,borderColor:'#344a38'},driverAppearanceCard:{padding:13,marginBottom:14,borderRadius:17,backgroundColor:c.surface,borderWidth:1,borderColor:c.border},driverSettingsTitle:{color:c.text,fontSize:13,fontWeight:'900',textAlign:'right',marginBottom:9},driverWelcomeKicker:{color:c.primary,fontSize:11,fontWeight:'800',textAlign:'right'},driverWelcomeTitle:{color:c.text,fontSize:22,fontWeight:'900',textAlign:'right',marginTop:5},driverWelcomeCopy:{color:c.muted,fontSize:12,lineHeight:19,textAlign:'right',marginTop:5},driverContent:{width:'100%',maxWidth:520,alignSelf:'center',paddingHorizontal:20,paddingTop:4,paddingBottom:32},driverLogout:{position:'relative',left:0,top:0,minWidth:48,minHeight:40,paddingHorizontal:11,borderRadius:12,borderWidth:1,borderColor:c.border,alignItems:'center',justifyContent:'center',backgroundColor:'#17231c'},driverLogoutText:{color:'#DFFFAD',fontSize:11,fontWeight:'800'},availabilityButton:{minHeight:68,flexDirection:'row-reverse',alignItems:'center',justifyContent:'flex-start',gap:11,paddingHorizontal:14,borderRadius:15,backgroundColor:'#202c25',borderWidth:1,borderColor:'#46534a',marginTop:10,marginBottom:16},availabilityOn:{backgroundColor:'#213323',borderColor:'#A5D46A'},availabilityDot:{width:12,height:12,borderRadius:6,backgroundColor:'#87978b'},availabilityDotOn:{backgroundColor:'#B7FF30'},availabilityCopy:{flex:1,alignItems:'flex-start',gap:4},availabilityText:{fontSize:13,fontWeight:'800',color:'#D1D9D3',textAlign:'right'},availabilityTextOn:{color:'#DFFFAD'},availabilityHint:{color:'#99AA9E',fontSize:10,textAlign:'right'},availabilityArrow:{color:c.primary,fontSize:17,fontWeight:'800'},driverOffersHead:{flexDirection:'row-reverse',alignItems:'center',gap:9,marginTop:17,marginBottom:12},offerCount:{color:c.primary,fontSize:11,fontWeight:'800'},offerCard:{borderRadius:16,padding:15,backgroundColor:'#17241C',borderWidth:1,borderColor:'#34473A',marginBottom:11},offerExpiry:{color:'#F0CC83',fontSize:10,marginTop:8},acceptOffer:{minHeight:48,borderRadius:12,backgroundColor:c.primary,alignItems:'center',justifyContent:'center',marginTop:12},acceptOfferText:{color:c.background,fontWeight:'800',fontSize:13},declineOffer:{minHeight:46,borderRadius:12,borderWidth:1,borderColor:'#5a4a3c',alignItems:'center',justifyContent:'center',marginTop:8},declineOfferText:{color:'#e8c3a9',fontSize:11,fontWeight:'700'},cancelOrder:{minHeight:44,borderRadius:10,borderWidth:1,borderColor:'#63443a',alignItems:'center',justifyContent:'center',marginTop:10,backgroundColor:'#261d1a'},cancelOrderText:{color:'#ffc6a9',fontSize:11,fontWeight:'700'},noOffers:{minHeight:130,borderRadius:16,backgroundColor:'#17241C',borderWidth:1,borderColor:c.border,alignItems:'center',justifyContent:'center',padding:18,marginBottom:15},noOffersGlyph:{color:c.primary,fontSize:23},noOffersTitle:{color:c.text,fontWeight:'800',fontSize:13,marginTop:7},noOffersCopy:{color:c.muted,textAlign:'center',fontSize:11,lineHeight:18,marginTop:5},dropoff:{borderTopWidth:1,borderTopColor:c.border,marginTop:12,paddingTop:11},dropoffTitle:{color:'#DFFFAD',fontSize:11,fontWeight:'800'},dropoffText:{color:'#C4D0C8',fontSize:11,lineHeight:18,marginTop:4},dropoffPhone:{color:c.primary,fontSize:12,fontWeight:'800',marginTop:6,textAlign:'left'},
+  profileCard:{borderRadius:18,padding:17,backgroundColor:c.surface,borderWidth:1,borderColor:c.border},profileCardTop:{flexDirection:'row-reverse',alignItems:'center',gap:12,marginBottom:18},accountAvatarLarge:{width:52,height:52,borderRadius:26,overflow:'hidden',alignItems:'center',justifyContent:'center',backgroundColor:'#2b3c30',borderWidth:1,borderColor:c.primary},accountAvatarLargeText:{color:'#DFFFAD',fontSize:21,fontWeight:'800'},profileEmail:{color:c.muted,fontSize:12,marginTop:3,textAlign:'right'},profileEditPhotoWrap:{width:96,height:96,alignSelf:'center',marginTop:3,marginBottom:12,borderRadius:48,overflow:'hidden',alignItems:'center',justifyContent:'center',backgroundColor:'#2b3c30',borderWidth:2,borderColor:c.primary},profileEditPhoto:{width:'100%',height:'100%'},profileEditInitial:{color:'#DFFFAD',fontSize:34,fontWeight:'900'},profilePhotoButton:{minHeight:44,alignSelf:'center',justifyContent:'center',paddingHorizontal:16,marginBottom:19,borderRadius:13,borderWidth:1,borderColor:c.border,backgroundColor:c.raised},profilePhotoButtonText:{color:c.primary,fontSize:12,fontWeight:'800'},readOnlyEmail:{minHeight:52,justifyContent:'center',paddingHorizontal:13,marginBottom:16,borderRadius:12,borderWidth:1,borderColor:c.border,backgroundColor:c.raised},readOnlyEmailText:{color:c.text,fontSize:14,textAlign:'left'},readOnlyEmailHint:{color:c.muted,fontSize:10,textAlign:'right',marginTop:3},appearanceSetting:{minHeight:62,flexDirection:'row-reverse',alignItems:'center',gap:11,padding:11,borderRadius:14,borderWidth:1,borderColor:c.border,backgroundColor:c.raised},appearanceIcon:{width:40,height:40,borderRadius:13,alignItems:'center',justifyContent:'center',backgroundColor:c.surface},appearanceCopy:{flex:1,alignItems:'flex-start'},appearanceTitle:{color:c.text,fontSize:13,fontWeight:'800',textAlign:'right'},appearanceHint:{color:c.muted,fontSize:10,marginTop:3,textAlign:'right'},appearanceArrow:{color:c.primary,fontSize:17,fontWeight:'800'},missingAddress:{flexDirection:'row-reverse',flexWrap:'wrap',alignItems:'center',gap:12,marginTop:14,marginBottom:16,padding:15,borderRadius:18,borderWidth:1,borderColor:'#456139',backgroundColor:'#1b2b20'},missingAddressIcon:{width:42,height:42,borderRadius:14,alignItems:'center',justifyContent:'center',backgroundColor:'#2e4327'},missingAddressGlyph:{color:c.primary,fontSize:22},missingAddressCopy:{flex:1,minWidth:170},missingAddressTitle:{color:c.text,fontSize:15,fontWeight:'800',textAlign:'right'},missingAddressText:{color:c.muted,fontSize:12,lineHeight:18,textAlign:'right',marginTop:3},missingAddressButton:{width:'100%',minHeight:48,borderRadius:13,backgroundColor:c.primary,alignItems:'center',justifyContent:'center'},missingAddressButtonText:{color:c.background,fontSize:14,fontWeight:'800'},inputDisabled:{opacity:.48},chipDisabled:{opacity:.42},addressActions:{alignItems:'center'},editAddressText:{color:'#DFFFAD',fontSize:11,fontWeight:'700'},cancelEdit:{minHeight:44,alignItems:'center',justifyContent:'center',marginTop:7},
+  accountIntro:{marginTop:2,marginBottom:3},accountPageTitle:{color:c.text,fontSize:26,fontWeight:'900',textAlign:'right'},accountPageSubtitle:{color:c.muted,fontSize:13,textAlign:'right',marginTop:4},profileSectionCard:{borderRadius:19,padding:15,backgroundColor:c.surface,borderWidth:1,borderColor:c.border},profileSectionHeading:{flexDirection:'row-reverse',alignItems:'center',gap:9,marginBottom:14},profileHeadingIcon:{width:34,height:34,borderRadius:11,alignItems:'center',justifyContent:'center',backgroundColor:c.raised},profileSectionTitle:{color:c.text,fontWeight:'800',fontSize:16,textAlign:'right',flex:1},profileSectionTag:{color:c.primary,fontSize:10,fontWeight:'800',paddingHorizontal:9,paddingVertical:5,borderRadius:12,backgroundColor:c.raised,overflow:'hidden'},profileIdentityRow:{flexDirection:'row-reverse',alignItems:'center',gap:12,paddingBottom:13,borderBottomWidth:1,borderBottomColor:c.border},profileIdentityCopy:{flex:1,alignItems:'flex-start',minWidth:0},profileIdentityName:{color:c.text,fontSize:16,fontWeight:'800',textAlign:'right'},profileSectionAction:{minHeight:46,marginTop:12,paddingHorizontal:13,borderRadius:13,borderWidth:1,borderColor:c.border,backgroundColor:c.raised,flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',gap:10},profileSectionActionText:{color:c.primary,fontSize:13,fontWeight:'800'},profileSectionActionPrimary:{backgroundColor:c.primary,borderColor:c.primary,justifyContent:'center'},profileSectionActionTextPrimary:{color:c.background},profileAddressSummary:{padding:13,borderRadius:14,backgroundColor:c.raised,borderWidth:1,borderColor:c.border,alignItems:'flex-start'},profileAddressName:{color:c.text,fontSize:14,fontWeight:'800',textAlign:'right'},profileAddressLine:{color:c.muted,fontSize:12,lineHeight:19,textAlign:'right',marginTop:3},profileAddressPhone:{color:c.accent,fontSize:11,fontWeight:'700',textAlign:'right',marginTop:7},profileAddressEmpty:{paddingVertical:3,alignItems:'flex-start'},profileAddressEmptyTitle:{color:c.text,fontSize:13,fontWeight:'800',textAlign:'right'},profileThemeRow:{minHeight:66,flexDirection:'row-reverse',alignItems:'center',gap:11,padding:11,borderRadius:14,backgroundColor:c.raised,borderWidth:1,borderColor:c.border},profileThemeIcon:{width:40,height:40,borderRadius:12,alignItems:'center',justifyContent:'center',backgroundColor:c.surface},profileThemeCopy:{flex:1,alignItems:'flex-start'},profileThemeTitle:{color:c.text,fontSize:13,fontWeight:'800',textAlign:'right'},profileThemeHint:{color:c.muted,fontSize:11,marginTop:3,textAlign:'right'},profileThemeState:{minWidth:48,minHeight:30,alignItems:'center',justifyContent:'center',paddingHorizontal:9,borderRadius:10,backgroundColor:c.raised},profileThemeStateText:{color:c.primary,fontSize:11,fontWeight:'800'},profileLogout:{minHeight:48,flexDirection:'row-reverse',alignItems:'center',justifyContent:'center',gap:9,paddingHorizontal:14,borderRadius:14,borderWidth:1,borderColor:c.danger,backgroundColor:c.raised},profileLogoutText:{color:c.danger,fontSize:13,fontWeight:'800'},
+  driverHeaderProfile:{position:'absolute',left:18,top:6,minWidth:58,minHeight:52,alignItems:'center',justifyContent:'center',gap:2},driverHeaderAvatar:{width:42,height:42,borderRadius:21,overflow:'hidden',alignItems:'center',justifyContent:'center',backgroundColor:c.raised,borderWidth:2,borderColor:c.primary},driverHeaderHint:{color:c.muted,fontSize:9,fontWeight:'700'},driverHero:{minHeight:164,flexDirection:'row-reverse',alignItems:'center',gap:15,padding:20,marginTop:12,marginBottom:15,borderRadius:24,backgroundColor:'#213D29',borderWidth:1,borderColor:'#57763D',overflow:'hidden'},driverHeroOrb:{width:78,height:78,borderRadius:26,alignItems:'center',justifyContent:'center',backgroundColor:'#B7FF30'},driverHeroCopy:{flex:1,alignItems:'flex-start'},driverHeroEyebrow:{color:c.primary,fontSize:12,fontWeight:'900',textAlign:'right'},driverHeroTitle:{color:c.text,fontSize:22,fontWeight:'900',textAlign:'right',marginTop:5},driverHeroSubtitle:{color:c.muted,fontSize:11,lineHeight:18,textAlign:'right',marginTop:5},driverPageIntro:{width:'100%',marginTop:14,marginBottom:18,paddingHorizontal:2,alignItems:'flex-end'},driverProfileLoading:{minHeight:75,alignItems:'center',justifyContent:'center',gap:8,marginBottom:12,borderRadius:16,backgroundColor:c.surface,borderWidth:1,borderColor:c.border},driverProfileCard:{padding:17,marginTop:4,marginBottom:18,borderRadius:22,backgroundColor:c.surface,borderWidth:1,borderColor:c.border},driverPhotoRing:{width:104,height:104,alignSelf:'center',overflow:'hidden',alignItems:'center',justifyContent:'center',marginTop:5,borderRadius:52,borderWidth:3,borderColor:c.primary,backgroundColor:c.raised},driverPhotoImage:{width:'100%',height:'100%'},driverPhotoInitial:{color:c.primary,fontSize:38,fontWeight:'900'},driverPhotoButton:{minHeight:42,alignSelf:'center',flexDirection:'row-reverse',alignItems:'center',justifyContent:'center',gap:7,paddingHorizontal:13,marginTop:10,marginBottom:18,borderRadius:13,backgroundColor:c.raised,borderWidth:1,borderColor:c.border},driverPhotoButtonText:{color:c.primary,fontSize:12,fontWeight:'800'},driverRightText:{width:'100%',textAlign:'right'},driverRightContent:{alignItems:'flex-end'},driverInput:{minHeight:54,marginTop:7,marginBottom:14,paddingHorizontal:14,borderRadius:14,borderWidth:1,borderColor:c.border,backgroundColor:c.raised,color:c.text,fontSize:15,fontWeight:'700',fontFamily:'Tajawal_700Bold',textAlign:'right'},driverReadOnlyField:{minHeight:58,justifyContent:'center',paddingHorizontal:13,marginTop:7,marginBottom:14,borderRadius:14,borderWidth:1,borderColor:c.border,backgroundColor:c.raised},driverEmailText:{color:c.text,fontSize:13,textAlign:'right',writingDirection:'ltr'},driverFieldHint:{width:'100%',color:c.muted,fontSize:10,textAlign:'right',marginTop:5},driverPhoneRow:{minHeight:56,flexDirection:'row',alignItems:'center',gap:9,marginTop:7,borderRadius:14,borderWidth:1,borderColor:c.border,backgroundColor:c.raised,paddingHorizontal:10},driverPhoneInput:{flex:1,minWidth:0,minHeight:50,paddingHorizontal:6,color:c.text,fontSize:16,fontWeight:'800',textAlign:'right',writingDirection:'ltr'},driverCountryCode:{minHeight:38,flexDirection:'row',alignItems:'center',gap:6,paddingHorizontal:10,borderRadius:11,backgroundColor:c.surface,borderWidth:1,borderColor:c.border},driverCountryCodeText:{color:c.text,fontSize:13,fontWeight:'900'},driverCountryFlag:{fontSize:17},driverRequired:{color:c.accent,fontSize:10,fontWeight:'800'},driverSaveButton:{minHeight:54,alignItems:'center',justifyContent:'center',marginTop:8,marginBottom:16,borderRadius:15,backgroundColor:c.primary},driverSaveButtonText:{color:c.background,fontSize:15,fontWeight:'900'},completeDriverProfile:{minHeight:56,alignItems:'center',justifyContent:'center',marginTop:12,marginBottom:14,paddingHorizontal:12,borderRadius:15,backgroundColor:c.primary},completeDriverProfileText:{color:c.background,fontSize:13,fontWeight:'900',textAlign:'center'},driverOrdersShortcut:{minHeight:69,flexDirection:'row-reverse',alignItems:'center',gap:11,paddingHorizontal:13,marginTop:3,marginBottom:13,borderRadius:16,borderWidth:1,borderColor:c.border,backgroundColor:c.surface},driverShortcutIcon:{width:42,height:42,borderRadius:13,alignItems:'center',justifyContent:'center',backgroundColor:c.raised},driverShortcutTitle:{color:c.text,fontSize:13,fontWeight:'900',textAlign:'right'},driverShortcutCopy:{color:c.muted,fontSize:10,marginTop:4,textAlign:'right'},driverOnboardingCard:{width:'100%',marginTop:18,padding:20,borderRadius:23,borderWidth:1,borderColor:'#597344',backgroundColor:'#1B2B20'},driverOnboardingIcon:{width:58,height:58,alignSelf:'flex-end',alignItems:'center',justifyContent:'center',marginBottom:16,borderRadius:19,backgroundColor:c.primary},driverOnboardingStep:{color:c.accent,fontSize:11,fontWeight:'900',textAlign:'right'},driverOnboardingTitle:{color:c.text,fontSize:25,fontWeight:'900',textAlign:'right',marginTop:5},driverOnboardingCopy:{color:c.muted,fontSize:13,lineHeight:22,textAlign:'right',marginTop:8},driverOnboardingList:{gap:12,marginTop:21,padding:15,borderRadius:16,backgroundColor:c.surface,borderWidth:1,borderColor:c.border},driverOnboardingListItem:{color:c.text,fontSize:12,lineHeight:20,fontWeight:'700',textAlign:'right'},driverOnboardingButton:{minHeight:56,alignItems:'center',justifyContent:'center',marginTop:19,borderRadius:15,backgroundColor:c.primary},driverOnboardingButtonText:{color:c.background,fontSize:14,fontWeight:'900'},
+
+  driverHomePanel:{padding:0,borderWidth:0,borderRadius:0,backgroundColor:'transparent'},driverAvailabilityHero:{padding:16,marginBottom:14,borderRadius:21,borderWidth:1,borderColor:'#3C5843',backgroundColor:'#17251C'},driverAvailabilityHeroOn:{borderColor:c.primary,backgroundColor:'#1E3323'},driverAvailabilityHeroTop:{minHeight:60,flexDirection:'row-reverse',alignItems:'center',gap:12,marginBottom:13},driverAvailabilityHeroIcon:{width:46,height:46,alignItems:'center',justifyContent:'center',borderRadius:15,backgroundColor:c.raised},driverAvailabilityHeroIconOn:{backgroundColor:c.primary},driverAvailabilityHeroCopy:{flex:1,alignItems:'flex-end'},driverAvailabilityState:{color:c.text,fontSize:17,fontWeight:'900',textAlign:'right'},driverAvailabilityStateOn:{color:'#DFFFAD'},driverAvailabilityHint:{color:c.muted,fontSize:11,textAlign:'right',marginTop:4},driverAvailabilityAction:{minHeight:56,flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',gap:10,paddingHorizontal:14,borderRadius:14,backgroundColor:c.primary},driverAvailabilityActionOn:{backgroundColor:c.surface,borderWidth:1,borderColor:c.border},driverAvailabilityActionText:{color:c.background,fontSize:13,fontWeight:'900'},driverAvailabilityActionTextOn:{color:c.text},driverSwitchTrack:{width:48,height:28,justifyContent:'center',padding:3,borderRadius:15,backgroundColor:'#26362D'},driverSwitchTrackOn:{backgroundColor:'#486D34'},driverSwitchThumb:{width:22,height:22,alignSelf:'flex-start',borderRadius:11,backgroundColor:'#A6B5AA'},driverSwitchThumbOn:{alignSelf:'flex-end',backgroundColor:'#B7FF30'},driverAvailabilityOffline:{color:'#F0CC83',fontSize:10,textAlign:'right',marginTop:10},driverCommissionSummary:{minHeight:68,flexDirection:'row-reverse',alignItems:'center',gap:11,paddingHorizontal:13,marginBottom:13,borderRadius:16,borderWidth:1,borderColor:c.border,backgroundColor:c.surface},driverCommissionBadge:{width:40,height:40,borderRadius:13,alignItems:'center',justifyContent:'center',backgroundColor:c.raised},driverCommissionTitle:{color:c.text,fontSize:12,fontWeight:'900',textAlign:'right'},driverCommissionCopy:{color:c.muted,fontSize:10,lineHeight:16,textAlign:'right',marginTop:4},driverOrdersSkeleton:{minHeight:132,padding:15,marginBottom:15,borderRadius:16,borderWidth:1,borderColor:c.border,backgroundColor:c.surface,justifyContent:'center'},driverSkeletonTop:{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',marginBottom:15},driverSkeletonPill:{width:76,height:19,borderRadius:10,backgroundColor:c.raised},driverSkeletonLine:{height:10,width:'43%',borderRadius:6,backgroundColor:c.raised,marginBottom:10,alignSelf:'flex-end'},driverSkeletonButton:{width:116,height:36,alignSelf:'flex-start',marginTop:3,borderRadius:11,backgroundColor:c.raised},driverFooter:{flexDirection:'row-reverse',alignItems:'center',gap:3,borderTopWidth:1,borderTopColor:c.border,paddingTop:6,paddingBottom:6,paddingHorizontal:5,backgroundColor:c.background},driverFooterButton:{flex:1,minWidth:0,minHeight:58,alignItems:'center',justifyContent:'center',gap:1,borderRadius:14,paddingHorizontal:2},driverFooterButtonActive:{backgroundColor:c.primary},driverFooterIconWrap:{width:26,height:27,alignItems:'center',justifyContent:'center'},driverFooterLabel:{color:c.muted,fontSize:10,fontWeight:'700',textAlign:'center'},driverFooterLabelActive:{color:c.background,fontSize:10,fontWeight:'900'},driverTabBadge:{position:'absolute',right:-5,top:-4,minWidth:16,height:16,alignItems:'center',justifyContent:'center',paddingHorizontal:3,borderRadius:8,backgroundColor:c.danger,borderWidth:1,borderColor:c.background},driverTabBadgeText:{color:'#fff',fontSize:8,fontWeight:'900'},hidden:{display:'none'},notificationSummaryStandalone:{minHeight:57},notificationListStandalone:{borderTopWidth:0,marginTop:10,gap:9},notificationItemStandalone:{minHeight:88,paddingHorizontal:11,borderWidth:1,borderColor:c.border,borderRadius:14,backgroundColor:c.raised},notificationLoadMore:{minHeight:46,alignItems:'center',justifyContent:'center',marginTop:5,borderRadius:13,borderWidth:1,borderColor:c.border,backgroundColor:c.raised},notificationLoadMoreText:{color:c.primary,fontSize:12,fontWeight:'800'},
+};

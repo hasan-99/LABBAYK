@@ -50,6 +50,38 @@ self.addEventListener('activate', (event) => {
   })());
 });
 
+self.addEventListener('push', (event) => {
+  event.waitUntil((async () => {
+    let payload = {};
+    try { payload = event.data?.json() ?? {}; } catch { payload = { body: event.data?.text() ?? '' }; }
+    const orderId = typeof payload.orderId === 'string' ? payload.orderId : '';
+    await self.registration.showNotification(payload.title || 'تحديث جديد من لَبّيك', {
+      body: payload.body || 'في تحديث جديد على طلبك.',
+      icon: '/labbayk-delivery-logo.png',
+      badge: '/labbayk-delivery-logo.png',
+      tag: orderId ? `order-${orderId}` : 'labbayk-update',
+      data: { url: orderId ? `/?openOrder=${encodeURIComponent(orderId)}` : '/' },
+      dir: 'rtl',
+      lang: 'ar',
+    });
+  })());
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = new URL(event.notification.data?.url || '/', self.location.origin).href;
+  event.waitUntil((async () => {
+    const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of clients) {
+      if (new URL(client.url).origin === self.location.origin) {
+        await client.navigate(target);
+        return client.focus();
+      }
+    }
+    return self.clients.openWindow(target);
+  })());
+});
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   if (request.method !== 'GET') return;

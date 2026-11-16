@@ -36,6 +36,7 @@
 .auth-message.error::before { content: '!'; background: rgba(248, 113, 113, .2); color: #fecaca; }
 
 @media (max-width: 480px) {
-  .gate { padding: 16px; }
+  .gate { min-height: 100svh; place-items: start center; padding: 16px; }
   .gate-card { padding: 22px; border-radius: 18px; }
+  .auth-form input { font-size: 16px; }
 }

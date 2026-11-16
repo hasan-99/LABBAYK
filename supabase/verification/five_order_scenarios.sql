@@ -8,7 +8,6 @@ declare
   v_customer uuid;
   v_driver uuid;
   v_driver_review_status text;
-  v_zone uuid;
   v_address uuid;
   v_order uuid;
   v_retry_order uuid;
@@ -46,9 +45,6 @@ begin
     raise exception 'QA driver must be pending or approved before scenario tests';
   end if;
 
-  insert into public.service_zones(name,governorate,city,active,delivery_surcharge_minor,currency)
-  values('QA rollback zone','اختبار','اختبار',true,0,'SYP') returning id into v_zone;
-  update public.driver_profiles set service_zone_id=v_zone where user_id=v_driver;
   perform set_config('request.jwt.claims',jsonb_build_object('sub',v_admin::text,'role','authenticated')::text,true);
   perform set_config('request.jwt.claim.sub',v_admin::text,true);
   if v_driver_review_status='pending' then
@@ -56,9 +52,10 @@ begin
   end if;
   perform set_config('request.jwt.claims',jsonb_build_object('sub',v_driver::text,'role','authenticated')::text,true);
   perform set_config('request.jwt.claim.sub',v_driver::text,true);
+  update public.driver_profiles set service_zone_id=null where user_id=v_driver;
   update public.driver_profiles set is_online=true where user_id=v_driver;
   insert into public.addresses(user_id,zone_id,label,governorate,city,neighborhood,street,contact_phone,is_default)
-  values(v_customer,v_zone,'QA rollback','اختبار','اختبار','QA rollback zone','شارع التجربة','0990000000',false)
+  values(v_customer,null,'QA rollback','ريف دمشق','جرمانا','حارة الاختبار','شارع التجربة','0990000000',false)
   returning id into v_address;
 
   perform set_config('request.jwt.claims',jsonb_build_object('sub',v_admin::text,'role','authenticated')::text,true);
@@ -66,7 +63,6 @@ begin
   perform set_config('request.jwt.claim.role','authenticated',true);
   select coalesce(sum(amount_minor),0) into v_wallet_before
   from public.driver_wallet_ledger where driver_id=v_driver;
-  perform public.top_up_driver_wallet(v_driver,100000,'Temporary QA funding',gen_random_uuid());
 
   -- Scenario 1: quote approval, declined offer retry, under-budget purchase, COD, and 40% commission.
   perform set_config('request.jwt.claims',jsonb_build_object('sub',v_customer::text,'role','authenticated')::text,true);
@@ -75,6 +71,9 @@ begin
   v_retry_order := public.create_customer_order(
     (select idempotency_key from public.orders where id=v_order),v_address,'بقالة','طلب تجريبي ضمن السقف',100000);
   if v_order<>v_retry_order then raise exception 'Scenario 1 failed: identical retry was not idempotent'; end if;
+  if exists(select 1 from public.orders where id=v_order and zone_id is not null) then
+    raise exception 'Scenario 1 failed: new customer order still depends on a zone';
+  end if;
 
   perform set_config('request.jwt.claims',jsonb_build_object('sub',v_admin::text,'role','authenticated')::text,true);
   perform set_config('request.jwt.claim.sub',v_admin::text,true);
@@ -94,15 +93,18 @@ begin
   perform set_config('request.jwt.claims',jsonb_build_object('sub',v_admin::text,'role','authenticated')::text,true);
   perform set_config('request.jwt.claim.sub',v_admin::text,true);
   v_dispatch_count:=public.dispatch_order(v_order);
-  if v_dispatch_count<>1 then raise exception 'Scenario 1 failed: expected one driver offer'; end if;
-  select id into v_offer from public.order_offers where order_id=v_order and status='pending';
+  if v_dispatch_count<1 then raise exception 'Scenario 1 failed: expected at least one available driver offer'; end if;
+  if v_dispatch_count<>(select count(*) from public.order_offers where order_id=v_order and status='pending') then
+    raise exception 'Scenario 1 failed: not every eligible online driver received an offer';
+  end if;
+  select id into v_offer from public.order_offers where order_id=v_order and driver_id=v_driver and status='pending';
   perform set_config('request.jwt.claims',jsonb_build_object('sub',v_driver::text,'role','authenticated')::text,true);
   perform set_config('request.jwt.claim.sub',v_driver::text,true);
   perform public.decline_order_offer(v_offer);
   perform set_config('request.jwt.claims',jsonb_build_object('sub',v_admin::text,'role','authenticated')::text,true);
   perform set_config('request.jwt.claim.sub',v_admin::text,true);
-  if public.dispatch_order(v_order)<>1 then raise exception 'Scenario 1 failed: declined offer could not be reissued'; end if;
-  select id into v_offer from public.order_offers where order_id=v_order and status='pending';
+  if public.dispatch_order(v_order)<1 then raise exception 'Scenario 1 failed: declined offer could not be reissued'; end if;
+  select id into v_offer from public.order_offers where order_id=v_order and driver_id=v_driver and status='pending';
   perform set_config('request.jwt.claims',jsonb_build_object('sub',v_driver::text,'role','authenticated')::text,true);
   perform set_config('request.jwt.claim.sub',v_driver::text,true);
   perform public.accept_order_offer(v_offer);
@@ -126,7 +128,7 @@ begin
       and driver_earning_minor=12000 and cash_collected_minor=120000) then
     raise exception 'Scenario 1 failed: COD / 40 percent settlement arithmetic';
   end if;
-  if v_wallet_after<>v_wallet_before+92000 then raise exception 'Scenario 1 failed: driver wallet commission'; end if;
+  if v_wallet_after<>v_wallet_before-8000 then raise exception 'Scenario 1 failed: commission was not recorded as payable after delivery'; end if;
 
   -- Scenario 2: customer rejects the manual road-distance quote before dispatch.
   perform set_config('request.jwt.claims',jsonb_build_object('sub',v_customer::text,'role','authenticated')::text,true);
@@ -154,10 +156,13 @@ begin
   perform set_config('request.jwt.claims',jsonb_build_object('sub',v_admin::text,'role','authenticated')::text,true);
   perform set_config('request.jwt.claim.sub',v_admin::text,true);
   perform public.dispatch_order(v_order);
-  select id into v_offer from public.order_offers where order_id=v_order and status='pending';
+  select id into v_offer from public.order_offers where order_id=v_order and driver_id=v_driver and status='pending';
   perform set_config('request.jwt.claims',jsonb_build_object('sub',v_driver::text,'role','authenticated')::text,true);
   perform set_config('request.jwt.claim.sub',v_driver::text,true);
   perform public.accept_order_offer(v_offer);
+  if (select coalesce(sum(amount_minor),0) from public.driver_wallet_ledger where driver_id=v_driver)>=0 then
+    raise exception 'Scenario 3 failed: prior delivery did not leave commission payable';
+  end if;
   perform public.start_order_shopping(v_order);
   if public.record_order_purchase(v_order,120000)<>'awaiting_approval' then raise exception 'Scenario 3 failed: overspend did not require approval'; end if;
   perform set_config('request.jwt.claims',jsonb_build_object('sub',v_customer::text,'role','authenticated')::text,true);
@@ -180,7 +185,7 @@ begin
   perform set_config('request.jwt.claims',jsonb_build_object('sub',v_admin::text,'role','authenticated')::text,true);
   perform set_config('request.jwt.claim.sub',v_admin::text,true);
   perform public.dispatch_order(v_order);
-  select id into v_offer from public.order_offers where order_id=v_order and status='pending';
+  select id into v_offer from public.order_offers where order_id=v_order and driver_id=v_driver and status='pending';
   perform set_config('request.jwt.claims',jsonb_build_object('sub',v_driver::text,'role','authenticated')::text,true);
   perform set_config('request.jwt.claim.sub',v_driver::text,true);
   perform public.accept_order_offer(v_offer);
@@ -211,7 +216,7 @@ begin
   -- Scenario 5: settlement reversal is replay-safe, reconciliation excludes it, and disputes resolve.
   perform public.reverse_cash_settlement(v_settlement_id,'تصحيح اختبار مؤقت',v_reversal_key);
   v_wallet_after:=public.reverse_cash_settlement(v_settlement_id,'تصحيح اختبار مؤقت',v_reversal_key);
-  if v_wallet_after<>v_wallet_before+96000 then raise exception 'Scenario 5 failed: reversal replay changed the wallet'; end if;
+  if v_wallet_after<>v_wallet_before-4000 then raise exception 'Scenario 5 failed: reversal replay changed the commission due'; end if;
   if not exists(select 1 from public.orders where id=(select order_id from public.cash_settlements where id=v_settlement_id) and status='delivered') then
     raise exception 'Scenario 5 failed: reversed order was not reopened';
   end if;

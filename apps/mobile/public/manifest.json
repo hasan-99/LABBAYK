@@ -10,10 +10,10 @@
   "theme_color": "#0B1411",
   "icons": [
     {
-      "src": "/pwa-icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "src": "/labbayk-delivery-logo.png",
+      "sizes": "1312x1199",
+      "type": "image/png",
+      "purpose": "any"
     }
   ]
 }
