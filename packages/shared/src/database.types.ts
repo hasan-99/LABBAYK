@@ -928,6 +928,10 @@ export type Database = {
         }
         Returns: string
       }
+      admin_price_and_dispatch_order: {
+        Args: { p_order_id: string; p_fee_minor: number; p_driver_id: string | null; p_reason: string }
+        Returns: number
+      }
       decline_order_offer: { Args: { p_offer_id: string }; Returns: undefined }
       dispatch_order: { Args: { p_order_id: string }; Returns: number }
       get_driver_wallet_balances: {

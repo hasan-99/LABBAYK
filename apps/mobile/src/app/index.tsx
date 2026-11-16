@@ -147,8 +147,7 @@ type DriverActiveOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id
 const newRequestKey = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => { const value = Math.random() * 16 | 0; return (char === 'x' ? value : (value & 3 | 8)).toString(16); });
 type OrderImage = CustomerOrderImageDraft & { uri: string };
 type ProfileAvatarDraft = { uri: string; mimeType: string; extension: string };
-const FIXED_DELIVERY_FEE_SYP = 30_000;
-const orderStatus: Record<string, string> = { requested:'بانتظار سائق متاح', quoted:'بانتظار سائق متاح', searching:'عم نفتش على سائق', accepted:'قبل السائق الطلب', assigned:'تم تعيين سائق', shopping:'عم نجهز طلبك', awaiting_approval:'بانتظار موافقتك', purchased:'تم الشراء', delivering:'بالطريق لعندك', delivered:'تم التوصيل', settled:'تمت التسوية', disputed:'قيد مراجعة الدعم', cancelled:'ملغي' };
+const orderStatus: Record<string, string> = { requested:'بانتظار تحديد أجرة التوصيل', quoted:'بانتظار سائق متاح', searching:'عم نفتش على سائق', accepted:'قبل السائق الطلب', assigned:'تم تعيين سائق', shopping:'عم نجهز طلبك', awaiting_approval:'بانتظار موافقتك', purchased:'تم الشراء', delivering:'بالطريق لعندك', delivered:'تم التوصيل', settled:'تمت التسوية', disputed:'قيد مراجعة الدعم', cancelled:'ملغي' };
 
 function SkeletonBlock({ width = '68%', height = 11, style }: { width?: number | `${number}%`; height?: number; style?: object }) {
   const { colors: c } = useMobileTheme();
@@ -1143,7 +1142,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     }
     setSending(false);
     await clearCustomerOrderDraft(userId);
-    requestKey.current = newRequestKey(); setRequest(''); setCategory(''); setBudgetCeiling(''); setOrderImages([]); setPendingOrderId(''); setRequestMessage('وصلنا طلبك! أجرة التوصيل ٣٠٬٠٠٠ ل.س، وعم نبعت العرض للسائقين المتاحين.'); navigate('orders');
+    requestKey.current = newRequestKey(); setRequest(''); setCategory(''); setBudgetCeiling(''); setOrderImages([]); setPendingOrderId(''); setRequestMessage('وصلنا طلبك! الإدارة رح تحدد أجرة التوصيل وتتابع إسناده لسائق.'); navigate('orders');
   };
   const pickOrderImages = async () => {
     if (sending) return;
@@ -1229,8 +1228,8 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
           {orderImages.length < 3 && <Pressable onPress={() => void pickOrderImages()} disabled={sending} style={s.addImageCard} accessibilityRole="button"><View style={s.addImageIcon}><Text style={s.attachmentIcon}>＋</Text></View><View style={s.addImageCopy}><Text style={s.addImageTitle}>إضافة صورة</Text><Text style={s.addImageHint}>من معرض الصور · JPEG أو PNG</Text></View><Text style={s.addImageArrow}>←</Text></Pressable>}
         </View>
       </View>
-      <View style={s.note}><Text style={s.noteIcon}>ⓘ</Text><Text style={s.noteText}>أجرة التوصيل ثابتة {numberFormatter.format(FIXED_DELIVERY_FEE_SYP)} ل.س، وبتظهر للسائق قبل ما يقبل الطلب. الدفع كاش عند الاستلام.</Text></View>
-      <Pressable disabled={sending || !draftReady || !online} onPress={() => { if (!hasAddress) { navigate('addresses'); return; } void submitOrder(); }} style={[s.submit, (sending || !draftReady || !online)&&s.disabled]} accessibilityRole="button"><Text style={s.submitText}>{!hasAddress?'إضافة عنوان تسليم':!online?'بانتظار الاتصال':sending?'عم نرسل الطلب والصور…':pendingOrderId?'إكمال رفع الصور وإرسال الطلب':'إرسال الطلب · توصيل ' + numberFormatter.format(FIXED_DELIVERY_FEE_SYP) + ' ل.س'} <Text style={s.submitArrow}>←</Text></Text></Pressable>
+      <View style={s.note}><Text style={s.noteIcon}>ⓘ</Text><Text style={s.noteText}>بعد إرسال الطلب، الإدارة بتحدد أجرة التوصيل وبتعيّن سائق أو بتبعته للسائقين المتاحين. الدفع كاش عند الاستلام.</Text></View>
+      <Pressable disabled={sending || !draftReady || !online} onPress={() => { if (!hasAddress) { navigate('addresses'); return; } void submitOrder(); }} style={[s.submit, (sending || !draftReady || !online)&&s.disabled]} accessibilityRole="button"><Text style={s.submitText}>{!hasAddress?'إضافة عنوان تسليم':!online?'بانتظار الاتصال':sending?'عم نرسل الطلب والصور…':pendingOrderId?'إكمال رفع الصور وإرسال الطلب':'إرسال الطلب'} <Text style={s.submitArrow}>←</Text></Text></Pressable>
       {requestMessage ? <Text accessibilityRole="alert" style={s.requestMessage}>{requestMessage}</Text> : null}
       </> : tab === 'orders' ? <View style={s.orderPage}><StaggeredSections transitionKey={`${tab}-orders`}>
         <View style={[s.ordersIntro,s.ordersIntroCard]}>
@@ -1279,7 +1278,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
           <View style={s.orderFacts}>
             <View style={s.orderFact}>
               <Text style={s.orderFactLabel}>أجرة التوصيل</Text>
-              <Text style={s.orderFactValue}>{ordersAreStale ? 'يظهر عند الاتصال' : numberFormatter.format(order.delivery_fee_minor) + ' ل.س'}</Text>
+              <Text style={s.orderFactValue}>{ordersAreStale ? 'يظهر عند الاتصال' : order.delivery_quote_set_at ? numberFormatter.format(order.delivery_fee_minor) + ' ل.س' : 'بانتظار تحديدها من الإدارة'}</Text>
             </View>
             <View style={s.orderFact}>
               <Text style={s.orderFactLabel}>ميزانية المشتريات</Text>
