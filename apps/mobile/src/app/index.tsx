@@ -399,7 +399,7 @@ function AddressBook({ userId, onBack, backLabel, onAddressSaved }: { userId: st
 const notificationKind = (title: string) => /عرض|توصيل جديد/.test(title) ? 'offer' : /تسوية|عمولة|رصيد|محفظة/.test(title) ? 'money' : 'update';
 const notificationIcons = { offer: { ios: 'bolt.fill', android: 'bolt', web: 'bolt' }, money: { ios: 'banknote.fill', android: 'payments', web: 'payments' }, update: { ios: 'cube.fill', android: 'deployed_code', web: 'deployed_code' } } as const;
 const notificationKindLabels = { offer: 'عرض توصيل', money: 'تسوية', update: 'تحديث على الطلب' } as const;
-const notificationFilters = [{ key: 'all', label: 'الكل' }, { key: 'offer', label: 'عروض جديدة' }, { key: 'update', label: 'تحديثات' }, { key: 'money', label: 'التسويات' }] as const;
+const notificationFilters = [{ key: 'all', label: 'الكل' }, { key: 'unread', label: 'غير مقروءة' }] as const;
 const notificationTimeFormatter = new Intl.DateTimeFormat('ar-SY', { hour: 'numeric', minute: '2-digit' });
 const notificationDateFormatter = new Intl.DateTimeFormat('ar-SY', { day: 'numeric', month: 'long' });
 function formatNotificationTime(iso: string) {
@@ -416,7 +416,7 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
   const online = useInternetAvailable();
   type Notification = Pick<Database['public']['Tables']['notifications']['Row'],'id'|'title'|'body'|'created_at'|'read_at'|'order_id'>
   const [items,setItems]=useState<Notification[]>([]); const [message,setMessage]=useToastMessage(); const [loadingState,setLoadingState]=useState(true); const [expanded,setExpanded]=useState(standalone); const [loadingMore,setLoadingMore]=useState(false); const [hasMore,setHasMore]=useState(false); const [unreadCount,setUnreadCount]=useState(0)
-  const [filter,setFilter]=useState<'all'|'offer'|'update'|'money'>('all'); const [sheet,setSheet]=useState<Notification|null>(null); const [markingAllRead,setMarkingAllRead]=useState(false); const openOrderRef=useRef(onOpenOrder)
+  const [filter,setFilter]=useState<'all'|'unread'>('all'); const [sheet,setSheet]=useState<Notification|null>(null); const [markingAllRead,setMarkingAllRead]=useState(false); const openOrderRef=useRef(onOpenOrder)
   useEffect(()=>{openOrderRef.current=onOpenOrder},[onOpenOrder])
   useEffect(()=>{
     let subscription:{remove:()=>void}|undefined
@@ -488,7 +488,7 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
   }
   return <View style={[s.notificationCard,standalone&&s.notificationCardStandalone]}>
     {standalone&&<View style={s.nChips}>
-      {notificationFilters.map(f=>{const count=items.filter(i=>!i.read_at&&(f.key==='all'||notificationKind(i.title)===f.key)).length;const on=filter===f.key;return <Pressable key={f.key} onPress={()=>setFilter(f.key)} accessibilityRole="button" accessibilityState={{selected:on}} style={[s.nChip,on&&s.nChipOn]}><Text style={[s.nChipText,on&&s.nChipTextOn]}>{f.label}</Text>{!loading&&<Text style={[s.nChipText,on&&s.nChipTextOn]}>{count}</Text>}</Pressable>})}
+      {notificationFilters.map(f=>{const count=f.key==='all'?items.length:items.filter(i=>!i.read_at).length;const on=filter===f.key;return <Pressable key={f.key} onPress={()=>setFilter(f.key)} accessibilityRole="button" accessibilityState={{selected:on}} style={[s.nChip,on&&s.nChipOn]}><Text style={[s.nChipText,on&&s.nChipTextOn]}>{f.label}</Text>{!loading&&<Text style={[s.nChipText,on&&s.nChipTextOn]}>{count}</Text>}</Pressable>})}
       {unreadCount>0&&<Pressable onPress={()=>void markAllRead()} disabled={markingAllRead||!online} accessibilityRole="button" accessibilityLabel="تحديد كل التنبيهات كمقروءة" style={[s.nChip,s.nChipAction,(markingAllRead||!online)&&{opacity:0.6}]}><SymbolView name={{ios:'checkmark.circle.fill',android:'mark_email_read',web:'mark_email_read'}} tintColor={c.primary} size={16}/><Text style={s.nChipActionText}>{markingAllRead?'لحظة…':'قراءة الكل'}</Text></Pressable>}
     </View>}
     {!standalone&&<View style={s.notificationHeader}>
@@ -505,8 +505,8 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
     {message?<Text accessibilityRole="alert" style={s.formMessage}>{message}</Text>:null}
     {false?<Pressable onPress={()=>void markAllRead()} disabled={markingAllRead||!online} accessibilityRole="button" style={[s.notificationMarkAll,s.notificationMarkAllStandalone,(markingAllRead||!online)&&{opacity:0.6}]}><SymbolView name={{ios:'checkmark.circle.fill',android:'mark_email_read',web:'mark_email_read'}} tintColor="#17210F" size={18}/><Text style={[s.notificationMarkAllText,s.notificationMarkAllStandaloneText]}>{markingAllRead?'عم نحدّث التنبيهات…':'تحديد الكل كمقروء'}</Text></Pressable>:null}
     {(expanded||standalone) && <View style={[s.notificationList,standalone&&s.notificationListStandalone]}>
-      {standalone&&!loading&&items.length>0&&!items.some(i=>filter==='all'||notificationKind(i.title)===filter)&&<Text style={s.notificationEmpty}>ما في تنبيهات بهالتصنيف.</Text>}
-      {loading?<NotificationsSkeleton standalone={standalone}/>:items.length?(standalone?items.filter(i=>filter==='all'||notificationKind(i.title)===filter):items).map(item=>standalone?<Pressable key={item.id} onPress={()=>{setSheet(item);if(!item.read_at)void markRead(item.id)}} accessibilityRole="button" accessibilityLabel={item.title+', '+item.body+(item.read_at?'، مقروء':'، جديد')} style={[s.nCard,!item.read_at?s.nCardUnread:s.nCardRead]}>
+      {standalone&&!loading&&items.length>0&&!items.some(i=>filter==='all'||!i.read_at)&&<Text style={s.notificationEmpty}>كل تنبيهاتك مقروءة.</Text>}
+      {loading?<NotificationsSkeleton standalone={standalone}/>:items.length?(standalone?items.filter(i=>filter==='all'||!i.read_at):items).map(item=>standalone?<Pressable key={item.id} onPress={()=>{setSheet(item);if(!item.read_at)void markRead(item.id)}} accessibilityRole="button" accessibilityLabel={item.title+', '+item.body+(item.read_at?'، مقروء':'، جديد')} style={[s.nCard,!item.read_at?s.nCardUnread:s.nCardRead]}>
         {!item.read_at&&<View style={s.nAccent}/>}
         <View style={s.nTop}>
           <View style={[s.nTile,!item.read_at&&s.nTileUnread]}><SymbolView name={notificationIcons[notificationKind(item.title)]} tintColor={c.primary} size={24}/></View>
