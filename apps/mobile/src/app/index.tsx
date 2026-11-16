@@ -370,6 +370,7 @@ function AddressBook({ userId, onBack, backLabel, onAddressSaved }: { userId: st
 
 function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = false, onUnreadCountChange }: { userId: string; refreshKey?: number; onOpenOrder?: (orderId: string) => void; standalone?: boolean; onUnreadCountChange?: (count: number) => void }) {
   const { colors: c, styles: s } = useMobileTheme();
+  const network = useNetworkState();
   const online = useInternetAvailable();
   type Notification = Pick<Database['public']['Tables']['notifications']['Row'],'id'|'title'|'body'|'created_at'|'read_at'|'order_id'>
   const [items,setItems]=useState<Notification[]>([]); const [message,setMessage]=useToastMessage(); const [loadingState,setLoadingState]=useState(true); const [expanded,setExpanded]=useState(standalone); const [loadingMore,setLoadingMore]=useState(false); const [hasMore,setHasMore]=useState(false); const [unreadCount,setUnreadCount]=useState(0)
@@ -392,7 +393,8 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
     })
     return()=>subscription?.remove()
   },[userId])
-  const loading=online&&loadingState;
+  const networkResolved=typeof network.isConnected==='boolean';
+  const loading=loadingState&&(online||!networkResolved);
   const refresh=useCallback(async()=>{
     if(!supabase || !online)return
     const pageSize=standalone?20:12
@@ -409,6 +411,7 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
   useEffect(() => { refreshRef.current = refresh; }, [refresh]);
   useEffect(() => { if (refreshKey > 0) void refreshRef.current(); }, [refreshKey]);
   useEffect(() => {
+    if (online) setLoadingState(true);
     void refreshRef.current();
     if (!supabase || !online) return;
     // Unique per subscription so route switches or reconnects cannot reuse a channel during asynchronous removal.
@@ -468,7 +471,7 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
           <Text style={[s.notificationItemBody,standalone&&s.notificationItemBodyStandalone]}>{item.body}</Text>
           <Text style={[s.notificationItemMeta,standalone&&s.notificationItemMetaStandalone]}>{item.order_id?'طلب #'+item.order_id.slice(0,8)+' · ':''}{shortDateTimeFormatter.format(new Date(item.created_at))}</Text>
         </View>
-      </Pressable>):<Text style={s.notificationEmpty}>ما في تنبيهات جديدة.</Text>}
+      </Pressable>):!online?<Text style={s.notificationEmpty}>اتصل بالإنترنت حتى نحمّل التنبيهات.</Text>:message?<Text style={s.notificationEmpty}>ما قدرنا نحمّل التنبيهات. جرّب تحديث الصفحة.</Text>:<Text style={s.notificationEmpty}>ما في تنبيهات جديدة.</Text>}
       {standalone&&hasMore&&<Pressable onPress={()=>void loadMore()} disabled={loadingMore||!online} style={s.notificationLoadMore} accessibilityRole="button"><Text style={s.notificationLoadMoreText}>{loadingMore?'عم نحمّل…':'تحميل تنبيهات أقدم'}</Text></Pressable>}
     </View>}
   </View>
@@ -493,56 +496,81 @@ function SupportIssueForm({orderId,status,disabled=false}:{orderId:string;status
   return <View style={{marginTop:10}}>{submitted?<Text accessibilityRole="status" style={s.offerExpiry}>{message}</Text>:!expanded?<Pressable onPress={()=>setExpanded(true)} accessibilityRole="button" style={{minHeight:44,alignSelf:"flex-start",justifyContent:"center",paddingVertical:8}}><Text style={s.orderFee}>في مشكلة بهالطلب؟ تواصل مع الدعم</Text></Pressable>:<View style={s.dropoff}><Text style={s.dropoffTitle}>إرسال بلاغ للدعم</Text><View style={s.zoneList}>{['مشكلة بالمشتريات','تأخير أو مشكلة بالتوصيل','مبلغ أو تحصيل غير صحيح','مشكلة ثانية'].map(item=><Pressable key={item} onPress={()=>setReason(item)} accessibilityRole="button" accessibilityState={{selected:reason===item}} style={[s.zoneOption,reason===item&&s.zoneSelected]}><Text style={[s.zoneName,reason===item&&s.zoneNameSelected]}>{item}</Text></Pressable>)}</View><TextInput value={details} onChangeText={setDetails} multiline textAlignVertical="top" maxLength={2000} placeholder="اشرح المشكلة لفريق الدعم" placeholderTextColor="#839188" style={[s.field,{minHeight:85}]} accessibilityLabel="تفاصيل المشكلة"/><Pressable disabled={busy || !online || disabled} onPress={()=>void submit()} style={[s.acceptOffer,(busy || !online || disabled)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>{busy?'عم نرسل البلاغ…':online && !disabled?'إرسال البلاغ':'بانتظار الاتصال'}</Text></Pressable><Pressable onPress={()=>{setExpanded(false);setMessage('')}} accessibilityRole="button" style={{minHeight:44,alignSelf:"flex-start",justifyContent:"center",paddingVertical:8}}><Text style={s.offerExpiry}>إغلاق</Text></Pressable>{message?<Text accessibilityRole="alert" style={s.formMessage}>{message}</Text>:null}</View>}</View>
 }
 
+function DriverOperationsSkeleton({ screen }: { screen: 'home' | 'orders' }) {
+  const { styles: s } = useMobileTheme();
+  if (screen === 'home') return <View accessibilityRole="progressbar" accessibilityLabel="تحميل الصفحة الرئيسية للسائق" style={{ gap: 12, marginTop: 8 }}>
+    <View style={[s.driverOrdersSkeleton, { minHeight: 142, marginBottom: 0 }]}><View style={s.driverSkeletonTop}><View style={s.driverSkeletonPill}/><View style={s.driverSkeletonLine}/></View><View style={[s.driverSkeletonLine,{width:'88%'}]}/><View style={[s.driverSkeletonLine,{width:'61%'}]}/><View style={[s.driverSkeletonButton,{alignSelf:'flex-end',width:'100%'}]}/></View>
+    <View style={s.driverStatsRow}><View style={[s.driverStat,{minHeight:68}]}><SkeletonBlock width="52%" height={13}/></View><View style={[s.driverStat,{minHeight:68}]}><SkeletonBlock width="52%" height={13}/></View></View>
+    <View style={[s.driverOrdersSkeleton,{minHeight:72,marginBottom:0}]}><View style={[s.driverSkeletonLine,{width:'42%'}]}/><View style={[s.driverSkeletonLine,{width:'72%',marginBottom:0}]}/></View>
+  </View>;
+  return <View accessibilityRole="progressbar" accessibilityLabel="تحميل الطلبات" style={{ gap: 12, marginTop: 8 }}>
+    <View style={s.driverOrderTabs}>{[0,1].map((item)=><View key={item} style={[s.driverOrderTab,{minHeight:70}]}><SkeletonBlock width={36} height={36} style={{alignSelf:'auto',borderRadius:12}}/><View style={{flex:1,gap:8}}><SkeletonBlock width="62%" height={12}/><SkeletonBlock width="42%" height={10}/></View><SkeletonBlock width={20} height={16} style={{alignSelf:'auto'}}/></View>)}</View>
+    {[0,1].map((item)=><View key={item} style={[s.driverOrdersSkeleton,{minHeight:174,marginBottom:0}]}><View style={s.driverSkeletonTop}><View style={s.driverSkeletonPill}/><View style={s.driverSkeletonLine}/></View><View style={[s.driverSkeletonLine,{width:'86%'}]}/><View style={[s.driverSkeletonLine,{width:'68%'}]}/><View style={[s.driverSkeletonLine,{width:'76%'}]}/><View style={[s.driverSkeletonButton,{alignSelf:'flex-end'}]}/></View>)}
+  </View>;
+}
+
 function DriverOperations({ userId, screen = 'orders', profileComplete = true, onCompleteProfile = () => {}, onOpenOrders = () => {} }: { userId: string; screen?: 'home' | 'orders'; profileComplete?: boolean; onCompleteProfile?: () => void; onOpenOrders?: () => void }) {
   const { colors: c, styles: s } = useMobileTheme();
   const online = useInternetAvailable();
   const [profile, setProfile] = useState<{ is_online: boolean }>({ is_online: false });
   const [offers, setOffers] = useState<DriverOfferCard[]>([]);
   const [activeOrders, setActiveOrders] = useState<DriverActiveOrder[]>([]);
+  const [offersCount, setOffersCount] = useState(0);
+  const [activeOrdersCount, setActiveOrdersCount] = useState(0);
   const [orderSection, setOrderSection] = useState<'offers' | 'active'>('offers');
   const [operationsAreStale, setOperationsAreStale] = useState(false);
   const [ordersSyncedAt, setOrdersSyncedAt] = useState('');
   const [purchaseDrafts, setPurchaseDrafts] = useState<Record<string,string>>({});
   const [deliveryDrafts, setDeliveryDrafts] = useState<Record<string,string>>({});
   const [loading, setLoading] = useState(true);
-  const [showInitialSkeleton, setShowInitialSkeleton] = useState(false);
   const [busy, setBusy] = useState(false);
   const [, setMessage] = useToastMessage();
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
   const [walletUnavailable, setWalletUnavailable] = useState(false);
+  const [loadedScreen, setLoadedScreen] = useState<'home' | 'orders' | null>(null);
+  const pageLoading = loading || loadedScreen !== screen;
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const channelTopic = useRef(`driver-orders-${userId}-${newRequestKey()}`);
-  useEffect(() => {
-    if (!loading) { setShowInitialSkeleton(false); return; }
-    const timer = setTimeout(() => setShowInitialSkeleton(true), 350);
-    return () => clearTimeout(timer);
-  }, [loading]);
   const refresh = useCallback(async () => {
-    if (!supabase) { setLoading(false); return; }
+    if (!supabase) { setOperationsAreStale(true); setLoadedScreen(screen); setLoading(false); return; }
     try {
     const cachedSnapshot = await loadDriverOrdersSnapshot(userId);
     if (cachedSnapshot) {
       setActiveOrders(cachedSnapshot.orders);
+      setActiveOrdersCount(cachedSnapshot.orders.length);
       setOrdersSyncedAt(cachedSnapshot.syncedAt);
       // Keep cached orders visible while refreshing, but don't flash the offline
       // warning during a normal online refresh. Set it only if sync fails below.
       if (!online) setOperationsAreStale(true);
-      setLoading(false);
     }
     if (!online) {
       if (!cachedSnapshot) setActiveOrders([]);
       setOperationsAreStale(true); setLoading(false); return;
     }
-    const [driver, offerRows, assigned, wallet] = await Promise.all([
+    const [driver, wallet] = await Promise.all([
       supabase.from('driver_profiles').select('is_online').eq('user_id', userId).single(),
-      supabase.from('order_offers').select('id,order_id,expires_at').eq('driver_id', userId).eq('status', 'pending').gt('expires_at', new Date().toISOString()).order('expires_at'),
-      supabase.from('orders').select('id,status,category,request_text,delivery_fee_minor,budget_ceiling_minor,purchase_amount_minor,purchase_approved_at,created_at,address_id').eq('driver_id', userId).neq('status', 'delivered').neq('status', 'settled').neq('status', 'cancelled').order('created_at', { ascending: false }),
       supabase.rpc('get_driver_wallet_balances'),
     ]);
     const { data: walletRows, error: walletError } = wallet;
     if (!walletError) { setWalletBalance(walletRows?.find((row) => row.driver_id === userId)?.balance_minor ?? 0); setWalletUnavailable(false); }
     else { setWalletBalance(null); setWalletUnavailable(true); }
     if (driver.data) setProfile(driver.data);
+    if (screen === 'home') {
+      const [offerCountResult, activeCountResult] = await Promise.all([
+        supabase.from('order_offers').select('id', { count: 'exact', head: true }).eq('driver_id', userId).eq('status', 'pending').gt('expires_at', new Date().toISOString()),
+        supabase.from('orders').select('id', { count: 'exact', head: true }).eq('driver_id', userId).neq('status', 'delivered').neq('status', 'settled').neq('status', 'cancelled'),
+      ]);
+      if (!offerCountResult.error) setOffersCount(offerCountResult.count ?? 0);
+      if (!activeCountResult.error) setActiveOrdersCount(activeCountResult.count ?? 0);
+      const syncFailed = !!driver.error || !!offerCountResult.error || !!activeCountResult.error;
+      setOperationsAreStale(syncFailed);
+      if (!syncFailed) setMessage('');
+      return;
+    }
+    const [offerRows, assigned] = await Promise.all([
+      supabase.from('order_offers').select('id,order_id,expires_at').eq('driver_id', userId).eq('status', 'pending').gt('expires_at', new Date().toISOString()).order('expires_at'),
+      supabase.from('orders').select('id,status,category,request_text,delivery_fee_minor,budget_ceiling_minor,purchase_amount_minor,purchase_approved_at,created_at,address_id').eq('driver_id', userId).neq('status', 'delivered').neq('status', 'settled').neq('status', 'cancelled').order('created_at', { ascending: false }),
+    ]);
     const [addressResult, offerOrderResult] = await Promise.all([
       assigned.data?.length
         ? supabase.from('addresses').select('id,label,street,city,neighborhood,contact_phone,building,landmark').in('id', assigned.data.map((order) => order.address_id).filter((id): id is string => id !== null))
@@ -568,6 +596,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     } else currentOrders = [];
     if (currentOrders) {
       setActiveOrders(currentOrders);
+      setActiveOrdersCount(currentOrders.length);
       void saveDriverOrdersSnapshot(userId, currentOrders).then((snapshot) => setOrdersSyncedAt(snapshot.syncedAt)).catch(() => {});
     }
     if (offerRows.data?.length) {
@@ -576,8 +605,9 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
         const orderMap = new Map((orderRows ?? []).map((order) => [order.id, order]));
         const addressMap = new Map((offerAddressResult?.data ?? []).map((address) => [address.id, address]));
         setOffers(offerRows.data.flatMap((offer) => { const order = orderMap.get(offer.order_id); return order ? [{ id: offer.id, expires_at: offer.expires_at, order: { ...order, address: order.address_id ? addressMap.get(order.address_id) ?? null : null } }] : []; }));
+        setOffersCount(offerRows.data.length);
       }
-    } else if (!offerRows.error) setOffers([]);
+    } else if (!offerRows.error) { setOffers([]); setOffersCount(0); }
     const syncFailed = !!driver.error || !!offerRows.error || !!assigned.error || addressError || !!offerOrderResult?.error;
     setOperationsAreStale(syncFailed);
     if (!syncFailed) setMessage('');
@@ -585,16 +615,17 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     } catch {
       setOperationsAreStale(true);
     } finally {
+      setLoadedScreen(screen);
       setLoading(false);
     }
-  }, [online, userId, setMessage]);
+  }, [online, screen, userId, setMessage]);
   const scheduleRefresh = useCallback(() => {
     if (refreshTimer.current) clearTimeout(refreshTimer.current);
     refreshTimer.current = setTimeout(() => { refreshTimer.current = null; void refresh(); }, 250);
   }, [refresh]);
   useEffect(() => () => { if (refreshTimer.current) clearTimeout(refreshTimer.current); }, []);
   // Initial load and realtime refresh are server synchronization, not derived render state.
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { setLoading(true); void refresh(); }, [refresh]);
   useEffect(() => {
     if (!supabase || !online) return;
     const channel = supabase.channel(channelTopic.current)
@@ -679,19 +710,19 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
   };
   return <View style={[s.driverPanel,screen==='home'&&s.driverHomePanel]}><View style={s.driverPanelTop}><View><Text style={s.driverApplyTitle}>{screen==='home'?'استقبال الطلبات':'قائمة التوصيل'}</Text><Text style={s.driverApplyCopy}>{screen==='home'?'بدّل حالتك من هون لتبدأ أو توقف استقبال العروض.':'شوف العروض الجديدة أو تابع طلباتك النشطة.'}</Text></View><Pressable disabled={busy} onPress={() => void refresh()} style={s.driverRefresh} accessibilityRole="button" accessibilityLabel="تحديث طلبات السائق"><Text style={s.driverRefreshGlyph}>↻</Text></Pressable></View>
       {operationsAreStale && <Text style={s.driverAvailabilityOffline}>{ordersSyncedAt ? 'طلبات محفوظة وقديمة · آخر مزامنة ' + shortDateTimeFormatter.format(new Date(ordersSyncedAt)) + ' · لا تظهر عناوين العملاء أو المبالغ دون اتصال.' : 'تعذرت مزامنة الخادم. الإجراءات والعروض تحتاج اتصالاً.'}</Text>}
-    {loading ? showInitialSkeleton ? <View accessibilityRole="progressbar" accessibilityLabel="مزامنة بيانات السائق" style={{gap:12,marginTop:8}}><View style={[s.driverOrdersSkeleton,{minHeight:screen==='home'?142:106,marginBottom:0}]}><View style={s.driverSkeletonTop}><View style={s.driverSkeletonPill}/><View style={s.driverSkeletonLine}/></View><View style={[s.driverSkeletonLine,{width:'88%'}]}/><View style={[s.driverSkeletonLine,{width:'61%'}]}/></View><View style={s.driverStatsRow}><View style={[s.driverStat,{minHeight:68}]}><View style={[s.driverSkeletonLine,{width:'65%',marginBottom:0}]}/></View><View style={[s.driverStat,{minHeight:68}]}><View style={[s.driverSkeletonLine,{width:'65%',marginBottom:0}]}/></View></View>{screen==='home'&&<View style={[s.driverOrdersSkeleton,{minHeight:72,marginBottom:0}]}><View style={[s.driverSkeletonLine,{width:'42%'}]}/><View style={[s.driverSkeletonLine,{width:'72%',marginBottom:0}]}/></View>}</View> : <View style={{minHeight:screen==='home'?340:250}}/> : <StaggeredSections transitionKey={`${screen}-${loading ? 'loading' : 'ready'}`}><>
+    {pageLoading ? <DriverOperationsSkeleton screen={screen}/> : <StaggeredSections transitionKey={`${screen}-ready`}><>
     {screen==='home'&&<View style={[s.driverAvailabilityHero,profile.is_online&&s.driverAvailabilityHeroOn]}>
       <View style={s.driverAvailabilityHeroTop}><View style={[s.driverAvailabilityHeroIcon,profile.is_online&&s.driverAvailabilityHeroIconOn]}><SymbolView name={{ios:profile.is_online?'checkmark':'pause.fill',android:profile.is_online?'check':'pause',web:profile.is_online?'check':'pause'}} tintColor={profile.is_online?'#0B1411':c.muted} size={22}/></View><View style={s.driverAvailabilityHeroCopy}><Text style={[s.driverAvailabilityState,profile.is_online&&s.driverAvailabilityStateOn]}>{profile.is_online?'متاح لاستقبال الطلبات':'متوقف عن استقبال الطلبات'}</Text><Text style={s.driverAvailabilityHint}>{profile.is_online?'العروض الجديدة توصلك فوراً':'فعّل التوفر وقت ما تكون جاهز للشغل'}</Text></View></View>
       {profileComplete&&<Pressable disabled={busy||!online||operationsAreStale} onPress={()=>void setAvailability(!profile.is_online)} style={[s.driverAvailabilityAction,profile.is_online&&s.driverAvailabilityActionOn,(busy||!online||operationsAreStale)&&s.disabled]} accessibilityRole="switch" accessibilityLabel={profile.is_online?'إيقاف استقبال الطلبات':'بدء استقبال الطلبات'} accessibilityState={{checked:profile.is_online,disabled:busy||!online||operationsAreStale}} aria-checked={profile.is_online}><Text style={[s.driverAvailabilityActionText,profile.is_online&&s.driverAvailabilityActionTextOn]}>{busy?'عم نحدّث حالتك…':profile.is_online?'إيقاف الاستقبال':'تفعيل استقبال الطلبات'}</Text><View style={[s.driverSwitchTrack,profile.is_online&&s.driverSwitchTrackOn]}><View style={[s.driverSwitchThumb,profile.is_online&&s.driverSwitchThumbOn]}/></View></Pressable>}
       {operationsAreStale&&<Text style={s.driverAvailabilityOffline}>الاتصال بالخادم مطلوب لتغيير حالة التوفر.</Text>}
     </View>}
-    {screen==='home'&&<View style={s.driverStatsRow}><View style={s.driverStat}><Text style={s.driverStatValue}>{offers.length}</Text><Text style={s.driverStatLabel}>عروض جديدة</Text></View><View style={s.driverStat}><Text style={s.driverStatValue}>{activeOrders.length}</Text><Text style={s.driverStatLabel}>طلبات نشطة</Text></View></View>}
+    {screen==='home'&&<View style={s.driverStatsRow}><View style={s.driverStat}><Text style={s.driverStatValue}>{offersCount}</Text><Text style={s.driverStatLabel}>عروض جديدة</Text></View><View style={s.driverStat}><Text style={s.driverStatValue}>{activeOrdersCount}</Text><Text style={s.driverStatLabel}>طلبات نشطة</Text></View></View>}
     {screen === 'home' && <View style={s.driverCommissionSummary}><View style={s.driverCommissionBadge}><SymbolView name={{ios:'banknote.fill',android:'payments',web:'payments'}} tintColor={c.primary} size={18}/></View><View style={{flex:1,alignItems:'flex-end'}}><Text style={s.driverCommissionTitle}>العمولة المستحقة</Text><Text style={s.driverCommissionCopy}>{walletUnavailable?'تعذر تحميل رصيد العمولة. أعد المحاولة.':walletBalance === null ? online ? 'عم نتحقق من رصيدك.' : 'الرصيد يظهر عند الاتصال.' : walletBalance < 0 ? `عليك ${numberFormatter.format(Math.abs(walletBalance))} ل.س بعد تسوية الطلبات.` : walletBalance > 0 ? `إلك رصيد ${numberFormatter.format(walletBalance)} ل.س.` : 'ما عليك عمولات مستحقة حالياً.'}</Text></View></View>}
     {screen === 'home' && <Pressable onPress={onOpenOrders} style={s.driverOrdersShortcut} accessibilityRole="button"><View style={s.driverShortcutIcon}><SymbolView name={{ ios: 'shippingbox.fill', android: 'local_shipping', web: 'local_shipping' }} tintColor={c.primary} size={20}/></View><View style={{flex:1,alignItems:'flex-start'}}><Text style={s.driverShortcutTitle}>طلباتك وعروضك</Text><Text style={s.driverShortcutCopy}>افتح قائمة المتابعة وقبول الطلبات</Text></View><Text style={s.appearanceArrow}>←</Text></Pressable>}
     {screen === 'orders' && <>
       <View style={s.driverOrderTabs}>
-        <Pressable onPress={() => setOrderSection('offers')} accessibilityRole="button" accessibilityState={{ selected: orderSection === 'offers' }} style={[s.driverOrderTab, orderSection === 'offers' && s.driverOrderTabSelected]}><View style={[s.driverOrderTabIcon, orderSection === 'offers' && s.driverOrderTabIconSelected]}><SymbolView name={{ ios: 'sparkles', android: 'new_releases', web: 'new_releases' }} tintColor={orderSection === 'offers' ? c.background : c.primary} size={18}/></View><View style={s.driverOrderTabCopy}><Text style={[s.driverOrderTabTitle, orderSection === 'offers' && s.driverOrderTabTitleSelected]}>عروض جديدة</Text><Text style={[s.driverOrderTabHint, orderSection === 'offers' && s.driverOrderTabHintSelected]}>بانتظار قبولك</Text></View><Text style={[s.driverOrderTabCount, orderSection === 'offers' && s.driverOrderTabCountSelected]}>{offers.length}</Text></Pressable>
-        <Pressable onPress={() => setOrderSection('active')} accessibilityRole="button" accessibilityState={{ selected: orderSection === 'active' }} style={[s.driverOrderTab, orderSection === 'active' && s.driverOrderTabSelected]}><View style={[s.driverOrderTabIcon, orderSection === 'active' && s.driverOrderTabIconSelected]}><SymbolView name={{ ios: 'shippingbox.fill', android: 'local_shipping', web: 'local_shipping' }} tintColor={orderSection === 'active' ? c.background : c.primary} size={18}/></View><View style={s.driverOrderTabCopy}><Text style={[s.driverOrderTabTitle, orderSection === 'active' && s.driverOrderTabTitleSelected]}>طلباتي النشطة</Text><Text style={[s.driverOrderTabHint, orderSection === 'active' && s.driverOrderTabHintSelected]}>تابع التوصيل</Text></View><Text style={[s.driverOrderTabCount, orderSection === 'active' && s.driverOrderTabCountSelected]}>{activeOrders.length}</Text></Pressable>
+        <Pressable onPress={() => setOrderSection('offers')} accessibilityRole="button" accessibilityState={{ selected: orderSection === 'offers' }} style={[s.driverOrderTab, orderSection === 'offers' && s.driverOrderTabSelected]}><View style={[s.driverOrderTabIcon, orderSection === 'offers' && s.driverOrderTabIconSelected]}><SymbolView name={{ ios: 'sparkles', android: 'new_releases', web: 'new_releases' }} tintColor={orderSection === 'offers' ? c.background : c.primary} size={18}/></View><View style={s.driverOrderTabCopy}><Text style={[s.driverOrderTabTitle, orderSection === 'offers' && s.driverOrderTabTitleSelected]}>عروض جديدة</Text><Text style={[s.driverOrderTabHint, orderSection === 'offers' && s.driverOrderTabHintSelected]}>بانتظار قبولك</Text></View><Text style={[s.driverOrderTabCount, orderSection === 'offers' && s.driverOrderTabCountSelected]}>{offersCount}</Text></Pressable>
+        <Pressable onPress={() => setOrderSection('active')} accessibilityRole="button" accessibilityState={{ selected: orderSection === 'active' }} style={[s.driverOrderTab, orderSection === 'active' && s.driverOrderTabSelected]}><View style={[s.driverOrderTabIcon, orderSection === 'active' && s.driverOrderTabIconSelected]}><SymbolView name={{ ios: 'shippingbox.fill', android: 'local_shipping', web: 'local_shipping' }} tintColor={orderSection === 'active' ? c.background : c.primary} size={18}/></View><View style={s.driverOrderTabCopy}><Text style={[s.driverOrderTabTitle, orderSection === 'active' && s.driverOrderTabTitleSelected]}>طلباتي النشطة</Text><Text style={[s.driverOrderTabHint, orderSection === 'active' && s.driverOrderTabHintSelected]}>تابع التوصيل</Text></View><Text style={[s.driverOrderTabCount, orderSection === 'active' && s.driverOrderTabCountSelected]}>{activeOrdersCount}</Text></Pressable>
       </View>
       <View style={orderSection === 'offers' ? undefined : s.hidden}>{!profile.is_online && <View style={s.driverOrdersHint}><SymbolView name={{ios:'pause.circle.fill',android:'pause_circle',web:'pause_circle'}} tintColor={c.accent} size={19}/><Text style={s.driverOrdersHintText}>الاستقبال متوقف. فعّله من الرئيسية حتى تقدر تقبل عرضاً.</Text></View>}<View style={s.driverOffersHead}><Text style={s.sectionTitle}>عروض قريبة منك</Text><Text style={s.offerCount}>{offers.length}</Text></View>
     {offers.length ? offers.map((offer) => <View key={offer.id} style={s.driverIncomingCard}><View style={s.driverIncomingTop}><View style={s.driverOrderCategoryPill}><Text style={s.driverOrderCategoryPillText}>{offer.order.category}</Text></View><View style={s.driverFeeHighlight}><Text style={s.driverFeeLabel}>أجرة التوصيل</Text><Text style={s.driverFeeValue}>{numberFormatter.format(offer.order.delivery_fee_minor)} ل.س</Text></View></View><Text style={s.driverOfferRequest}>{offer.order.request_text}</Text><OrderImageGallery orderId={offer.order.id}/><View style={s.driverOfferDestination}><View style={s.driverOfferSectionTitle}><SymbolView name={{ios:'mappin.and.ellipse',android:'location_on',web:'location_on'}} tintColor={c.primary} size={17}/><Text style={s.dropoffTitle}>مكان التوصيل</Text></View>{offer.order.address?<><Text style={s.dropoffText}>{offer.order.address.street}{offer.order.address.building?'، بناء '+offer.order.address.building:''}</Text><Text style={s.dropoffText}>{offer.order.address.neighborhood}، {offer.order.address.city}{offer.order.address.landmark?' · '+offer.order.address.landmark:''}</Text></>:<Text style={s.dropoffText}>عم نحمل عنوان التوصيل…</Text>}</View><View style={s.driverOfferBudget}><Text style={s.driverOrderFactLabel}>الحد الأعلى لمشتريات العميل</Text><Text style={s.driverOrderFactValue}>حتى {numberFormatter.format(offer.order.budget_ceiling_minor)} ل.س</Text><Text style={s.dropoffText}>أي مبلغ أعلى يحتاج موافقة العميل.</Text></View><View style={s.driverOfferExpiryRow}><SymbolView name={{ios:'clock.fill',android:'schedule',web:'schedule'}} tintColor={c.accent} size={15}/><Text style={s.offerExpiry}>ينتهي العرض {shortTimeFormatter.format(new Date(offer.expires_at))}</Text></View><Pressable disabled={busy || !profile.is_online || !online || operationsAreStale || !offer.order.address} onPress={() => void accept(offer.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale || !offer.order.address)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>قبول الطلب <Text style={s.submitArrow}>←</Text></Text></Pressable><Pressable disabled={busy || !online || operationsAreStale} onPress={() => void decline(offer.id)} style={[s.declineOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.declineOfferText}>اعتذار عن العرض</Text></Pressable></View>) : <View style={s.noOffers}><Text style={s.noOffersGlyph}>⌁</Text><Text style={s.noOffersTitle}>ما في عروض حالياً</Text><Text style={s.noOffersCopy}>لما يوصلك عرض جديد بيظهر هون. فيك تحدّث القائمة بأي وقت.</Text></View>}
@@ -735,6 +766,8 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
   const network = useNetworkState();
   const online = useInternetAvailable();
   const [tab, setTab] = useState<'home' | 'orders' | 'notifications' | 'profile'>('home');
+  const [visitedTabs, setVisitedTabs] = useState({ home: true, orders: false, notifications: false, profile: true });
+  const [operationsScreen, setOperationsScreen] = useState<'home' | 'orders'>('home');
   const [notificationCount,setNotificationCount]=useState(0);
   const [profile, setProfile] = useState<DriverProfileDraft>({ name: '', phone: '', age: '', avatarPath: null, avatarUrl: null, avatarDraft: null });
   const [editingProfile, setEditingProfile] = useState(false);
@@ -750,6 +783,19 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
   const [, setMessage] = useToastMessage();
   const [tabScale] = useState(() => new Animated.Value(1));
   const [activeTabAnimation, setActiveTabAnimation] = useState<'home' | 'orders' | 'notifications' | 'profile'>('home');
+  useEffect(() => {
+    if (!supabase || !online) return;
+    let active = true;
+    const refreshUnreadCount = async () => {
+      const { count, error } = await supabase!.from('notifications').select('id', { count: 'exact', head: true }).is('read_at', null);
+      if (active && !error) setNotificationCount(count ?? 0);
+    };
+    void refreshUnreadCount();
+    const channel = supabase.channel(`driver-notification-count-${userId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${userId}` }, () => { void refreshUnreadCount(); })
+      .subscribe();
+    return () => { active = false; void supabase?.removeChannel(channel); };
+  }, [online, userId]);
   useEffect(() => {
     if (!supabase) { setLoading(false); setProfileLoadError('تعذر الاتصال بالخادم.'); return; }
     if (!online) {
@@ -789,6 +835,8 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
   }, [online, network.isConnected, profileRefreshKey, userId]);
   const profileComplete = profile.name.trim().length >= 2 && /^9\d{8}$/.test(profile.phone) && Number(profile.age) >= 18 && Number(profile.age) <= 80;
   const goTab = (next: 'home' | 'orders' | 'notifications' | 'profile') => {
+    setVisitedTabs((current) => ({ ...current, [next]: true }));
+    if (next === 'home' || next === 'orders') setOperationsScreen(next);
     setTab(next); setActiveTabAnimation(next); tabScale.setValue(0.84);
     Animated.spring(tabScale, { toValue: 1, useNativeDriver: true, speed: 22, bounciness: 7 }).start();
   };
@@ -893,11 +941,11 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
           </>}
         </> : null}
         </StaggeredSections>
-        {(tab === 'home' || tab === 'orders') && !loading && !profileLoadError && ((tab !== 'home') || profileComplete) && <View>
-          <DriverOperations key={userId} userId={userId} screen={tab === 'home' ? 'home' : 'orders'} profileComplete={profileComplete} onCompleteProfile={() => goTab('profile')} onOpenOrders={() => goTab('orders')}/>
+        {(visitedTabs.home || visitedTabs.orders) && !loading && !profileLoadError && (operationsScreen === 'orders' || profileComplete) && <View style={tab === 'home' || tab === 'orders' ? undefined : s.hidden}>
+          <DriverOperations key={userId} userId={userId} screen={operationsScreen} profileComplete={profileComplete} onCompleteProfile={() => goTab('profile')} onOpenOrders={() => goTab('orders')}/>
         </View>}
         {tab === 'notifications' && <View style={s.driverPageIntro}><Text style={s.driverHeroEyebrow}>تحديثات طلباتك</Text><Text style={s.accountPageTitle}>التنبيهات</Text><Text style={s.accountPageSubtitle}>كل تنبيه لحاله مع وقت وصوله ورقم الطلب. اضغط عليه لتفتح الطلب.</Text></View>}
-        {tab === 'notifications' && <EntranceSection transitionKey="notifications-visible"><NotificationInbox userId={userId} standalone onUnreadCountChange={setNotificationCount} onOpenOrder={() => goTab('orders')}/></EntranceSection>}
+        {visitedTabs.notifications && <View style={tab === 'notifications' ? undefined : s.hidden}><EntranceSection transitionKey={tab === 'notifications' ? 'notifications-visible' : 'notifications-hidden'}><NotificationInbox userId={userId} standalone onUnreadCountChange={setNotificationCount} onOpenOrder={() => goTab('orders')}/></EntranceSection></View>}
       </ScrollView>
       <View style={s.driverFooter}>{([{ key: 'home', label: 'الرئيسية', ios: 'house.fill', android: 'home' }, { key: 'orders', label: 'الطلبات', ios: 'shippingbox.fill', android: 'local_shipping' }, { key: 'notifications', label: 'التنبيهات', ios: 'bell.fill', android: 'notifications' }, { key: 'profile', label: 'حسابي', ios: 'person.crop.circle.fill', android: 'person' }] as const).map(({ key, label, ios, android }) => <Pressable key={key} accessibilityRole="button" accessibilityLabel={key === 'notifications' && notificationCount > 0 ? `${label}، ${notificationCount} تنبيه غير مقروء` : label} accessibilityState={{ selected: tab === key }} onPress={() => goTab(key)} style={[s.driverFooterButton, tab === key && s.driverFooterButtonActive]}><View style={s.driverFooterIconWrap}><Animated.View style={[s.footerIcon, { transform: [{ scale: activeTabAnimation === key ? tabScale : 1 }] }]}><SymbolView name={{ ios, android, web: android }} tintColor={tab === key ? (theme === 'light' ? '#17210F' : c.background) : c.muted} size={20}/></Animated.View>{key==='notifications'&&notificationCount>0?<View style={s.driverTabBadge}><Text style={s.driverTabBadgeText}>{notificationCount>99?'99+':notificationCount}</Text></View>:null}</View><Text style={[s.driverFooterLabel, tab === key && s.driverFooterLabelActive]}>{label}</Text></Pressable>)}</View>
     </View>
