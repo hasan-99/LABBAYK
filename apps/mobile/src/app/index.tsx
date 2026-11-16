@@ -524,7 +524,9 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     if (cachedSnapshot) {
       setActiveOrders(cachedSnapshot.orders);
       setOrdersSyncedAt(cachedSnapshot.syncedAt);
-      setOperationsAreStale(true);
+      // Keep cached orders visible while refreshing, but don't flash the offline
+      // warning during a normal online refresh. Set it only if sync fails below.
+      if (!online) setOperationsAreStale(true);
       setLoading(false);
     }
     if (!online) {
@@ -1167,7 +1169,9 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       if (hasServerOrders) return;
       setOrders(snapshot.orders.map((order) => ({ ...order, request_text: '' })));
       setOrdersSyncedAt(snapshot.syncedAt);
-      setOrdersAreStale(true);
+      // The snapshot is a fallback while online data loads; avoid briefly
+      // showing the offline notice before the server response is known.
+      if (!online) setOrdersAreStale(true);
       ordersLoaded.current = true;
       setOrdersLoading(false);
     });
