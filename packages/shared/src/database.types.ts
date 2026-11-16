@@ -914,6 +914,10 @@ export type Database = {
         Args: { p_code: string; p_order_id: string }
         Returns: boolean
       }
+      confirm_order_delivery_with_photo: {
+        Args: { p_order_id: string; p_proof_path: string }
+        Returns: undefined
+      }
       confirm_order_purchase: {
         Args: { p_order_id: string }
         Returns: undefined

@@ -53,7 +53,7 @@
         "expo-image-picker",
         {
           "photosPermission": "لإضافة صور تختارها لطلبك أو لملفك الشخصي.",
-          "cameraPermission": false,
+          "cameraPermission": "لتصوير إثبات تسليم الطلب للعميل.",
           "microphonePermission": false
         }
       ],
