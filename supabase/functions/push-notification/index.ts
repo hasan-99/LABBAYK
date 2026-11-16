@@ -6,11 +6,45 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-labbayk-push-secret",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+  "X-Frame-Options": "DENY",
 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
-  headers: { ...corsHeaders, "Content-Type": "application/json" },
+  headers: {
+    ...corsHeaders,
+    "Content-Type": "application/json",
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY",
+  },
 });
+
+async function readJsonLimited(request: Request, maxBytes: number): Promise<unknown> {
+  const reader = request.body?.getReader();
+  if (!reader) throw new SyntaxError("Request body is required");
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > maxBytes) {
+      await reader.cancel();
+      throw new RangeError("Request body is too large");
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder().decode(body));
+}
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -26,7 +60,14 @@ Deno.serve(async (request) => {
   if (configError || !config) return json({ error: "Push service is not configured" }, 503);
 
   let payload: { action?: string; notification_id?: number };
-  try { payload = await request.json(); } catch { return json({ error: "Invalid request" }, 400); }
+  try {
+    const body = await readJsonLimited(request, 2 * 1024);
+    if (!body || typeof body !== "object" || Array.isArray(body)) return json({ error: "Invalid request" }, 400);
+    payload = body as typeof payload;
+  } catch (error) {
+    if (error instanceof RangeError) return json({ error: "Request body is too large" }, 413);
+    return json({ error: "Invalid request" }, 400);
+  }
 
   if (payload.action === "get-public-key") {
     const authorization = request.headers.get("Authorization");
