@@ -130,7 +130,6 @@ const normalizeDigits = (value: string) => value.replace(/[٠-٩۰-۹]/g, (digit
   return String(code >= 0x06F0 ? code - 0x06F0 : code - 0x0660);
 }).replace(/\D/g, '');
 const formatSyrianMobile = (value: string) => normalizeDigits(value).slice(0, 9).replace(/^(\d{3})(\d{0,3})(\d{0,3})$/, (_match, first: string, second: string, third: string) => [first, second, third].filter(Boolean).join(' '));
-const arabicNumberFormatter = new Intl.NumberFormat('ar-SY');
 const shortTimeFormatter = new Intl.DateTimeFormat('ar-SY', { timeStyle: 'short' });
 const shortDateTimeFormatter = new Intl.DateTimeFormat('ar-SY', { dateStyle: 'medium', timeStyle: 'short' });
 export function generateMetadata(): Metadata {
@@ -489,7 +488,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
   const [loading, setLoading] = useState(true);
   const [showInitialSkeleton, setShowInitialSkeleton] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useToastMessage();
+  const [, setMessage] = useToastMessage();
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
   const [walletUnavailable, setWalletUnavailable] = useState(false);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -662,7 +661,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
 }
 
 function DriverApplicationFlow({ userId, initialToken }: { userId: string; initialToken?: string }) {
-  const { colors: c, styles: s } = useMobileTheme();
+  const { styles: s } = useMobileTheme();
   const online = useInternetAvailable();
   const [status, setStatus] = useState<string | null>(null);
   const [inviteCode, setInviteCode] = useState(initialToken ?? '');
@@ -702,7 +701,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
   const [avatarDraft, setAvatarDraft] = useState<ProfileAvatarDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useToastMessage();
+  const [, setMessage] = useToastMessage();
   const [tabScale] = useState(() => new Animated.Value(1));
   const [activeTabAnimation, setActiveTabAnimation] = useState<'home' | 'orders' | 'notifications' | 'profile'>('home');
   useEffect(() => {
@@ -830,7 +829,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
 }
 
 function SignedInHome({ userId, email, inviteToken, openOrderId, onSignOut, theme, onToggleTheme }: { userId: string; email: string; inviteToken?: string; openOrderId?: string; onSignOut: () => void; theme: 'dark' | 'light'; onToggleTheme: () => void }) {
-  const { colors: c, styles: s } = useMobileTheme();
+  const { styles: s } = useMobileTheme();
   const online = useInternetAvailable();
   const [reviewStatus, setReviewStatus] = useState<string | null>(null);
   const [checked, setChecked] = useState(false);
@@ -1357,11 +1356,6 @@ function NetworkStatusBanner() {
   return <View accessibilityRole="alert" style={{ backgroundColor: light ? '#FFF5D9' : '#3A2D18', borderBottomWidth: 1, borderBottomColor: light ? '#E7D39B' : '#745C2C', paddingHorizontal: 16, paddingVertical: 10 }}>
     <Text style={{ color: light ? '#735500' : '#FFE2A0', textAlign: 'center', fontSize: 12, lineHeight: 19 }}>الاتصال بالإنترنت منقطع. الإجراءات تحتاج اتصال وما رح تنرسل تلقائياً؛ مسودة الطلب محفوظة على هالجهاز.</Text>
   </View>;
-}
-
-function ThemeToggle({ theme, onToggle }: { theme: 'dark' | 'light'; onToggle: () => void }) {
-  const { colors: c, styles: s } = useMobileTheme();
-  return <Pressable onPress={onToggle} style={s.themeToggle} accessibilityRole="button" accessibilityLabel={theme === 'dark' ? 'تفعيل الوضع الفاتح' : 'تفعيل الوضع الداكن'}><SymbolView name={{ios:theme === 'dark' ? 'sun.max.fill' : 'moon.fill',android:theme === 'dark' ? 'light_mode' : 'dark_mode',web:theme === 'dark' ? 'light_mode' : 'dark_mode'}} tintColor={c.primary} size={20}/></Pressable>;
 }
 
 export default function HomeScreen() {
