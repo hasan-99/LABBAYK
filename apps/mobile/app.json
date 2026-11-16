@@ -13,6 +13,12 @@
     },
     "android": {
       "package": "com.hasan99.labbayk",
+      "allowBackup": false,
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/images/labbayk-delivery-logo.png"
@@ -41,6 +47,14 @@
         {
           "color": "#B7FF30",
           "defaultChannel": "order_updates"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "لإضافة صور تختارها لطلبك أو لملفك الشخصي.",
+          "cameraPermission": false,
+          "microphonePermission": false
         }
       ],
       [

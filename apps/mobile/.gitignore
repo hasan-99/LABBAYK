@@ -41,3 +41,6 @@ example
 # generated native folders
 /ios
 /android
+/.expo-audit-android-export
+/.expo-audit-ios-export
+/.expo-audit-web-export
