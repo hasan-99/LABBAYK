@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
 import * as Linking from 'expo-linking';
+import { Link } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { AppText as Text } from '@/components/AppText';
 import { useAppToast, useToastMessage } from '@/components/Toast';
@@ -124,6 +125,12 @@ export function AuthScreen({ inviteToken, theme }: { inviteToken?: string; theme
     {mode === 'recovery-code' && <Pressable accessibilityRole="button" disabled={busy} onPress={() => void resendRecoveryCode()} style={s.back}><Text style={s.backText}>إعادة إرسال رمز التغيير</Text></Pressable>}
     {(mode === 'signup' || mode === 'reset' || mode === 'code' || mode === 'recovery-code') && <Pressable accessibilityRole="button" onPress={() => { setMode('login'); setMessage(''); }} style={s.back}><Text style={s.backText}>رجوع لتسجيل الدخول</Text></Pressable>}
     {message ? <Text accessibilityRole={messageTone === 'error' ? 'alert' : 'text'} style={[s.message, messageTone === 'error' ? s.messageError : messageTone === 'success' ? s.messageSuccess : s.messageInfo]}>{message}</Text> : null}
+    </View>
+    <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'center', gap: 4, marginTop: 14 }}>
+      <Link href="/privacy" style={{ color: '#D3EFA4', fontSize: 12, padding: 8 }}>الخصوصية</Link>
+      <Link href="/terms" style={{ color: '#D3EFA4', fontSize: 12, padding: 8 }}>الشروط</Link>
+      <Link href="/support" style={{ color: '#D3EFA4', fontSize: 12, padding: 8 }}>الدعم</Link>
+      {mode === 'login' && <Link href="/delete-account" style={{ color: '#D3EFA4', fontSize: 12, padding: 8 }}>حذف الحساب</Link>}
     </View>
   </View></ScrollView></SafeAreaView>;
 }
