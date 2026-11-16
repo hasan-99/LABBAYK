@@ -14,12 +14,12 @@
 | الملف | المنصة والجهاز المرجعي المطلوب | التدفقات الواجب تمريرها | النتيجة المتوقعة | نتيجة اليوم |
 |---|---|---|---|---|
 | Baseline · 5 Mbps / 100ms / 0% loss | iOS: iPhone يدعم الحد الأدنى للتطبيق؛ Android: هاتف متوسط يدعم API المستهدف | C + D + S + A؛ مسح requests/bytes/latency/cold-start خلال جلسة 10 دقائق | الوظائف تعمل؛ تسجيل baseline لكل request/صورة ومن دون تكرار | NOT RUN — لا جهاز/trace |
-| Slow · 1 Mbps / 300ms / 1% loss | iOS reference iPhone؛ Android متوسط | C + D + S؛ upload صورة وفتح order history | النص والعناصر الرئيسية تسبق الصور؛ لا انتظار غير محدود؛ يظهر تقدم upload | NOT RUN |
-| Very slow · 256 Kbps / 700ms / 3% loss | iOS reference iPhone؛ Android متوسط | C: home/orders/draft ثم C order؛ D: offers/orders والمهام؛ S | قراءة النص/cache متاحة؛ الوسائط اختيارية/مخفضة؛ لا تتكرر الكتابة | NOT RUN |
-| Extreme · 128 Kbps / 1200ms / 5% loss | iOS reference iPhone؛ Android متوسط | C + D + S؛ طلب API واحد يظل معلّقًا ثم timeout | لا spinner غير منتهٍ؛ البيانات القديمة معلّمة؛ Cancel/Retry آمنان | NOT RUN |
-| Intermittent · 2 Mbps / 400ms / 10% loss | iOS reference iPhone؛ Android متوسط | C: submit + 3 uploads; D: accept offer/update state; app restart/retry | الطلب الواحد لا يتكرر؛ الملفات المكتملة لا ترفع مجددًا؛ الفشل الجزئي واضح | NOT RUN |
-| Offline · 0 / N/A / 100% loss | iOS reference iPhone؛ Android متوسط | C: مسودة وطلبات cached؛ D: snapshot؛ منع كل فعل live، ثم restart | قراءة النص المحفوظ؛ عدم عرض السعر/الرصيد القديم كقيمة حالية؛ لا نجاح وهمي | NOT RUN |
-| Switch · Wi-Fi → offline → cellular، متغير | iOS reference iPhone؛ Android متوسط | C + D + S مع تبديل أثناء الطلب/الرفع، خلفية/مقدمة، واستعادة auth token | حالة الاتصال تهدأ؛ يعود refresh أماميًا؛ لا duplicate channel/write/login loop | NOT RUN |
+| Slow · 1 Mbps / 300ms / 1% loss | iOS reference iPhone؛ Android متوسط | C + D + S + A؛ upload صورة وفتح order history | النص والعناصر الرئيسية تسبق الصور؛ لا انتظار غير محدود؛ يظهر تقدم upload | NOT RUN |
+| Very slow · 256 Kbps / 700ms / 3% loss | iOS reference iPhone؛ Android متوسط | C: home/orders/draft ثم C order؛ D: offers/orders والمهام؛ S + A | قراءة النص/cache متاحة؛ الوسائط اختيارية/مخفضة؛ لا تتكرر الكتابة | NOT RUN |
+| Extreme · 128 Kbps / 1200ms / 5% loss | iOS reference iPhone؛ Android متوسط | C + D + S + A؛ طلب API واحد يظل معلّقًا ثم timeout | لا spinner غير منتهٍ؛ البيانات القديمة معلّمة؛ Cancel/Retry آمنان | NOT RUN |
+| Intermittent · 2 Mbps / 400ms / 10% loss | iOS reference iPhone؛ Android متوسط | C: submit + 3 uploads; D: accept offer/update state; A: refresh/load-more; app restart/retry | الطلب الواحد لا يتكرر؛ الملفات المكتملة لا ترفع مجددًا؛ الفشل الجزئي واضح | NOT RUN |
+| Offline · 0 / N/A / 100% loss | iOS reference iPhone؛ Android متوسط | C: مسودة وطلبات cached؛ D: snapshot؛ A: cached list/banner؛ منع كل فعل live، ثم restart | قراءة النص المحفوظ؛ عدم عرض السعر/الرصيد القديم كقيمة حالية؛ لا نجاح وهمي | NOT RUN |
+| Switch · Wi-Fi → offline → cellular، متغير | iOS reference iPhone؛ Android متوسط | C + D + S + A مع تبديل أثناء الطلب/الرفع، خلفية/مقدمة، واستعادة auth token | حالة الاتصال تهدأ؛ يعود refresh أماميًا؛ لا duplicate channel/write/login loop | NOT RUN |
 
 ## سجلات يجب أخذها لكل تجربة
 
