@@ -445,15 +445,33 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
       supabase.from('notifications').select('id',{count:'exact',head:true}).is('read_at',null),
     ])
     if(error)setMessage('ما قدرنا نحمّل التنبيهات.')
-    else {setItems(data??[]);setHasMore((data??[]).length===pageSize);setMessage('')}
+    else {setItems(data??[]);setHasMore((data??[]).length===pageSize);setMessage('');void AsyncStorage.setItem(`labbayk-notifications-${userId}-${standalone?'page':'card'}`,JSON.stringify({items:data??[],unread:countError?null:unread??0})).catch(()=>{})}
     if(!countError)setUnreadCount(unread??0)
     setLoadingState(false)
-  },[online,setMessage,standalone]);
+  },[online,setMessage,standalone,userId]);
   const refreshRef = useRef(refresh);
   useEffect(() => { refreshRef.current = refresh; }, [refresh]);
+  const hasItemsRef = useRef(false);
+  useEffect(() => { hasItemsRef.current = items.length > 0; }, [items]);
+  // Show the last known list instantly, then refresh quietly in the background.
+  useEffect(() => {
+    let active = true;
+    void AsyncStorage.getItem(`labbayk-notifications-${userId}-${standalone?'page':'card'}`).then((raw) => {
+      if (!active || !raw) return;
+      try {
+        const cached = JSON.parse(raw) as { items?: Notification[]; unread?: number | null };
+        if (Array.isArray(cached.items) && cached.items.length) {
+          setItems((current) => current.length ? current : cached.items ?? []);
+          if (typeof cached.unread === 'number') setUnreadCount((current) => current || cached.unread || 0);
+          setLoadingState(false);
+        }
+      } catch { /* ignore a corrupt cache */ }
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [standalone, userId]);
   useEffect(() => { if (refreshKey > 0) void refreshRef.current(); }, [refreshKey]);
   useEffect(() => {
-    if (online) setLoadingState(true);
+    if (online && !hasItemsRef.current) setLoadingState(true);
     void refreshRef.current();
     if (!supabase || !online) return;
     // Unique per subscription so route switches or reconnects cannot reuse a channel during asynchronous removal.
@@ -973,7 +991,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
   const network = useNetworkState();
   const online = useInternetAvailable();
   const [tab, setTab] = useState<'home' | 'orders' | 'notifications' | 'profile'>('home');
-  const [visitedTabs, setVisitedTabs] = useState({ home: true, orders: false, notifications: false, profile: true });
+  const [visitedTabs, setVisitedTabs] = useState({ home: true, orders: false, notifications: true, profile: true });
   const [operationsScreen, setOperationsScreen] = useState<'home' | 'orders'>('home');
   const [notificationCount,setNotificationCount]=useState(0);
   const [profile, setProfile] = useState<DriverProfileDraft>({ name: '', phone: '', age: '', avatarPath: null, avatarUrl: null, avatarDraft: null });
