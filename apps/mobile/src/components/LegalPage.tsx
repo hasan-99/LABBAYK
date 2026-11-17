@@ -86,6 +86,9 @@ export function LegalPage({ page }: { page: PageName }) {
   }, [page]);
   const s = useMemo(() => stylesFor(theme), [theme]);
   const content = pageContent[page];
+  useEffect(() => {
+    if (Platform.OS === 'web') document.title = `${content.title} | لَبّيك`;
+  }, [content.title]);
   const deleteSignedInAccount = async () => {
     if (!supabase || !account) return;
     setBusy(true); setMessage('');
