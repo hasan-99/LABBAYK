@@ -657,6 +657,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   const [orderSection, setOrderSection] = useState<'offers' | 'active'>('offers');
   const [dismissedOfferId, setDismissedOfferId] = useState<string | null>(null);
   const [imagesOpen, setImagesOpen] = useState<Record<string, boolean>>({});
+  const [collectDrafts, setCollectDrafts] = useState<Record<string, string>>({});
   const [refreshing, setRefreshing] = useState(false);
   const [balanceOpen, setBalanceOpen] = useState(false);
   const [refreshToastPending, setRefreshToastPending] = useState(false);
@@ -849,6 +850,11 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   };
   const confirmDeliveryWithPhoto = async (orderId: string) => {
     if (!supabase || !online || operationsAreStale) { setMessage('هالإجراء يحتاج اتصالاً بالخادم. تأكد من الإنترنت وحدّث الصفحة.'); return; }
+    const target = activeOrders.find((order) => order.id === orderId);
+    const expected = (target?.purchase_amount_minor ?? 0) + (target?.delivery_fee_minor ?? 0);
+    const draft = (collectDrafts[orderId] ?? '').trim();
+    const collected = draft ? Number(draft) : expected;
+    if (!Number.isSafeInteger(collected) || collected < 0) { setMessage('اكتب المبلغ اللي استلمته من الزبون بالليرة السورية.'); return; }
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) { setMessage('نحتاج إذن الكاميرا حتى تصوّر تسليم الطلب. فعّله من إعدادات الجهاز.'); return; }
     const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.6, allowsEditing: false });
@@ -861,7 +867,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       const path = `${orderId}/${Date.now()}.jpg`;
       const upload = await supabase.storage.from('delivery-proofs').upload(path, body, { contentType: asset.mimeType ?? 'image/jpeg', cacheControl: '3600', upsert: false });
       if (upload.error) throw upload.error;
-      const { error } = await supabase.rpc('confirm_order_delivery_with_photo', { p_order_id: orderId, p_proof_path: path });
+      const { error } = await supabase.rpc('confirm_order_delivery_with_photo', { p_order_id: orderId, p_proof_path: path, p_cash_collected_minor: collected });
       if (error) throw error;
       setBusy(false); setMessage('تم تأكيد التسليم وحُفظت صورة الإثبات.'); await refresh();
     } catch {
@@ -921,6 +927,11 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       </View>}
       {!operationsAreStale && order.status === 'awaiting_approval' && <View style={s.driverWaitNotice}><Text style={s.driverWaitTitle}>لا تشتري بعد</Text><Text style={s.driverWaitCopy}>المبلغ المقترح {numberFormatter.format(order.purchase_amount_minor ?? 0)} ل.س، وبانتظار موافقة العميل.</Text></View>}
       {!operationsAreStale && order.status === 'purchased' && <Pressable disabled={locked} onPress={() => void startDelivery(order.id)} accessibilityRole="button" style={bigButton}><Text style={bigText}>بدء التوصيل ←</Text></Pressable>}
+      {order.status === 'delivering' && <View style={{ gap: 6 }}>
+        <Text style={{ color: c.text, fontSize: 13, fontWeight: '800', textAlign: 'right' }}>المبلغ اللي استلمته من الزبون · ل.س</Text>
+        <TextInput value={collectDrafts[order.id] ?? String((order.purchase_amount_minor ?? 0) + order.delivery_fee_minor)} onChangeText={(value) => setCollectDrafts((current) => ({ ...current, [order.id]: value.replace(/\D/g, '') }))} keyboardType="number-pad" textAlign="left" placeholder="مثال: 13000" placeholderTextColor="#839188" style={[s.field, { fontSize: 20, fontWeight: '900', color: c.primary }]} accessibilityLabel="المبلغ المستلم من الزبون" />
+        <Text style={{ color: c.muted, fontSize: 12, textAlign: 'right', lineHeight: 19 }}>اكتب المبلغ الفعلي إذا أعطاك الزبون زيادة (إكرامية) أو أقل.</Text>
+      </View>}
       {order.status === 'delivering' && <Pressable disabled={locked} onPress={() => void confirmDeliveryWithPhoto(order.id)} accessibilityRole="button" style={bigButton}><Text style={bigText}>📷 تصوير التسليم وإنهاء الطلب</Text></Pressable>}
       <SupportIssueForm orderId={order.id} status={order.status} disabled={operationsAreStale} />
     </View>;
@@ -1278,7 +1289,7 @@ function SignedInHome({ userId, email, inviteToken, openOrderId, onSignOut, them
   return <DriverWorkspace userId={userId} email={email} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
 }
 
-type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'customer_id'|'address_id'|'delivered_at'|'category'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'budget_ceiling_minor'|'created_at'>;
+type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'customer_id'|'address_id'|'delivered_at'|'purchase_amount_minor'|'cash_collected_minor'|'category'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'budget_ceiling_minor'|'created_at'>;
 type AdminMobileDriver = Pick<Database['public']['Tables']['driver_profiles']['Row'], 'user_id'|'vehicle_description'>;
 
 const pickupPrefix = 'الشراء من: ';
@@ -1405,7 +1416,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
   const refresh = useCallback(async () => {
     if (!supabase) return;
     const [orderResult, driverResult, userResult] = await Promise.all([
-      supabase.from('orders').select('id,customer_id,address_id,delivered_at,category,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,budget_ceiling_minor,created_at').order('created_at', { ascending: false }).limit(150),
+      supabase.from('orders').select('id,customer_id,address_id,delivered_at,purchase_amount_minor,cash_collected_minor,category,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,budget_ceiling_minor,created_at').order('created_at', { ascending: false }).limit(150),
       supabase.from('driver_profiles').select('user_id,vehicle_description').eq('review_status', 'approved').eq('is_online', true).order('created_at'),
       supabase.rpc('admin_list_users'),
     ]);
@@ -1546,6 +1557,19 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
           {delivered && <View style={[card, { borderColor: color.accent, gap: 9 }]}>
             <Text style={{ color: color.accent, fontSize: 14.5, fontWeight: '900', textAlign: 'right' }}>✅ إثبات التسليم</Text>
             <AdminImageStrip orderId={sheet.id} bucket="delivery-proofs" size={96} emptyText="ما في صورة إثبات (سُلّم بالطريقة القديمة)." />
+            {(() => {
+              const purchases = sheet.purchase_amount_minor; const expected = (purchases ?? 0) + sheet.delivery_fee_minor; const collected = sheet.cash_collected_minor; const diff = collected === null ? null : collected - expected;
+              const line = (label: string, value: string, strong = false, tint?: string) => <View key={label} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5 }}>{label}</Text><Text style={{ color: tint ?? (strong ? color.primary : color.text), fontSize: 13.5, fontWeight: '900' }}>{value}</Text></View>;
+              return <View style={{ backgroundColor: color.background, borderColor: color.border, borderWidth: 1, borderRadius: 14, padding: 10, gap: 6 }}>
+                <Text style={{ color: color.muted, fontSize: 12, fontWeight: '800', textAlign: 'right' }}>💰 حساب الطلب</Text>
+                {line('ميزانية الزبون', numberFormatter.format(sheet.budget_ceiling_minor) + ' ل.س')}
+                {line('مشتريات دفعها السائق', purchases === null ? '—' : numberFormatter.format(purchases) + ' ل.س')}
+                {line('أجرة التوصيل', numberFormatter.format(sheet.delivery_fee_minor) + ' ل.س')}
+                {line('المطلوب من الزبون', numberFormatter.format(expected) + ' ل.س')}
+                {line('المبلغ الذي استلمه السائق', collected === null ? 'لم يُسجَّل' : numberFormatter.format(collected) + ' ل.س', true)}
+                {diff !== null && diff !== 0 ? line(diff > 0 ? 'زيادة (إكرامية)' : 'نقص عن المطلوب', numberFormatter.format(Math.abs(diff)) + ' ل.س', false, diff > 0 ? '#52D5A0' : '#FF8A8A') : null}
+              </View>;
+            })()}
             <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5 }}>السائق</Text><Text style={{ color: color.text, fontSize: 13.5, fontWeight: '800' }}>{nameOf(sheet.driver_id)}</Text></View>
             <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5 }}>وقت التسليم</Text><Text style={{ color: color.text, fontSize: 13.5, fontWeight: '800' }}>{sheet.delivered_at ? shortDateTimeFormatter.format(new Date(sheet.delivered_at)) : '—'}</Text></View>
             {sheet.driver_id && driverPhones[sheet.driver_id] ? <Pressable onPress={() => void Linking.openURL(`tel:${driverPhones[sheet.driver_id!]}`)} accessibilityRole="button" accessibilityLabel="اتصال بالسائق" style={{ minHeight: 44, borderRadius: 13, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 14, fontWeight: '900' }}>📞 اتصال بالسائق · {driverPhones[sheet.driver_id]}</Text></Pressable> : null}
@@ -1609,7 +1633,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
                 <Text numberOfLines={1} style={{ color: color.muted, fontSize: 12.5, flex: 1, textAlign: 'right' }}>👤 {nameOf(order.customer_id)} · ميزانية {numberFormatter.format(order.budget_ceiling_minor)}</Text>
                 <Text style={{ color: color.primary, fontSize: 13, fontWeight: '900' }}>{order.delivery_quote_set_at ? numberFormatter.format(order.delivery_fee_minor) + ' ل.س' : 'بلا أجرة'}</Text>
               </View>
-              {order.driver_id ? <Text numberOfLines={1} style={{ color: adminStatusGroup(order.status) === 'done' ? color.accent : color.muted, fontSize: 12.5, fontWeight: adminStatusGroup(order.status) === 'done' ? '800' : '400', textAlign: 'right' }}>{adminStatusGroup(order.status) === 'done' ? `✅ سلّمه ${nameOf(order.driver_id)}${order.delivered_at ? ' · ' + timeAgo(order.delivered_at) : ''}` : `🛵 ${nameOf(order.driver_id)}`}</Text> : null}
+              {order.driver_id ? <Text numberOfLines={1} style={{ color: adminStatusGroup(order.status) === 'done' ? color.accent : color.muted, fontSize: 12.5, fontWeight: adminStatusGroup(order.status) === 'done' ? '800' : '400', textAlign: 'right' }}>{adminStatusGroup(order.status) === 'done' ? `✅ سلّمه ${nameOf(order.driver_id)}${order.delivered_at ? ' · ' + timeAgo(order.delivered_at) : ''}${order.cash_collected_minor !== null ? ' · استلم ' + numberFormatter.format(order.cash_collected_minor) : ''}` : `🛵 ${nameOf(order.driver_id)}`}</Text> : null}
               {declinedNames.length ? <View style={{ backgroundColor: 'rgba(255,138,138,0.12)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 }}><Text style={{ color: '#FF8A8A', fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>⚠️ اعتذر {declinedNames.length} ({declinedNames.join('، ')})</Text></View> : null}
               {order.status === 'searching' && pendingOffers.length ? <View style={{ backgroundColor: 'rgba(240,204,131,0.12)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 }}><Text style={{ color: '#F0CC83', fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>{pendingOffers.length === 1 ? `⏳ ${nameOf(pendingOffers[0].driver_id)} · باقي ${minutesLeft(pendingOffers[0].expires_at)} د للرد` : `⏳ بانتظار رد ${pendingOffers.length} سائقين`}</Text></View> : null}
               {needs ? <View style={{ minHeight: 42, borderRadius: 14, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 14, fontWeight: '900' }}>{order.status === 'searching' ? 'إعادة الإرسال أو إسناد سائق ←' : order.delivery_quote_set_at ? 'إرسال الطلب للسائقين ←' : 'تحديد الأجرة وإرسال ←'}</Text></View> : null}

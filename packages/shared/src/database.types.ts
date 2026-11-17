@@ -668,6 +668,7 @@ export type Database = {
           delivery_code_attempts: number
           delivery_code_expires_at: string | null
           delivery_code_hash: string | null
+          cash_collected_minor: number | null
           delivery_fee_minor: number
             delivery_quote_approved_at: string | null
             delivery_quote_set_at: string | null
@@ -699,6 +700,7 @@ export type Database = {
           delivery_code_attempts?: number
           delivery_code_expires_at?: string | null
           delivery_code_hash?: string | null
+          cash_collected_minor?: number | null
           delivery_fee_minor: number
             delivery_quote_approved_at?: string | null
             delivery_quote_set_at?: string | null
@@ -730,6 +732,7 @@ export type Database = {
           delivery_code_attempts?: number
           delivery_code_expires_at?: string | null
           delivery_code_hash?: string | null
+          cash_collected_minor?: number | null
           delivery_fee_minor?: number
             delivery_quote_approved_at?: string | null
             delivery_quote_set_at?: string | null
@@ -919,7 +922,7 @@ export type Database = {
         Returns: { display_name: string; phone: string | null }[]
       }
       confirm_order_delivery_with_photo: {
-        Args: { p_order_id: string; p_proof_path: string }
+        Args: { p_order_id: string; p_proof_path: string; p_cash_collected_minor?: number | null }
         Returns: undefined
       }
       confirm_order_purchase: {
