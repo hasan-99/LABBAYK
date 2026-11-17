@@ -2,18 +2,21 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
 export type SupportContact = { phone: string | null; whatsapp: string | null };
+// Used until (or unless) public.app_settings provides numbers, so the buttons always work.
+const DEFAULT_SUPPORT_NUMBER = '+963938797237';
+const defaultContact: SupportContact = { phone: DEFAULT_SUPPORT_NUMBER, whatsapp: DEFAULT_SUPPORT_NUMBER };
 let cached: SupportContact | null = null;
 
 // Support numbers live in the database (public.app_settings) so they can change without an app update.
-export function useSupportContact(): SupportContact | null {
-  const [contact, setContact] = useState<SupportContact | null>(cached);
+export function useSupportContact(): SupportContact {
+  const [contact, setContact] = useState<SupportContact>(cached ?? defaultContact);
   useEffect(() => {
     if (cached || !supabase) return;
     let active = true;
     void supabase.from('app_settings').select('key,value').in('key', ['support_phone', 'support_whatsapp']).then(({ data, error }) => {
       if (!active || error) return;
       const map = Object.fromEntries((data ?? []).map((row) => [row.key, row.value]));
-      cached = { phone: map.support_phone ?? null, whatsapp: map.support_whatsapp ?? map.support_phone ?? null };
+      cached = { phone: map.support_phone ?? defaultContact.phone, whatsapp: map.support_whatsapp ?? map.support_phone ?? defaultContact.whatsapp };
       setContact(cached);
     });
     return () => { active = false; };
