@@ -1,7 +1,7 @@
 import { Children, Fragment, createContext, isValidElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import type { Metadata } from 'expo-router/server';
-import { ActivityIndicator, Animated, AppState, Easing, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, View, type ScrollViewProps } from 'react-native';
+import { ActivityIndicator, Alert, Animated, AppState, Easing, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, View, type ScrollViewProps } from 'react-native';
 import { SymbolView, type AndroidSymbol, type SFSymbol } from 'expo-symbols';
 import { useNetworkState } from 'expo-network';
 import type { NotificationResponse } from 'expo-notifications';
@@ -171,6 +171,11 @@ function KeyboardScroll(props: ScrollViewProps) {
   const ios = Platform.OS === 'ios';
   const scroll = <ScrollView {...props} keyboardShouldPersistTaps="handled" keyboardDismissMode={ios ? 'interactive' : 'on-drag'} automaticallyAdjustKeyboardInsets={ios} />;
   return Platform.OS === 'android' ? <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">{scroll}</KeyboardAvoidingView> : scroll;
+}
+
+function confirmAction(title: string, message: string, confirmLabel: string): Promise<boolean> {
+  if (Platform.OS === 'web') return Promise.resolve(typeof window !== 'undefined' ? window.confirm(`${title}\n\n${message}`) : true);
+  return new Promise((resolve) => Alert.alert(title, message, [{ text: 'رجوع', style: 'cancel', onPress: () => resolve(false) }, { text: confirmLabel, style: 'destructive', onPress: () => resolve(true) }], { cancelable: true, onDismiss: () => resolve(false) }));
 }
 
 function SkeletonBlock({ width = '68%', height = 11, style }: { width?: number | `${number}%`; height?: number; style?: object }) {
@@ -550,6 +555,7 @@ function SupportIssueForm({orderId,status,disabled=false}:{orderId:string;status
     if(!supabase)return
     if(disabled || !online){setMessage('إرسال البلاغ يحتاج اتصالاً مؤكداً بالخادم. تفاصيلك ما زالت على هالجهاز.');return}
     if(!reason||details.trim().length<5){setMessage('اختار نوع المشكلة واكتب تفاصيل أكثر.');return}
+    if(!(await confirmAction('إرسال البلاغ؟','البلاغ بيوصل لإدارة لَبّيك، وبيتوقف الطلب لحد ما تراجعه الإدارة.','إرسال البلاغ')))return
     setBusy(true);setMessage('')
     const {error}=await supabase.rpc('open_order_dispute',{p_order_id:orderId,p_reason:reason,p_details:details.trim(),p_idempotency_key:idempotencyKey})
     setBusy(false)
