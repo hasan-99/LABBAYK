@@ -1,7 +1,7 @@
 import { Children, Fragment, createContext, isValidElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import type { Metadata } from 'expo-router/server';
-import { ActivityIndicator, Animated, AppState, Easing, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Animated, AppState, Easing, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SymbolView, type AndroidSymbol, type SFSymbol } from 'expo-symbols';
 import { useNetworkState } from 'expo-network';
 import type { NotificationResponse } from 'expo-notifications';
@@ -1278,6 +1278,29 @@ function AdminOrderThumb({ orderId, bucket = 'order-images' }: { orderId: string
   </View>;
 }
 
+function AdminImageStrip({ orderId, bucket = 'order-images', size = 64, emptyText }: { orderId: string; bucket?: 'order-images' | 'delivery-proofs'; size?: number; emptyText?: string }) {
+  const { colors: c } = useMobileTheme();
+  const online = useInternetAvailable();
+  const [urls, setUrls] = useState<string[] | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  useEffect(() => {
+    if (!supabase || !online) return;
+    let active = true;
+    void supabase.storage.from(bucket).list(orderId, { limit: 3, sortBy: { column: 'name', order: 'asc' } }).then(async ({ data, error }) => {
+      if (error || !data?.length) { if (active) setUrls([]); return; }
+      const { data: signed } = await supabase!.storage.from(bucket).createSignedUrls(data.map((file) => `${orderId}/${file.name}`), 600);
+      if (active) setUrls((signed ?? []).flatMap((item) => item.signedUrl ? [item.signedUrl] : []));
+    }).catch(() => { if (active) setUrls([]); });
+    return () => { active = false; };
+  }, [bucket, online, orderId]);
+  if (urls === null) return <View style={{ flexDirection: 'row-reverse' }}><SkeletonBlock width={size} height={size} style={{ alignSelf: 'auto', borderRadius: 12 }} /></View>;
+  if (!urls.length) return emptyText ? <Text style={{ color: c.muted, fontSize: 12.5, textAlign: 'right' }}>{emptyText}</Text> : null;
+  return <View style={{ flexDirection: 'row-reverse', gap: 7 }}>
+    {urls.map((uri) => <Pressable key={uri} onPress={() => setOpen(uri)} accessibilityRole="button" accessibilityLabel="تكبير الصورة"><Image source={{ uri }} cachePolicy="none" style={{ width: size, height: size, borderRadius: 12, backgroundColor: c.raised }} contentFit="cover" /></Pressable>)}
+    <Modal visible={open !== null} transparent animationType="fade" onRequestClose={() => setOpen(null)}><Pressable onPress={() => setOpen(null)} style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 18, backgroundColor: 'rgba(0,0,0,0.94)' }}>{open ? <Image source={{ uri: open }} cachePolicy="none" style={{ width: '100%', height: '80%' }} contentFit="contain" /> : null}</Pressable></Modal>
+  </View>;
+}
+
 const adminStatusGroup = (status: string) => ['requested', 'quoted', 'disputed'].includes(status) ? 'action' : status === 'searching' ? 'searching' : ['accepted', 'assigned', 'shopping', 'awaiting_approval', 'purchased', 'delivering'].includes(status) ? 'active' : ['delivered', 'settled'].includes(status) ? 'done' : 'other';
 const adminFilters = [{ key: 'action', label: 'تحتاج إجراء' }, { key: 'searching', label: 'عند السائقين' }, { key: 'active', label: 'جارية' }, { key: 'done', label: 'منتهية' }, { key: 'all', label: 'الكل' }] as const;
 type AdminFilter = typeof adminFilters[number]['key'];
@@ -1396,6 +1419,73 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
     </View>
   </View>;
 
+  if (sheet) {
+    const address = sheet.address_id ? addresses[sheet.address_id] : undefined;
+    const { pickup, body } = splitPickup(sheet.request_text);
+    const delivered = ['delivered', 'settled'].includes(sheet.status);
+    const tone = toneFor(sheet.status);
+    const card = { backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12 } as const;
+    const tag = (label: string, value: string) => <View key={label} style={{ flexDirection: 'row-reverse', gap: 5, backgroundColor: color.raised, borderColor: color.border, borderWidth: 1, borderRadius: 10, paddingHorizontal: 9, paddingVertical: 4 }}><Text style={{ color: color.muted, fontSize: 12 }}>{label}</Text><Text style={{ color: color.text, fontSize: 12, fontWeight: '800' }}>{value}</Text></View>;
+    const segment = (on: boolean) => ({ flex: 1, minHeight: 46, borderRadius: 13, borderWidth: 1.5, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.primary : color.surface, alignItems: 'center' as const, justifyContent: 'center' as const });
+    const chosenDriver = drivers.find((driver) => driver.user_id === driverId);
+    return <SafeAreaView style={[style.safe, { flex: 1 }]}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: color.border }}>
+          <Pressable onPress={() => setSheet(null)} accessibilityRole="button" accessibilityLabel="رجوع" style={{ width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface, alignItems: 'center', justifyContent: 'center' }}><SymbolView name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }} tintColor={color.text} size={18} /></Pressable>
+          <View style={{ flex: 1 }}><Text style={{ color: color.muted, fontSize: 11.5, textAlign: 'right' }}>#{sheet.id.slice(0, 8)} · {timeAgo(sheet.created_at)}</Text><Text style={{ color: color.text, fontSize: 18, fontWeight: '900', textAlign: 'right' }}>طلب {sheet.category}</Text></View>
+          <View style={{ backgroundColor: tone.bg, borderRadius: 11, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: tone.fg, fontSize: 11.5, fontWeight: '900' }}>{orderStatus[sheet.status] ?? sheet.status}</Text></View>
+        </View>
+        <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 14, gap: 10, paddingBottom: 20 }}>
+          <View style={card}>
+            <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11 }}>
+              <View style={{ width: 42, height: 42, borderRadius: 21, borderWidth: 2, borderColor: color.primary, backgroundColor: color.raised, alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontSize: 19 }}>👤</Text></View>
+              <View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 18, fontWeight: '900', textAlign: 'right' }}>{nameOf(sheet.customer_id)}</Text>{address?.contact_phone ? <Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', writingDirection: 'ltr' }}>{address.contact_phone}</Text> : null}</View>
+              {address?.contact_phone ? <Pressable onPress={() => void Linking.openURL(`tel:${address.contact_phone}`)} accessibilityRole="button" accessibilityLabel="اتصال بالعميل" style={{ minHeight: 44, borderRadius: 13, backgroundColor: color.primary, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 14, fontWeight: '900' }}>📞 اتصال</Text></Pressable> : null}
+            </View>
+            <View style={{ height: 1, backgroundColor: color.border, marginVertical: 10 }} />
+            <View style={{ flexDirection: 'row-reverse', gap: 9, alignItems: 'flex-start' }}>
+              <Text style={{ fontSize: 16 }}>📍</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: color.text, fontSize: 14.5, fontWeight: '800', lineHeight: 22, textAlign: 'right' }}>{address ? [address.neighborhood + '، ' + address.city, address.street].filter(Boolean).join(' · ') : '—'}</Text>
+                {address && (address.landmark || address.building) ? <Text style={{ color: color.muted, fontSize: 12.5, lineHeight: 19, textAlign: 'right' }}>{[address.landmark, address.building ? 'بناء ' + address.building : ''].filter(Boolean).join(' · ')}</Text> : null}
+              </View>
+            </View>
+          </View>
+          <View style={[card, { gap: 9 }]}>
+            <Text style={{ color: color.text, fontSize: 15, fontWeight: '700', lineHeight: 25, textAlign: 'right' }}>{body}</Text>
+            <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 6 }}>{[tag('القسم', sheet.category), tag('ميزانية', numberFormatter.format(sheet.budget_ceiling_minor)), ...(pickup ? [tag('الشراء من', pickup)] : [])]}</View>
+            <AdminImageStrip orderId={sheet.id} />
+          </View>
+          {delivered && <View style={[card, { borderColor: color.accent, gap: 9 }]}>
+            <Text style={{ color: color.accent, fontSize: 14.5, fontWeight: '900', textAlign: 'right' }}>✅ إثبات التسليم</Text>
+            <AdminImageStrip orderId={sheet.id} bucket="delivery-proofs" size={96} emptyText="ما في صورة إثبات (سُلّم بالطريقة القديمة)." />
+            <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5 }}>السائق</Text><Text style={{ color: color.text, fontSize: 13.5, fontWeight: '800' }}>{nameOf(sheet.driver_id)}</Text></View>
+            <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5 }}>وقت التسليم</Text><Text style={{ color: color.text, fontSize: 13.5, fontWeight: '800' }}>{sheet.delivered_at ? shortDateTimeFormatter.format(new Date(sheet.delivered_at)) : '—'}</Text></View>
+            {sheet.driver_id && driverPhones[sheet.driver_id] ? <Pressable onPress={() => void Linking.openURL(`tel:${driverPhones[sheet.driver_id!]}`)} accessibilityRole="button" accessibilityLabel="اتصال بالسائق" style={{ minHeight: 44, borderRadius: 13, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 14, fontWeight: '900' }}>📞 اتصال بالسائق · {driverPhones[sheet.driver_id]}</Text></Pressable> : null}
+          </View>}
+          {!delivered && !actionable && <View style={card}><Text style={{ color: color.muted, fontSize: 13.5, textAlign: 'center', lineHeight: 22 }}>{sheet.driver_id ? `الطلب مع السائق ${nameOf(sheet.driver_id)} ولا يحتاج إجراء منك.` : 'ما في إجراءات متاحة لهالطلب حالياً.'}</Text></View>}
+          {actionable && <View style={[card, { borderColor: color.primary, gap: 8 }]}>
+            <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>أجرة التوصيل</Text>
+            <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, borderRadius: 13, paddingHorizontal: 13 }}>
+              <TextInput value={fee} onChangeText={(value) => setFee(value.replace(/\D/g, '').slice(0, 9))} keyboardType="number-pad" placeholder="مثال: 15000" placeholderTextColor={color.muted} style={{ flex: 1, minHeight: 50, color: color.primary, fontSize: 20, fontWeight: '900', textAlign: 'right' }} accessibilityLabel="أجرة التوصيل" />
+              <Text style={{ color: color.muted, fontSize: 13, fontWeight: '700' }}>ل.س</Text>
+            </View>
+            <View style={{ flexDirection: 'row-reverse', gap: 6 }}>{[10000, 15000, 20000, 25000].map((amount) => <Pressable key={amount} onPress={() => setFee(String(amount))} accessibilityRole="button" style={{ flex: 1, minHeight: 38, borderRadius: 10, borderWidth: 1, borderColor: fee === String(amount) ? color.primary : color.border, backgroundColor: fee === String(amount) ? color.raised : color.surface, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: fee === String(amount) ? color.primary : color.muted, fontSize: 12.5, fontWeight: '800' }}>{numberFormatter.format(amount)}</Text></Pressable>)}</View>
+            <View style={{ height: 1, backgroundColor: color.border, marginVertical: 2 }} />
+            <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>إرسال إلى</Text>
+            <View style={{ flexDirection: 'row-reverse', gap: 7 }}>
+              <Pressable onPress={() => setMode('all')} accessibilityRole="radio" accessibilityState={{ selected: mode === 'all' }} style={segment(mode === 'all')}><Text style={{ color: mode === 'all' ? color.background : color.text, fontSize: 13.5, fontWeight: '800' }}>كل المتاحين ({drivers.length})</Text></Pressable>
+              <Pressable onPress={() => setMode('driver')} accessibilityRole="radio" accessibilityState={{ selected: mode === 'driver' }} style={segment(mode === 'driver')}><Text style={{ color: mode === 'driver' ? color.background : color.text, fontSize: 13.5, fontWeight: '800' }}>سائق محدد</Text></Pressable>
+            </View>
+            {mode === 'driver' && (drivers.length ? <View style={{ gap: 6 }}>{drivers.map((driver) => { const on = driverId === driver.user_id; return <Pressable key={driver.user_id} onPress={() => setDriverId(driver.user_id)} accessibilityRole="radio" accessibilityState={{ selected: on }} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 9, minHeight: 46, paddingHorizontal: 11, borderRadius: 12, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.raised : color.surface }}><Text style={{ fontSize: 15 }}>{on ? '✅' : '🛵'}</Text><Text style={{ flex: 1, color: color.text, fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>{nameOf(driver.user_id)}</Text><Text style={{ color: color.muted, fontSize: 12 }}>{driver.vehicle_description || 'بدون وصف'}</Text></Pressable>; })}</View> : <Text style={{ color: '#F0CC83', fontSize: 13, textAlign: 'right' }}>ما في سائق متاح حالياً. فيك ترسل للجميع لما يتوفر سائق.</Text>)}
+          </View>}
+        </ScrollView>
+        {actionable && <View style={{ paddingHorizontal: 14, paddingTop: 8, paddingBottom: 12, borderTopWidth: 1, borderTopColor: color.border, backgroundColor: color.background }}>
+          <Pressable disabled={busy || !online} onPress={() => void priceAndRoute()} accessibilityRole="button" style={{ minHeight: 54, borderRadius: 17, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', opacity: busy || !online ? 0.55 : 1 }}><Text style={{ color: color.background, fontSize: 16, fontWeight: '900' }}>{busy ? 'عم نحفظ ونرسل…' : mode === 'driver' ? (chosenDriver ? `تحديد الأجرة وإسناد ${nameOf(chosenDriver.user_id)}` : 'تحديد الأجرة وإسناد السائق') : 'تحديد الأجرة وإرسال للجميع'}</Text></Pressable>
+        </View>}
+      </KeyboardAvoidingView>
+    </SafeAreaView>;
+  }
   return <SafeAreaView style={[style.safe, { flex: 1 }]}>
     {header}
     <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 12 }} keyboardShouldPersistTaps="handled">
@@ -1435,55 +1525,6 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
           {list.length > visible && <Pressable onPress={() => setVisible((value) => value + 25)} accessibilityRole="button" style={[pill(false), { alignSelf: 'center', justifyContent: 'center' }]}><Text style={{ color: color.primary, fontSize: 13, fontWeight: '800' }}>عرض المزيد ({list.length - visible})</Text></Pressable>}
         </> : <View style={{ alignItems: 'center', padding: 34, gap: 8 }}><Text style={{ color: color.text, fontSize: 17, fontWeight: '900' }}>ما في طلبات هون</Text><Text style={{ color: color.muted, fontSize: 13.5, textAlign: 'center' }}>{search ? 'ما لقينا نتيجة لبحثك.' : 'لما تنضاف طلبات بهالتصنيف بتظهر هون.'}</Text></View>}
     </ScrollView>
-    <Modal visible={!!sheet} transparent animationType="slide" onRequestClose={() => setSheet(null)}>
-      <Pressable style={style.sheetBackdrop} onPress={() => setSheet(null)} accessibilityLabel="إغلاق"><Pressable style={[style.sheet, { height: '92%', paddingBottom: 14, gap: 10 }]} onPress={() => {}}>
-        {sheet && <>
-          <View style={style.sheetHandle} />
-          <View style={style.sheetHead}>
-            <View style={{ flex: 1, minWidth: 0 }}><Text style={style.sheetKicker}>#{sheet.id.slice(0, 8)} · {timeAgo(sheet.created_at)}</Text><Text style={style.sheetTitle}>{sheet.category} · {orderStatus[sheet.status] ?? sheet.status}</Text></View>
-            <Pressable onPress={() => setSheet(null)} style={style.sheetClose} accessibilityRole="button" accessibilityLabel="إغلاق"><SymbolView name={{ ios: 'xmark', android: 'close', web: 'close' }} tintColor={color.muted} size={16} /></Pressable>
-          </View>
-          <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator contentContainerStyle={{ gap: 12, paddingBottom: 8 }}>
-            {['delivered', 'settled'].includes(sheet.status) && <View style={[style.sheetBox, { borderColor: color.accent, gap: 10 }]}>
-              <Text style={{ color: color.accent, fontSize: 15, fontWeight: '900', textAlign: 'right' }}>✅ إثبات التسليم</Text>
-              <OrderImageGallery orderId={sheet.id} bucket="delivery-proofs" label="صورة التسليم" defaultOpen />
-              <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', gap: 10 }}><Text style={{ color: color.muted, fontSize: 14 }}>السائق</Text><Text style={{ color: color.text, fontSize: 14, fontWeight: '800', flexShrink: 1 }}>{nameOf(sheet.driver_id)}</Text></View>
-              <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', gap: 10 }}><Text style={{ color: color.muted, fontSize: 14 }}>وقت التسليم</Text><Text style={{ color: color.text, fontSize: 14, fontWeight: '800' }}>{sheet.delivered_at ? shortDateTimeFormatter.format(new Date(sheet.delivered_at)) : '—'}</Text></View>
-              {sheet.driver_id && driverPhones[sheet.driver_id] ? <Pressable onPress={() => void Linking.openURL(`tel:${driverPhones[sheet.driver_id!]}`)} accessibilityRole="button" accessibilityLabel="اتصال بالسائق" style={{ minHeight: 44, borderRadius: 14, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 14, fontWeight: '900' }}>📞 اتصال بالسائق · {driverPhones[sheet.driver_id]}</Text></Pressable> : null}
-            </View>}
-            <OrderImageGallery orderId={sheet.id} defaultOpen />
-            <View style={style.sheetBox}><Text style={style.sheetBody}>{splitPickup(sheet.request_text).body}</Text></View>
-            <View style={style.sheetBox}>
-              <View style={{ paddingRight: 26 }}>
-                <View style={{ position: 'absolute', right: 8, top: 14, bottom: 14, borderRightWidth: 2, borderStyle: 'dashed', borderRightColor: color.border }} />
-                <View style={{ marginVertical: 8 }}><View style={{ position: 'absolute', right: -24, top: 6, width: 12, height: 12, borderRadius: 6, backgroundColor: color.primary }} /><Text style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>من (الشراء)</Text><Text style={{ color: color.text, fontSize: 14.5, fontWeight: '800', lineHeight: 22, textAlign: 'right' }}>{splitPickup(sheet.request_text).pickup || 'غير محدد من العميل'}</Text></View>
-                <View style={{ marginVertical: 8 }}><View style={{ position: 'absolute', right: -24, top: 6, width: 12, height: 12, borderRadius: 6, backgroundColor: color.accent }} /><Text style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>إلى (التسليم)</Text><Text style={{ color: color.text, fontSize: 14.5, fontWeight: '800', lineHeight: 22, textAlign: 'right' }}>{sheet.address_id && addresses[sheet.address_id] ? [addresses[sheet.address_id].neighborhood + '، ' + addresses[sheet.address_id].city, addresses[sheet.address_id].street, addresses[sheet.address_id].building ? 'بناء ' + addresses[sheet.address_id].building : '', addresses[sheet.address_id].landmark].filter(Boolean).join(' · ') : '—'}</Text></View>
-              </View>
-            </View>
-            <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8 }}>
-              {([['العميل', nameOf(sheet.customer_id)], ['ميزانية الشراء', numberFormatter.format(sheet.budget_ceiling_minor) + ' ل.س'], ['أجرة التوصيل', sheet.delivery_quote_set_at ? numberFormatter.format(sheet.delivery_fee_minor) + ' ل.س' : 'غير محددة'], ['السائق', nameOf(sheet.driver_id)]] as const).map(([label, value]) => <View key={label} style={{ flexBasis: '48%', flexGrow: 1, backgroundColor: color.raised, borderRadius: 16, borderWidth: 1, borderColor: color.border, paddingVertical: 10, paddingHorizontal: 12 }}><Text style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>{label}</Text><Text numberOfLines={1} style={{ color: color.text, fontSize: 14.5, fontWeight: '900', textAlign: 'right', marginTop: 2 }}>{value}</Text></View>)}
-            </View>
-            {sheet.address_id && addresses[sheet.address_id]?.contact_phone ? <Pressable onPress={() => void Linking.openURL(`tel:${addresses[sheet.address_id!].contact_phone}`)} accessibilityRole="button" accessibilityLabel="اتصال بالعميل" style={{ minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 14, fontWeight: '900' }}>📞 اتصال بالعميل · {addresses[sheet.address_id].contact_phone}</Text></Pressable> : null}
-            {actionable && <View style={{ gap: 8 }}>
-              <Text style={{ color: color.text, fontSize: 14.5, fontWeight: '900', textAlign: 'right' }}>إرسال الطلب إلى</Text>
-              {([['all', `كل السائقين المتاحين (${drivers.length})`, 'أول سائق يقبل يحصل على الطلب'], ['driver', 'سائق محدد', 'اختر سائقاً بعينه']] as const).map(([key, title, hint]) => <Pressable key={key} onPress={() => setMode(key)} accessibilityRole="radio" accessibilityState={{ selected: mode === key }} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 12, minHeight: 60, paddingHorizontal: 14, borderRadius: 16, borderWidth: 1.5, borderColor: mode === key ? color.primary : color.border, backgroundColor: mode === key ? color.raised : color.surface }}><View style={{ width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: mode === key ? color.primary : color.muted, alignItems: 'center', justifyContent: 'center' }}>{mode === key && <View style={{ width: 11, height: 11, borderRadius: 6, backgroundColor: color.primary }} />}</View><View style={{ flex: 1 }}><Text style={{ color: color.text, fontSize: 15, fontWeight: '900', textAlign: 'right' }}>{title}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', marginTop: 1 }}>{hint}</Text></View></Pressable>)}
-              {mode === 'driver' && (drivers.length ? drivers.map((driver) => { const on = driverId === driver.user_id; return <Pressable key={driver.user_id} onPress={() => setDriverId(driver.user_id)} accessibilityRole="radio" accessibilityState={{ selected: on }} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10, minHeight: 52, marginRight: 18, paddingHorizontal: 14, borderRadius: 14, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.raised : color.surface }}><Text style={{ fontSize: 16 }}>{on ? '✅' : '🛵'}</Text><View style={{ flex: 1 }}><Text style={{ color: color.text, fontSize: 14.5, fontWeight: '800', textAlign: 'right' }}>{nameOf(driver.user_id)}</Text><Text style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>{driver.vehicle_description || 'بدون وصف مركبة'}</Text></View></Pressable>; }) : <Text style={{ color: '#F0CC83', fontSize: 13, textAlign: 'right' }}>ما في سائق متاح حالياً. فيك ترسل للجميع لما يتوفر سائق.</Text>)}
-            </View>}
-            {!actionable && <Text style={{ color: color.muted, fontSize: 13.5, textAlign: 'center', lineHeight: 22 }}>{['delivered', 'settled'].includes(sheet.status) ? 'تم تسليم الطلب. التفاصيل وإثبات التسليم أعلاه.' : sheet.driver_id ? 'الطلب مع السائق ولا يحتاج إجراء منك.' : 'ما في إجراءات متاحة لهالطلب حالياً.'}</Text>}
-          </ScrollView>
-          {actionable && <View style={{ gap: 8, paddingTop: 10, borderTopWidth: 1, borderTopColor: color.border }}>
-            <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10 }}>
-              <Text style={{ color: color.text, fontSize: 14, fontWeight: '900' }}>الأجرة</Text>
-              <TextInput value={fee} onChangeText={(value) => setFee(value.replace(/\D/g, '').slice(0, 9))} keyboardType="number-pad" placeholder="مثال: 15000" placeholderTextColor={color.muted} style={[input, { flex: 1, minHeight: 48 }]} accessibilityLabel="أجرة التوصيل" />
-              <Text style={{ color: color.muted, fontSize: 13 }}>ل.س</Text>
-            </View>
-            <View style={{ flexDirection: 'row-reverse', gap: 7 }}>{[10000, 15000, 20000, 25000].map((amount) => <Pressable key={amount} onPress={() => setFee(String(amount))} accessibilityRole="button" style={{ flex: 1, minHeight: 38, borderRadius: 12, borderWidth: 1, borderColor: fee === String(amount) ? color.primary : color.border, backgroundColor: fee === String(amount) ? color.raised : color.surface, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: fee === String(amount) ? color.primary : color.muted, fontSize: 13, fontWeight: '800' }}>{numberFormatter.format(amount)}</Text></Pressable>)}</View>
-            <TextInput value={reason} onChangeText={setReason} placeholder="سبب التسعير (اختياري)" placeholderTextColor={color.muted} style={[input, { minHeight: 44, fontSize: 14 }]} accessibilityLabel="سبب التسعير" />
-            <Pressable disabled={busy || !online} onPress={() => void priceAndRoute()} accessibilityRole="button" style={{ minHeight: 56, borderRadius: 18, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', opacity: busy || !online ? 0.55 : 1 }}><Text style={{ color: color.background, fontSize: 16.5, fontWeight: '900' }}>{busy ? 'عم نحفظ ونرسل…' : mode === 'driver' ? 'تحديد الأجرة وإسناد السائق' : 'تحديد الأجرة وإرسال للجميع'}</Text></Pressable>
-          </View>}
-        </>}
-      </Pressable></Pressable>
-    </Modal>
   </SafeAreaView>;
 }
 
