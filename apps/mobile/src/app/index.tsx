@@ -1,4 +1,4 @@
-import { Children, Fragment, createContext, isValidElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Children, Component, Fragment, createContext, isValidElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import type { Metadata } from 'expo-router/server';
 import { ActivityIndicator, Alert, Animated, AppState, Easing, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, View, type ScrollViewProps } from 'react-native';
@@ -365,6 +365,15 @@ function AddressBook({ userId, onBack, backLabel, onAddressSaved }: { userId: st
   </View>;
 }
 
+class NotificationBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  render() {
+    if (this.state.failed) return <Pressable onPress={() => this.setState({ failed: false })} accessibilityRole="button" style={{ margin: 16, padding: 18, borderRadius: 18, borderWidth: 1, borderColor: '#745C2C', backgroundColor: '#3A2D18', alignItems: 'center', gap: 6 }}><Text style={{ color: '#FFE2A0', fontSize: 15, fontWeight: '900' }}>صار خطأ بعرض التنبيهات</Text><Text style={{ color: '#F0CC83', fontSize: 13 }}>اضغط هون لإعادة المحاولة</Text></Pressable>;
+    return this.props.children;
+  }
+}
+
 const notificationKind = (title: string) => /عرض|توصيل جديد/.test(title) ? 'offer' : /تسوية|عمولة|رصيد|محفظة/.test(title) ? 'money' : 'update';
 const notificationIcons = { offer: { ios: 'bolt.fill', android: 'bolt', web: 'bolt' }, money: { ios: 'banknote.fill', android: 'payments', web: 'payments' }, update: { ios: 'cube.fill', android: 'deployed_code', web: 'deployed_code' } } as const;
 const notificationKindLabels = { offer: 'عرض توصيل', money: 'تسوية', update: 'تحديث على الطلب' } as const;
@@ -379,7 +388,7 @@ function formatNotificationTime(iso: string) {
   return (days <= 0 ? 'اليوم' : days === 1 ? 'أمس' : notificationDateFormatter.format(date)) + ' · ' + time;
 }
 
-function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = false, onUnreadCountChange }: { userId: string; refreshKey?: number; onOpenOrder?: (orderId: string) => void; standalone?: boolean; onUnreadCountChange?: (count: number) => void }) {
+function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = false, active = true, onUnreadCountChange }: { userId: string; active?: boolean; refreshKey?: number; onOpenOrder?: (orderId: string) => void; standalone?: boolean; onUnreadCountChange?: (count: number) => void }) {
   const { colors: c, styles: s } = useMobileTheme();
   const network = useNetworkState();
   const online = useInternetAvailable();
@@ -421,6 +430,8 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
   const refreshRef = useRef(refresh);
   useEffect(() => { refreshRef.current = refresh; }, [refresh]);
   const [offerEnded, setOfferEnded] = useState(false);
+  // Never keep a native modal open while this tab is hidden.
+  useEffect(() => { if (!active) setSheet(null); }, [active]);
   const hasItemsRef = useRef(false);
   useEffect(() => { hasItemsRef.current = items.length > 0; }, [items]);
   // For offer notifications, check whether the offer can still be accepted.
@@ -525,7 +536,7 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
       </Pressable>):!online?<Text style={s.notificationEmpty}>اتصل بالإنترنت حتى نحمّل التنبيهات.</Text>:message?<Text style={s.notificationEmpty}>ما قدرنا نحمّل التنبيهات. جرّب تحديث الصفحة.</Text>:<Text style={s.notificationEmpty}>ما في تنبيهات جديدة.</Text>}
       {standalone&&hasMore&&<Pressable onPress={()=>void loadMore()} disabled={loadingMore||!online} style={s.notificationLoadMore} accessibilityRole="button"><Text style={s.notificationLoadMoreText}>{loadingMore?'عم نحمّل…':'تحميل تنبيهات أقدم'}</Text></Pressable>}
     </View>}
-    {standalone&&<Modal visible={!!sheet} transparent animationType="slide" onRequestClose={()=>setSheet(null)}>
+    {standalone&&!!sheet&&<Modal visible transparent animationType="slide" onRequestClose={()=>setSheet(null)}>
       <Pressable style={s.sheetBackdrop} onPress={()=>setSheet(null)} accessibilityLabel="إغلاق"><Pressable style={s.sheet} onPress={()=>{}}>
         {sheet&&<>
         <View style={s.sheetHandle}/>
@@ -540,7 +551,7 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
           <View style={s.nFooter}>{sheet.order_id?<View style={s.nOrderChip}><Text style={s.nOrderLabel}>رقم الطلب:</Text><Text style={s.nOrderCode}>{'#'+sheet.order_id.slice(0,8)}</Text></View>:<View/>}<Text style={s.nDate}>{formatNotificationTime(sheet.created_at)}</Text></View>
         </View>
         {offerEnded&&notificationKind(sheet.title)==='offer'&&<Text style={{color:'#F0CC83',fontSize:13.5,fontWeight:'800',textAlign:'center',lineHeight:22}}>انتهت مهلة هذا العرض أو قبله سائق آخر.</Text>}
-        {sheet.order_id&&<Pressable onPress={()=>{const id=sheet.order_id;setSheet(null);if(id)setTimeout(()=>openOrderRef.current?.(id),450)}} style={s.sheetCta} accessibilityRole="button"><Text style={s.sheetCtaText}>فتح تفاصيل الطلب</Text><SymbolView name={{ios:'arrow.left',android:'arrow_back',web:'arrow_back'}} tintColor="#0B1411" size={18}/></Pressable>}
+        {sheet.order_id&&!(offerEnded&&notificationKind(sheet.title)==='offer')&&<Pressable onPress={()=>{const id=sheet.order_id;setSheet(null);if(id)setTimeout(()=>openOrderRef.current?.(id),450)}} style={s.sheetCta} accessibilityRole="button"><Text style={s.sheetCtaText}>فتح تفاصيل الطلب</Text><SymbolView name={{ios:'arrow.left',android:'arrow_back',web:'arrow_back'}} tintColor="#0B1411" size={18}/></Pressable>}
         </>}
       </Pressable></Pressable>
     </Modal>}
@@ -1329,7 +1340,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
           <DriverOperations key={userId} userId={userId} screen={operationsScreen} isActive={tab === 'home' || tab === 'orders'} profileComplete={profileComplete} onCompleteProfile={() => goTab('profile')} onOpenOrders={() => goTab('orders')}/>
         </View>}
         {tab === 'notifications' && <View style={s.driverPageIntro}><Text style={s.driverHeroEyebrow}>تحديثات طلباتك</Text><Text style={s.accountPageTitle}>التنبيهات</Text><Text style={s.accountPageSubtitle}>كل تنبيه لحاله مع وقت وصوله ورقم الطلب. اضغط عليه لتفتح الطلب.</Text></View>}
-        {visitedTabs.notifications && <View style={tab === 'notifications' ? undefined : s.hidden}><EntranceSection transitionKey={tab === 'notifications' ? 'notifications-visible' : 'notifications-hidden'}><NotificationInbox userId={userId} standalone onUnreadCountChange={setNotificationCount} onOpenOrder={() => goTab('orders')}/></EntranceSection></View>}
+        {visitedTabs.notifications && <View style={tab === 'notifications' ? undefined : s.hidden}><EntranceSection transitionKey="notifications"><NotificationBoundary><NotificationInbox userId={userId} standalone active={tab === 'notifications'} onUnreadCountChange={setNotificationCount} onOpenOrder={() => goTab('orders')}/></NotificationBoundary></EntranceSection></View>}
       </KeyboardScroll>
       <View style={s.driverFooter}>{([{ key: 'home', label: 'الرئيسية', ios: 'house.fill', android: 'home' }, { key: 'orders', label: 'الطلبات', ios: 'shippingbox.fill', android: 'local_shipping' }, { key: 'notifications', label: 'التنبيهات', ios: 'bell.fill', android: 'notifications' }, { key: 'profile', label: 'حسابي', ios: 'person.crop.circle.fill', android: 'person' }] as const).map(({ key, label, ios, android }) => <Pressable key={key} accessibilityRole="button" accessibilityLabel={key === 'notifications' && notificationCount > 0 ? `${label}، ${notificationCount} تنبيه غير مقروء` : label} accessibilityState={{ selected: tab === key }} onPress={() => goTab(key)} style={[s.driverFooterButton, tab === key && s.driverFooterButtonActive]}><View style={s.driverFooterIconWrap}><Animated.View style={[s.footerIcon, { transform: [{ scale: activeTabAnimation === key ? tabScale : 1 }] }]}><SymbolView name={{ ios, android, web: android }} tintColor={tab === key ? (theme === 'light' ? '#17210F' : c.background) : c.muted} size={20}/></Animated.View>{key==='notifications'&&notificationCount>0?<View style={s.driverTabBadge}><Text style={s.driverTabBadgeText}>{notificationCount>99?'99+':notificationCount}</Text></View>:null}</View><Text style={[s.driverFooterLabel, tab === key && s.driverFooterLabelActive]}>{label}</Text></Pressable>)}</View>
     </View>
@@ -2210,7 +2221,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       </StaggeredSections></View>}
       </StaggeredSections>
       <View style={tab === 'notifications' ? undefined : s.hidden}>
-        <NotificationInbox userId={userId} refreshKey={notificationsRefreshKey} standalone={tab === 'notifications'} onUnreadCountChange={setNotificationCount} onOpenOrder={(orderId) => { setNotificationOrderId(orderId); navigate('orders'); }}/>
+        <NotificationInbox userId={userId} refreshKey={notificationsRefreshKey} standalone={tab === 'notifications'} active={tab === 'notifications'} onUnreadCountChange={setNotificationCount} onOpenOrder={(orderId) => { setNotificationOrderId(orderId); navigate('orders'); }}/>
       </View>
       </KeyboardScroll>
       <View style={s.footer}>
