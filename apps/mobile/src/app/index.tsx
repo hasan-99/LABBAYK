@@ -1655,6 +1655,15 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
     void supabase.from('order_disputes').select('id,reason,details,opened_by,created_at').eq('order_id', sheet.id).is('resolved_at', null).limit(1).then(({ data }) => { if (active) setDispute(data?.[0] ?? null); });
     return () => { active = false; };
   }, [sheet, openDisputes]);
+  const pauseOrder = async () => {
+    if (!supabase || !dispute) return;
+    if (!(await confirmAction('إيقاف الطلب مؤقتاً؟', 'السائق والعميل بيشوفوا إن الطلب متوقف مؤقتاً. بيرجع لحالته لما تحل البلاغ.', 'إيقاف الطلب'))) return;
+    setResolving(true);
+    const { error } = await supabase.rpc('admin_pause_order', { p_dispute_id: dispute.id });
+    setResolving(false);
+    if (error) { setMessage('ما قدرنا نوقف الطلب. تأكد أنه ما زال جارياً وجرّب مرة ثانية.'); return; }
+    setSheet(null); await refresh(); setMessage('تم إيقاف الطلب مؤقتاً.');
+  };
   const resolveDispute = async () => {
     if (!supabase || !dispute) return;
     if (resolution.trim().length < 5) { setMessage('اكتب ملخص الحل (5 أحرف على الأقل).'); return; }
@@ -1752,7 +1761,8 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
               <Text style={{ color: color.text, fontSize: 14, fontWeight: '800', textAlign: 'right' }}>{dispute.reason} · <Text style={{ color: color.muted, fontWeight: '500' }}>{timeAgo(dispute.created_at)}</Text></Text>
               <Text selectable style={{ color: color.text, fontSize: 14, lineHeight: 23, textAlign: 'right' }}>{dispute.details}</Text>
               <TextInput value={resolution} onChangeText={setResolution} multiline textAlign="right" textAlignVertical="top" placeholder="اكتب ملخص الحل أو الخطوة التي تمت" placeholderTextColor={color.muted} style={{ minHeight: 70, borderRadius: 12, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, color: color.text, padding: 10, fontSize: 14 }} accessibilityLabel="ملخص الحل" />
-              <Pressable disabled={resolving || !online} onPress={() => void resolveDispute()} accessibilityRole="button" style={{ minHeight: 48, borderRadius: 14, backgroundColor: '#B7FF30', alignItems: 'center', justifyContent: 'center', opacity: resolving || !online ? 0.55 : 1 }}><Text style={{ color: '#0B1411', fontSize: 15, fontWeight: '900' }}>{resolving ? 'لحظة…' : '✅ تم حل البلاغ'}</Text></Pressable>
+              <Pressable disabled={resolving || !online} onPress={() => void resolveDispute()} accessibilityRole="button" style={{ minHeight: 48, borderRadius: 14, backgroundColor: '#B7FF30', alignItems: 'center', justifyContent: 'center', opacity: resolving || !online ? 0.55 : 1 }}><Text style={{ color: '#0B1411', fontSize: 15, fontWeight: '900' }}>{resolving ? 'لحظة…' : sheet.status === 'disputed' ? '✅ حل البلاغ وإعادة الطلب' : '✅ تم حل البلاغ'}</Text></Pressable>
+              {sheet.status !== 'disputed' && ['accepted', 'assigned', 'shopping', 'awaiting_approval', 'purchased', 'delivering'].includes(sheet.status) ? <Pressable disabled={resolving || !online} onPress={() => void pauseOrder()} accessibilityRole="button" style={{ minHeight: 44, borderRadius: 14, borderWidth: 1, borderStyle: 'dashed', borderColor: '#C98A2B', alignItems: 'center', justifyContent: 'center', opacity: resolving || !online ? 0.55 : 1 }}><Text style={{ color: '#F0CC83', fontSize: 13.5, fontWeight: '800' }}>⏸ إيقاف الطلب مؤقتاً</Text></Pressable> : null}
             </> : <Text style={{ color: color.muted, fontSize: 13, textAlign: 'right' }}>عم نحمّل تفاصيل البلاغ…</Text>}
           </View>}
           {sheet.status === 'searching' && ((declines[sheet.id]?.length ?? 0) > 0 || (pending[sheet.id]?.length ?? 0) > 0) && <View style={[card, { gap: 6 }]}>

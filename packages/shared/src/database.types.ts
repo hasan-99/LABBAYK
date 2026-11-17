@@ -920,6 +920,7 @@ export type Database = {
         Args: { p_code: string; p_order_id: string }
         Returns: boolean
       }
+      admin_pause_order: { Args: { p_dispute_id: string }; Returns: undefined }
       get_order_driver_contact: {
         Args: { p_order_id: string }
         Returns: { display_name: string; phone: string | null }[]
