@@ -882,7 +882,16 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
         <View style={{ backgroundColor: '#26391C', borderRadius: 12, paddingHorizontal: 11, minHeight: 28, justifyContent: 'center' }}><Text style={{ color: '#B7FF30', fontSize: 12.5, fontWeight: '900' }}>{activeLabels[order.status] ?? orderStatus[order.status] ?? order.status}</Text></View>
         <Text style={{ color: c.muted, fontSize: 12 }}>#{order.id.slice(0, 6)} · {order.category}</Text>
       </View>
-      <Text style={{ color: c.text, fontSize: 15.5, fontWeight: '800', lineHeight: 25, textAlign: 'right' }}>{order.request_text}</Text>
+      <View style={{ backgroundColor: c.background, borderColor: c.border, borderWidth: 1, borderRadius: 16, padding: 11, gap: 9 }}>
+        <View style={{ gap: 3 }}>
+          <Text style={{ color: c.muted, fontSize: 11.5, fontWeight: '800', textAlign: 'right' }}>🛒 المطلوب شراؤه</Text>
+          <Text selectable style={{ color: c.text, fontSize: 16, fontWeight: '900', lineHeight: 26, textAlign: 'right' }}>{splitPickup(order.request_text).body}</Text>
+        </View>
+        {splitPickup(order.request_text).pickup ? <View style={{ gap: 3, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 9 }}>
+          <Text style={{ color: c.muted, fontSize: 11.5, fontWeight: '800', textAlign: 'right' }}>🏪 الشراء من</Text>
+          <Text selectable style={{ color: c.primary, fontSize: 15.5, fontWeight: '900', lineHeight: 24, textAlign: 'right' }}>{splitPickup(order.request_text).pickup}</Text>
+        </View> : null}
+      </View>
       <View style={{ flexDirection: 'row-reverse', alignItems: 'flex-start', justifyContent: 'space-between', marginHorizontal: 4 }}>
         <View style={{ position: 'absolute', top: 10, right: '12%', left: '12%', height: 3, backgroundColor: c.border }} />
         {driverSteps.map((label, index) => { const done = index < current; const now = index === current; return <View key={label} style={{ flex: 1, alignItems: 'center' }}>
