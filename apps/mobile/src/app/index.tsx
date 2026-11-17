@@ -1947,7 +1947,6 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     return error ? null : data ?? [];
   }, [online]);
   useEffect(() => {
-    if (tab !== 'orders') return;
     let active = true;
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     let hasServerOrders = false;
@@ -1983,6 +1982,8 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     const appStateSubscription = AppState.addEventListener('change', (state) => { if (state === 'active') scheduleRefresh(); });
     return () => { active = false; appStateSubscription.remove(); if (refreshTimer) clearTimeout(refreshTimer); void supabase?.removeChannel(channel); };
   }, [online, tab, userId, fetchCustomerOrders, applyCustomerOrders]);
+  const activeCustomerOrders = orders.filter((order) => customerGroup(order.status) === 'live');
+  const bannerLabels: Record<string, string> = { requested: 'عم نجهّز طلبك', quoted: 'عم نفتش على سائق لطلبك', searching: 'عم نفتش على سائق لطلبك', accepted: 'قبل السائق طلبك', assigned: 'قبل السائق طلبك', shopping: 'السائق عم يجهّز طلبك', awaiting_approval: 'السائق عم يجهّز طلبك', purchased: 'طلبك جاهز للتوصيل', delivering: '🛵 طلبك بالطريق لعندك', disputed: 'طلبك قيد مراجعة الدعم' };
   const submitOrder = async () => {
     const budget = Number(budgetCeiling);
     if (!draftReady) { setRequestMessage('عم نسترجع مسودتك المحفوظة. جرّب بعد لحظة.'); return; }
@@ -2097,6 +2098,15 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       <KeyboardScroll key={tab} style={s.bodyScroll} contentContainerStyle={s.content}>
       <StaggeredSections transitionKey={`${tab}-${tab === 'orders' && ordersLoading ? 'loading' : 'ready'}`}>
       {tab === 'addresses' ? <EntranceSection transitionKey={tab}><AddressBook userId={userId} onBack={goBack} backLabel={`العودة إلى ${tabHistory[tabHistory.length - 1] === 'profile' ? 'حسابي' : 'الرئيسية'}`} onAddressSaved={(address) => { addressIdRef.current = address.id; setAddressId(address.id); setAddressSummary(`${address.label} · ${address.neighborhood}`); setSelectedAddress(address); }} /></EntranceSection> : tab === 'home' ? <>
+      {tab === 'home' && activeCustomerOrders.length > 0 && <Pressable onPress={() => { setOrderFilter('live'); navigate('orders'); }} accessibilityRole="button" accessibilityLabel={activeCustomerOrders.length === 1 ? `${bannerLabels[activeCustomerOrders[0].status] ?? 'طلبك جارٍ'}. تتبّع الطلب` : `لديك ${activeCustomerOrders.length} طلبات جارية. عرض`} style={{ backgroundColor: c.surface, borderColor: '#3F6A2E', borderWidth: 1, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, gap: 8, marginBottom: 10 }}>
+        <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 9 }}>
+          <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: '#B7FF30', shadowColor: '#B7FF30', shadowOpacity: 0.6, shadowRadius: 5, shadowOffset: { width: 0, height: 0 } }} />
+          <Text style={{ flex: 1, color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{activeCustomerOrders.length === 1 ? (bannerLabels[activeCustomerOrders[0].status] ?? 'طلبك جارٍ') : `لديك ${activeCustomerOrders.length} طلبات جارية`}</Text>
+          <Text style={{ color: c.primary, fontSize: 12, fontWeight: '900' }}>{activeCustomerOrders.length === 1 ? 'تتبّع ‹' : 'عرض ‹'}</Text>
+        </View>
+        {activeCustomerOrders.length === 1 ? <View style={{ flexDirection: 'row-reverse', gap: 4 }}>{trackSteps.map((label, index) => { const current = trackIndex(activeCustomerOrders[0].status); return <View key={label} style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: index <= current && current >= 0 ? '#B7FF30' : c.border, opacity: index === current ? 0.65 : 1 }} />; })}</View>
+          : activeCustomerOrders.slice(0, 2).map((order) => <View key={order.id} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', gap: 8 }}><Text numberOfLines={1} style={{ flex: 1, color: c.muted, fontSize: 12.5, textAlign: 'right' }}>{splitPickup(order.request_text).body || order.category}</Text><Text style={{ color: c.text, fontSize: 12.5, fontWeight: '800' }}>{bannerLabels[order.status] ?? orderStatus[order.status] ?? order.status}</Text></View>)}
+      </Pressable>}
       {selectedAddress && <Pressable style={s.address} onPress={() => navigate('addresses')} accessibilityRole="button" accessibilityLabel={`تغيير عنوان التوصيل: ${addressSummary}`} accessibilityHint="يفتح تفاصيل العنوان لتعديله"><View style={s.pin}><SymbolView name={{ios:'house.fill',android:'home',web:'home'}} tintColor={theme === 'light' ? '#385616' : c.primary} size={17}/></View><View style={s.addressCopy}><Text style={s.addressEyebrow}>عنوان التوصيل الحالي</Text><Text style={s.addressName} numberOfLines={1}>{addressSummary}</Text></View><View style={s.addressChangeButton}><SymbolView name={{ios:'pencil',android:'edit',web:'edit'}} tintColor="#0B1411" size={14}/><Text numberOfLines={1} style={s.addressChange}>تغيير</Text></View></Pressable>}
       <View style={s.hero}>
         <View style={s.heroCopy}><Text style={s.heroEyebrow}>لَبّيك لاحتياجات يومك</Text><Text style={s.heroTitle}>كل شي ناقصك، بطلب واحد.</Text><Text style={s.heroDescription}>اكتب طلبك ومنهتم بالباقي.</Text></View>
@@ -2208,7 +2218,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
           const materialSymbol = (key === 'home' ? 'home' : key === 'orders' ? 'receipt_long' : key === 'notifications' ? 'notifications' : 'person') as AndroidSymbol;
           const selected = tab === key || ((tab === 'addresses' || tab === 'profile-edit') && key === 'profile');
           return <Pressable key={key} accessibilityRole="button" accessibilityLabel={key === 'notifications' && notificationCount > 0 ? `${label}، ${notificationCount} غير مقروء` : label} accessibilityState={{ selected }} onPress={() => navigate(key)} style={[s.footerButton, selected && s.footerButtonActive]}>
-            <View style={s.footerIconWrap}><Animated.View style={[s.footerIcon, { transform: [{ scale: activeTabAnimation === key ? tabScale : 1 }] }]}><SymbolView name={{ ios: symbol as SFSymbol, android: materialSymbol, web: materialSymbol }} tintColor={selected ? (theme === 'light' ? '#17210F' : c.background) : c.muted} size={21}/></Animated.View>{key === 'notifications' && notificationCount > 0 ? <View style={s.navigationNotificationBadge}><Text style={s.navigationNotificationBadgeText}>{notificationCount > 99 ? '99+' : notificationCount}</Text></View> : null}</View>
+            <View style={s.footerIconWrap}><Animated.View style={[s.footerIcon, { transform: [{ scale: activeTabAnimation === key ? tabScale : 1 }] }]}><SymbolView name={{ ios: symbol as SFSymbol, android: materialSymbol, web: materialSymbol }} tintColor={selected ? (theme === 'light' ? '#17210F' : c.background) : c.muted} size={21}/></Animated.View>{key === 'notifications' && notificationCount > 0 ? <View style={s.navigationNotificationBadge}><Text style={s.navigationNotificationBadgeText}>{notificationCount > 99 ? '99+' : notificationCount}</Text></View> : null}{key === 'orders' && activeCustomerOrders.length > 0 ? <View style={[s.navigationNotificationBadge, { backgroundColor: '#B7FF30', borderColor: theme === 'light' ? '#FFFFFF' : '#0B1411' }]}><Text style={[s.navigationNotificationBadgeText, { color: '#0B1411' }]}>{activeCustomerOrders.length}</Text></View> : null}</View>
             <Text style={[s.footerItem, selected && s.footerActive]}>{label}</Text>
           </Pressable>;
         })}
