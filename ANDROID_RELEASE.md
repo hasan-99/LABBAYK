@@ -17,6 +17,15 @@ eas deploy --prod        # يُنشر على رابط ثابت غالباً: htt
 3. من التطبيق: أضف عنواناً للعميل، وفعّل التوفر للسائق، وجهّز طلباً تجريبياً.
 4. في Play Console > App content > App access: اكتب بريد وكلمة مرور العميل والسائق.
 
+## 2.5) تجهيز الطلبات التجريبية (مهم)
+الطلب عندنا لا يذهب للسائقين تلقائياً: العميل يرسله، **والإدارة تسعّره ثم ترسله للسائقين** (أو لسائق محدد). لذلك لا يستطيع المراجع إكمال الدورة وحده، وعرض السائق ينتهي بعد 10 دقائق.
+جهّز قبل تقديم التطبيق للمراجعة:
+1. أنشئ بحساب العميل التجريبي **طلبين** (يبقى الأول «بانتظار تحديد الأجرة» ليراه المراجع).
+2. من حساب الإدارة: سعّر الطلب الثاني وأرسله لسائقك التجريبي، ثم **اقبله بحساب السائق** وأوصله إلى مرحلة «التسوق» أو «التوصيل» وأبقِه هكذا، فتظهر في «نشطة» عند السائق و«طلباتي» عند العميل بطاقة طلب جارٍ.
+3. أنهِ طلباً ثالثاً بالكامل (مع صورة التسليم) ليظهر في «السجل» عند السائق وفي «مسلّمة» عند العميل.
+4. في Play Console > App access أضف الملاحظة (بالإنجليزية):
+   "Orders created by customers are priced and dispatched by our administrators, so a customer order stays 'waiting for delivery fee' until an admin acts. For review we pre-created an active order for the driver account and a completed order with delivery proof. Driver account is pre-approved. To see new offers, turn on availability on the driver Home screen."
+
 ## 3) البناء الإنتاجي (AAB)
 ```bash
 cd apps/mobile
