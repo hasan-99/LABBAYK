@@ -1,9 +1,10 @@
 -- =====================================================================
 -- لَبّيك: الهجرات المعلّقة في ملف واحد (للصق في Supabase > SQL Editor)
 -- =====================================================================
--- الخطوة 1: شغّل أولاً استعلام الفحص التالي لتعرف أي الهجرات مطبّقة.
+-- الخطوة 1: شغّل أولاً استعلام الفحص لتعرف أي الهجرات مطبّقة.
 -- الخطوة 2: شغّل فقط أقسام الهجرات التي تظهر عندها applied = false،
 --           قسماً قسماً وبالترتيب (لا تشغّل قسماً مطبّقاً لأن بعض أوامره غير قابلة للتكرار).
+-- الخطوة 3: بعد القسم 11 أضف رقم الإدارة (أمر جاهز في نهاية الملف، بدّل الرقم).
 -- هذا الملف نسخة للقراءة؛ المصدر الحقيقي هو مجلد supabase/migrations.
 -- =====================================================================
 
@@ -19,7 +20,17 @@ union all select '4) اتصال العميل بالسائق',
 union all select '5) المبلغ المستلم',
   exists (select 1 from information_schema.columns where table_schema='public' and table_name='orders' and column_name='cash_collected_minor')
 union all select '6) ملاحظة التسليم',
-  exists (select 1 from information_schema.columns where table_schema='public' and table_name='orders' and column_name='delivery_note');
+  exists (select 1 from information_schema.columns where table_schema='public' and table_name='orders' and column_name='delivery_note')
+union all select '7) خصوصية البلاغات',
+  exists (select 1 from pg_policies where schemaname='public' and tablename='order_disputes' and policyname='order_disputes_select_opener_or_admin')
+union all select '8) البلاغ لا يوقف الطلب',
+  coalesce((select prosrc not like '%set status=''disputed''%' from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='private' and p.proname='open_order_dispute' limit 1), false)
+union all select '9) إيقاف الأدمن اليدوي',
+  to_regprocedure('public.admin_pause_order(uuid)') is not null
+union all select '10) إلغاء طلب عليه بلاغ',
+  coalesce((select prosrc like '%after_purchase%' from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='private' and p.proname='cancel_admin_order' limit 1), false)
+union all select '11) إعدادات التطبيق',
+  to_regclass('public.app_settings') is not null;
 
 
 -- =====================================================================
@@ -392,3 +403,193 @@ revoke all on function private.confirm_order_delivery_with_photo(uuid, text, big
 revoke all on function public.confirm_order_delivery_with_photo(uuid, text, bigint, text) from public, anon;
 grant execute on function private.confirm_order_delivery_with_photo(uuid, text, bigint, text) to authenticated;
 grant execute on function public.confirm_order_delivery_with_photo(uuid, text, bigint, text) to authenticated;
+
+
+-- =====================================================================
+-- القسم 7) خصوصية البلاغات   [20261117140000_dispute_privacy.sql]
+-- =====================================================================
+-- A support report is private: only the person who opened it and administrators can read it.
+-- Previously the order's other participant (customer or driver) could read the reason and details too.
+drop policy if exists order_disputes_select_participant_or_admin on public.order_disputes;
+create policy order_disputes_select_opener_or_admin on public.order_disputes
+  for select to authenticated using (
+    opened_by = (select auth.uid()) or (select private.is_admin())
+  );
+
+-- The dispute events carry the reason, so hide them from the other participant as well.
+drop policy if exists order_events_customer_driver_admin_select on public.order_events;
+create policy order_events_participant_select on public.order_events
+  for select to authenticated using (
+    (select private.is_admin())
+    or actor_id = (select auth.uid())
+    or (
+      event_type not in ('order_disputed', 'dispute_resolved')
+      and exists (
+        select 1 from public.orders o
+        where o.id = order_id
+          and (o.customer_id = (select auth.uid()) or o.driver_id = (select auth.uid()))
+      )
+    )
+  );
+
+
+-- =====================================================================
+-- القسم 8) البلاغ لا يوقف الطلب   [20261117150000_reports_do_not_pause_orders.sql]
+-- =====================================================================
+-- A support report no longer pauses the order: the order continues while administrators review the report.
+create or replace function private.open_order_dispute(p_order_id uuid,p_reason text,p_details text,p_idempotency_key uuid)
+returns uuid language plpgsql security definer set search_path = '' as $$
+declare v_actor uuid:=auth.uid(); v_order public.orders%rowtype; v_existing public.order_disputes%rowtype; v_dispute_id uuid;
+begin
+  if v_actor is null then raise exception 'Authentication required'; end if;
+  if p_idempotency_key is null then raise exception 'Idempotency key is required'; end if;
+  if p_reason is null or char_length(trim(p_reason)) not between 3 and 120 then raise exception 'Choose a valid issue category'; end if;
+  if p_details is null or char_length(trim(p_details)) not between 5 and 2000 then raise exception 'Describe the issue in at least five characters'; end if;
+  select * into v_existing from public.order_disputes where idempotency_key=p_idempotency_key;
+  if found then
+    if v_existing.opened_by<>v_actor or v_existing.order_id<>p_order_id or v_existing.reason<>trim(p_reason) or v_existing.details<>trim(p_details) then
+      raise exception 'Idempotency key was already used for different dispute details';
+    end if;
+    return v_existing.id;
+  end if;
+  select * into v_order from public.orders where id=p_order_id and
+    (customer_id=v_actor or driver_id=v_actor) for update;
+  if not found then raise exception 'Order not found for this account'; end if;
+  if v_order.status not in ('accepted','assigned','shopping','awaiting_approval','purchased','delivering','delivered','settled') then
+    raise exception 'This order state cannot be sent to support';
+  end if;
+  insert into public.order_disputes(order_id,opened_by,idempotency_key,reason,details,previous_order_status)
+    values(p_order_id,v_actor,p_idempotency_key,trim(p_reason),trim(p_details),v_order.status)
+    returning id into v_dispute_id;
+  insert into public.order_events(order_id,actor_id,event_type,details)
+    values(p_order_id,v_actor,'order_disputed',jsonb_build_object('dispute_id',v_dispute_id,'reason',trim(p_reason)));
+  return v_dispute_id;
+end;
+$$;
+
+
+create or replace function private.resolve_order_dispute(p_dispute_id uuid,p_resolution text)
+returns text language plpgsql security definer set search_path = '' as $$
+declare v_actor uuid:=auth.uid(); v_dispute public.order_disputes%rowtype; v_status text;
+begin
+  if not private.is_admin() then raise exception 'Administrator access required'; end if;
+  if p_resolution is null or char_length(trim(p_resolution)) not between 5 and 2000 then raise exception 'A resolution summary is required'; end if;
+  select * into v_dispute from public.order_disputes where id=p_dispute_id and resolved_at is null for update;
+  if not found then raise exception 'Open dispute not found'; end if;
+  select status into v_status from public.orders where id=v_dispute.order_id for update;
+  update public.order_disputes set resolved_by=v_actor,resolved_at=now(),resolution=trim(p_resolution) where id=p_dispute_id;
+  -- Reports no longer pause orders. Only orders paused by the old behaviour are put back to their previous status.
+  if v_status='disputed' then
+    update public.orders set status=v_dispute.previous_order_status where id=v_dispute.order_id;
+  end if;
+  insert into public.order_events(order_id,actor_id,event_type,details)
+    values(v_dispute.order_id,v_actor,'dispute_resolved',jsonb_build_object('dispute_id',v_dispute.id,'resolution',trim(p_resolution)));
+  insert into public.admin_audit_log(actor_id,action,entity_type,entity_id,reason,before_data,after_data)
+    values(v_actor,'resolve_order_dispute','order_dispute',v_dispute.id::text,trim(p_resolution),
+      jsonb_build_object('status','open'),jsonb_build_object('status','resolved'));
+  return 'resolved';
+end;
+$$;
+
+
+-- =====================================================================
+-- القسم 9) إيقاف الأدمن اليدوي   [20261117160000_admin_pause_order.sql]
+-- =====================================================================
+-- Administrators can pause an order that has an open report. Resolving the report puts the order back.
+create or replace function private.admin_pause_order(p_dispute_id uuid)
+returns void language plpgsql security definer set search_path = '' as $$
+declare v_actor uuid := auth.uid(); v_dispute public.order_disputes%rowtype; v_status text;
+begin
+  if not private.is_admin() then raise exception 'Administrator access required'; end if;
+  select * into v_dispute from public.order_disputes where id = p_dispute_id and resolved_at is null for update;
+  if not found then raise exception 'Open dispute not found'; end if;
+  select status into v_status from public.orders where id = v_dispute.order_id for update;
+  if v_status not in ('accepted', 'assigned', 'shopping', 'awaiting_approval', 'purchased', 'delivering') then
+    raise exception 'This order cannot be paused';
+  end if;
+  update public.order_disputes set previous_order_status = v_status where id = p_dispute_id;
+  update public.orders set status = 'disputed' where id = v_dispute.order_id;
+  insert into public.order_events(order_id, actor_id, event_type, details)
+    values (v_dispute.order_id, v_actor, 'order_paused_by_admin', jsonb_build_object('dispute_id', p_dispute_id, 'previous_status', v_status));
+  insert into public.admin_audit_log(actor_id, action, entity_type, entity_id, reason, before_data, after_data)
+    values (v_actor, 'pause_order', 'order', v_dispute.order_id::text, 'إيقاف مؤقت بسبب بلاغ',
+      jsonb_build_object('status', v_status), jsonb_build_object('status', 'disputed'));
+end;
+$$;
+
+create function public.admin_pause_order(p_dispute_id uuid)
+returns void language sql security invoker set search_path = '' as $$ select private.admin_pause_order($1); $$;
+
+revoke all on function private.admin_pause_order(uuid) from public, anon;
+revoke all on function public.admin_pause_order(uuid) from public, anon;
+grant execute on function private.admin_pause_order(uuid) to authenticated;
+grant execute on function public.admin_pause_order(uuid) to authenticated;
+
+
+-- =====================================================================
+-- القسم 10) إلغاء الأدمن لطلب عليه بلاغ   [20261117170000_admin_cancel_reported_orders.sql]
+-- =====================================================================
+-- Administrators can cancel an order that has an open report even after the driver bought the items.
+-- In that case the recorded purchase amount and the driver stay on the order so the money can be settled manually.
+create or replace function private.cancel_admin_order(p_order_id uuid,p_reason text)
+returns void language plpgsql security definer set search_path = ''
+as $$
+declare v_actor uuid:=auth.uid(); v_order public.orders%rowtype; v_reported boolean; v_after_purchase boolean;
+begin
+  if not private.is_admin() then raise exception 'Administrator access required'; end if;
+  if p_reason is null or char_length(trim(p_reason)) not between 5 and 500 then raise exception 'A cancellation reason is required'; end if;
+  select * into v_order from public.orders where id=p_order_id for update;
+  if not found then raise exception 'Order not found'; end if;
+  v_reported := exists (select 1 from public.order_disputes where order_id=p_order_id and resolved_at is null);
+  v_after_purchase := v_order.status in ('purchased','delivering')
+    or (v_order.status='shopping' and v_order.purchase_amount_minor is not null)
+    or (v_order.status='disputed' and v_order.purchase_amount_minor is not null);
+  if v_order.status in ('delivered','settled','cancelled') then raise exception 'Order is already final'; end if;
+  if v_after_purchase and not v_reported then raise exception 'Order requires a dispute instead of cancellation'; end if;
+  if v_order.status not in ('requested','quoted','searching','accepted','assigned','shopping','awaiting_approval','purchased','delivering','disputed') then
+    raise exception 'Order cannot be cancelled';
+  end if;
+  update public.order_offers set status='revoked',responded_at=coalesce(responded_at,now())
+    where order_id=p_order_id and status in ('pending','accepted');
+  if v_after_purchase then
+    update public.orders set status='cancelled' where id=p_order_id;
+  else
+    update public.orders set status='cancelled',driver_id=null,purchase_amount_minor=null,purchase_approved_at=null where id=p_order_id;
+  end if;
+  insert into public.order_events(order_id,actor_id,event_type,details)
+  values(p_order_id,v_actor,'admin_cancelled',jsonb_build_object('reason',trim(p_reason),'previous_status',v_order.status,'after_purchase',v_after_purchase));
+  insert into public.admin_audit_log(actor_id,action,entity_type,entity_id,reason,before_data,after_data)
+  values(v_actor,'cancel_order','order',p_order_id::text,trim(p_reason),jsonb_build_object('status',v_order.status),jsonb_build_object('status','cancelled','after_purchase',v_after_purchase));
+  -- Close any open report on a cancelled order.
+  update public.order_disputes set resolved_by=v_actor,resolved_at=now(),resolution='أُلغي الطلب: '||trim(p_reason)
+    where order_id=p_order_id and resolved_at is null;
+end;
+$$;
+
+
+-- =====================================================================
+-- القسم 11) إعدادات التطبيق (رقم الإدارة)   [20261117180000_app_settings.sql]
+-- =====================================================================
+-- Public app settings (support contact numbers). Values are added by an administrator in the SQL editor, e.g.
+--   insert into public.app_settings(key, value) values ('support_phone', '+963...'), ('support_whatsapp', '+963...')
+--   on conflict (key) do update set value = excluded.value, updated_at = now();
+create table if not exists public.app_settings (
+  key text primary key,
+  value text not null check (char_length(value) between 1 and 200),
+  updated_at timestamptz not null default now()
+);
+alter table public.app_settings enable row level security;
+drop policy if exists app_settings_read_support on public.app_settings;
+create policy app_settings_read_support on public.app_settings
+  for select to authenticated using (key in ('support_phone', 'support_whatsapp'));
+revoke all on public.app_settings from public, anon, authenticated;
+grant select on public.app_settings to authenticated;
+
+
+-- =====================================================================
+-- بعد القسم 11: رقم الإدارة (بدّل XXXXXXXXX برقمك بالصيغة الدولية)
+-- =====================================================================
+-- insert into public.app_settings(key, value) values
+--   ('support_phone', '+963XXXXXXXXX'),
+--   ('support_whatsapp', '+963XXXXXXXXX')
+-- on conflict (key) do update set value = excluded.value, updated_at = now();
