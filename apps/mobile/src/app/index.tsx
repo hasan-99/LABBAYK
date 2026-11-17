@@ -241,10 +241,6 @@ function AddressBook({ userId, onBack, backLabel, onAddressSaved }: { userId: st
   const { colors: c, styles: s } = useMobileTheme();
   const online = useInternetAvailable();
   const [addresses, setAddresses] = useState<Address[]>([]);
-  const [historyAddresses, setHistoryAddresses] = useState<Address[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const historyLoaded = useRef(false);
   const [manualGovernorate, setManualGovernorate] = useState('');
   const [manualCity, setManualCity] = useState('');
   const [manualNeighborhood, setManualNeighborhood] = useState('');
@@ -281,24 +277,6 @@ function AddressBook({ userId, onBack, backLabel, onAddressSaved }: { userId: st
   // Refresh synchronizes this form with Supabase; updates follow the completed request.
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const openHistory = async () => {
-    setShowHistory(true);
-    if (historyLoaded.current) return;
-    if (!supabase || !online) { setMessage('سجل العناوين يحتاج اتصالاً بالإنترنت.'); return; }
-    setHistoryLoading(true);
-    const [{ data: orders, error: ordersError }, { data: allAddresses, error: addressesError }] = await Promise.all([
-      supabase.from('orders').select('address_id').eq('customer_id', userId),
-      supabase.from('addresses').select('*').eq('user_id', userId).order('updated_at', { ascending: false }),
-    ]);
-    if (ordersError || addressesError) setMessage('ما قدرنا نحمّل سجل العناوين. جرّب مرة ثانية.');
-    else {
-      const usedIds = new Set((orders ?? []).map((order) => order.address_id));
-      setHistoryAddresses((allAddresses ?? []).filter((address) => usedIds.has(address.id)));
-      historyLoaded.current = true;
-    }
-    setHistoryLoading(false);
-  };
-
   const save = async () => {
     if (!supabase || !online) { setMessage('حفظ العنوان يحتاج اتصالاً بالإنترنت.'); return; }
     const governorateValue = manualGovernorate.trim() === 'ريف الشام' ? 'ريف دمشق' : manualGovernorate.trim();
@@ -306,7 +284,7 @@ function AddressBook({ userId, onBack, backLabel, onAddressSaved }: { userId: st
     const neighborhoodValue = manualNeighborhood.trim();
     if (!['دمشق', 'ريف دمشق'].includes(governorateValue)) { setMessage('اختار دمشق أو ريف دمشق؛ التوصيل متاح ضمن هالنطاق حالياً.'); return; }
     if (!governorateValue || governorateValue.length < 2 || !cityValue || cityValue.length < 2 || !neighborhoodValue) { setMessage('اكتب المحافظة أو المنطقة والمدينة والحارة.'); return; }
-    if (label.trim().length < 1 || street.trim().length < 1 || contactPhone.trim().length < 7) { setMessage('كمّل اسم العنوان والشارع ورقم تواصل صحيح.'); return; }
+    if (label.trim().length < 1 || street.trim().length < 1 || contactPhone.replace(/\D/g, '').length < 9) { setMessage('كمّل اسم العنوان والشارع، ورقم التواصل إلزامي (9 أرقام على الأقل).'); return; }
     setBusy(true); setMessage('');
     const values = {
       user_id: userId, zone_id: null, label: label.trim(), governorate: governorateValue,
@@ -349,41 +327,18 @@ function AddressBook({ userId, onBack, backLabel, onAddressSaved }: { userId: st
     if (addedAddress) onBack();
   };
 
-  const remove = async (id: string) => {
-    if (!supabase) return;
-    const { error } = await supabase.from('addresses').delete().eq('id', id).eq('user_id', userId);
-    if (error) {
-      setMessage(error.code === '23503' ? 'ما فينا نحذف عنوان مرتبط بطلب سابق حتى يبقى سجل الطلب محفوظاً.' : 'ما قدرنا نحذف العنوان. جرّب مرة ثانية.');
-      return;
-    }
-    setMessage('انحذف العنوان من السجل.');
-    setHistoryAddresses((current) => current.filter((address) => address.id !== id));
-  };
-
-  if (showHistory && historyLoading) return <View style={s.addressPage}>
-    <Pressable onPress={() => setShowHistory(false)} style={s.addressBackButton} accessibilityRole="button"><Text style={s.addressBackArrow}>→</Text><Text style={s.addressBackText}>عنوان التوصيل</Text></Pressable>
-    <View style={s.addressHistoryHero}><SkeletonBlock width="66%" height={18} /><SkeletonBlock width={46} height={46} style={{ alignSelf: 'auto', borderRadius: 15 }} /></View>
-    {[0, 1, 2].map((item) => <View key={item} style={[s.historyAddressCard, { minHeight: 126, justifyContent: 'center', gap: 13 }]}><SkeletonBlock width="54%" height={14} /><SkeletonBlock width="78%" height={11} /><SkeletonBlock width="65%" height={11} /><SkeletonBlock width="38%" height={10} /></View>)}
-  </View>;
-
-  if (showHistory) return <View style={s.addressPage}>
-    <Pressable onPress={() => setShowHistory(false)} style={s.addressBackButton} accessibilityRole="button"><Text style={s.addressBackArrow}>→</Text><Text style={s.addressBackText}>عنوان التوصيل</Text></Pressable>
-    <View style={s.addressHistoryHero}><View style={s.addressHistoryIcon}><SymbolView name={{ios:'clock.arrow.circlepath',android:'history',web:'history'}} tintColor={c.primary} size={22}/></View><View style={s.addressHistoryCopy}><Text style={s.addressHistoryEyebrow}>عناوين طلباتك السابقة</Text><Text style={s.addressHistoryTitle}>سجل العناوين</Text><Text style={s.addressHistorySubtitle}>راجع تفاصيل العناوين التي استخدمتها في طلباتك.</Text></View><View style={s.addressHistoryCount}><Text style={s.addressHistoryCountNumber}>{historyAddresses.length}</Text><Text style={s.addressHistoryCountLabel}>عنوان</Text></View></View>
-    {historyAddresses.length ? historyAddresses.map((address) => <View key={address.id} style={s.historyAddressCard}><View style={s.historyAddressTop}><View style={s.savedPin}><Text style={s.pin}>⌂</Text></View><View style={s.savedCopy}><Text style={s.savedLabel}>{address.label}</Text><Text style={s.savedDetail}>{address.neighborhood}، {address.city}، {address.governorate}</Text></View><Pressable onPress={() => void remove(address.id)} accessibilityRole="button" accessibilityLabel={`حذف ${address.label} من السجل`} style={s.deleteAddress}><Text style={s.deleteText}>حذف</Text></Pressable></View><View style={s.historyAddressDivider}/><Text style={s.historyAddressDetail}>{address.street}{address.building ? `، بناء ${address.building}` : ''}{address.floor ? `، الطابق ${address.floor}` : ''}</Text>{address.landmark ? <Text style={s.historyAddressDetail}>قريب من {address.landmark}</Text> : null}<Text style={s.historyAddressPhone}>للتواصل: {address.contact_phone}</Text></View>) : <View style={s.historyEmpty}><View style={s.historyEmptyIcon}><SymbolView name={{ios:'clock',android:'history',web:'history'}} tintColor={c.primary} size={22}/></View><Text style={s.emptyTitle}>لسه ما عندك عناوين في السجل</Text><Text style={s.emptyCopy}>رح تظهر هون العناوين بعد استخدامها في طلباتك.</Text></View>}
-  </View>;
-
-  if (addressLoading) return <View style={s.addressPage}>
-    <View style={s.addressPageHeader}><SkeletonBlock width="38%" height={25} /><SkeletonBlock width={112} height={38} style={{ alignSelf: 'auto', borderRadius: 12 }} /></View>
-    <SkeletonBlock width="86%" height={12} style={{ marginTop: 10, marginBottom: 18 }} />
-    <View style={[s.addressHistoryButton, { justifyContent: 'flex-start' }]}><SkeletonBlock width={42} height={42} style={{ alignSelf: 'auto', borderRadius: 13 }} /><View style={{ flex: 1, gap: 8 }}><SkeletonBlock width="48%" height={12} /><SkeletonBlock width="76%" height={10} /></View></View>
-    <View style={[s.formCard, { gap: 13 }]}><SkeletonBlock width="42%" height={18} style={{ marginBottom: 4 }} />{[0, 1, 2, 3, 4, 5].map((item) => <View key={item} style={{ gap: 7 }}><SkeletonBlock width="25%" height={11} /><SkeletonBlock width="100%" height={48} style={{ alignSelf: 'auto', borderRadius: 12 }} /></View>)}</View>
+  if (addressLoading) return <View style={s.addressPage} accessibilityRole="progressbar" accessibilityLabel="تحميل العنوان">
+    <SkeletonBlock width="46%" height={14} />
+    <SkeletonBlock width="52%" height={28} style={{ marginTop: 10 }} />
+    <SkeletonBlock width="86%" height={12} style={{ marginTop: 10, marginBottom: 14 }} />
+    <View style={[s.profileCard, { gap: 13 }]}>{[0, 1, 2, 3, 4, 5].map((item) => <View key={item} style={{ gap: 7 }}><SkeletonBlock width="25%" height={11} /><SkeletonBlock width="100%" height={48} style={{ alignSelf: 'auto', borderRadius: 12 }} /></View>)}</View>
   </View>;
 
   return <View style={s.addressPage}>
-    <View style={s.addressPageHeader}><Text style={s.pageTitle}>عنوان التوصيل</Text><Pressable onPress={onBack} style={s.addressBackButton} accessibilityRole="button"><Text style={s.addressBackArrow}>→</Text><Text style={s.addressBackText}>{backLabel}</Text></Pressable></View>
-    <Text style={s.pageDescription}>حدّث العنوان الحالي؛ تفاصيل الطلبات السابقة محفوظة في السجل.</Text>
-    <Pressable onPress={() => void openHistory()} style={s.addressHistoryButton} accessibilityRole="button"><View style={s.addressHistoryButtonIcon}><SymbolView name={{ios:'clock.arrow.circlepath',android:'history',web:'history'}} tintColor={c.primary} size={20}/></View><View style={s.addressHistoryButtonCopy}><Text style={s.addressHistoryButtonTitle}>سجل العناوين</Text><Text style={s.addressHistoryButtonHint}>شوف العناوين المستخدمة بطلباتك السابقة</Text></View><View style={s.addressHistoryButtonEnd}><Text style={s.addressHistoryArrow}>←</Text></View></Pressable>
-    <View style={s.formCard}><Text style={s.sectionTitle}>{editingAddress ? `تعديل ${editingAddress.label}` : 'أضف عنوان التوصيل'}</Text>
+    <Pressable onPress={onBack} style={s.backNavigation} accessibilityRole="button"><Text style={s.backNavigationText}>→ العودة إلى {backLabel}</Text></Pressable>
+    <Text style={s.pageTitle}>{editingAddress ? 'تعديل العنوان' : 'إضافة عنوان التوصيل'}</Text>
+    <Text style={s.pageDescription}>عنوان واحد لكل طلباتك. رقم التواصل إلزامي حتى يقدر السائق يتصل فيك.</Text>
+    <View style={s.profileCard}>
       <Text style={s.label}>المحافظة</Text><View style={s.zoneList}>{['دمشق','ريف دمشق'].map((area) => <Pressable key={area} onPress={() => setManualGovernorate(area)} accessibilityRole="button" accessibilityState={{ selected: manualGovernorate === area }} style={[s.zoneOption, manualGovernorate === area && s.zoneSelected]}><Text style={[s.zoneName, manualGovernorate === area && s.zoneNameSelected]}>{area}</Text></Pressable>)}</View>
       <Text style={s.formLocationHint}>اكتب أي مدينة أو بلدة ضمن دمشق أو ريف دمشق، مثل كناكر، وبعدها الحارة بالتفصيل. ما بدك دبوس خريطة.</Text>
       <Text style={s.label}>المدينة أو البلدة</Text><TextInput value={manualCity} onChangeText={setManualCity} maxLength={100} placeholder="مثلاً: دمشق، كناكر، جرمانا" placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="المدينة أو البلدة"/>
@@ -392,7 +347,7 @@ function AddressBook({ userId, onBack, backLabel, onAddressSaved }: { userId: st
       <Text style={s.label}>الشارع أو رقم البيت</Text><TextInput value={street} onChangeText={setStreet} maxLength={160} placeholder="مثلاً: الحارة الغربية" placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="الشارع أو رقم البيت"/>
       <Text style={s.label}>مكان معروف قريب <Text style={s.optional}>اختياري</Text></Text><TextInput value={landmark} onChangeText={setLandmark} maxLength={160} placeholder="مقابل الجامع، جنب الصيدلية..." placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="مكان معروف قريب"/>
       <View style={s.inlineFields}><View style={s.inline}><Text style={s.label}>رقم البناء</Text><TextInput value={building} onChangeText={setBuilding} maxLength={80} placeholder="اختياري" placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="رقم البناء"/></View><View style={s.inline}><Text style={s.label}>الطابق</Text><TextInput value={floor} onChangeText={setFloor} maxLength={40} placeholder="اختياري" placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="الطابق"/></View></View>
-      <Text style={s.label}>رقم اتصال أو واتساب</Text><TextInput value={contactPhone} onChangeText={setContactPhone} maxLength={24} keyboardType="phone-pad" textAlign="left" placeholder="+963 ..." placeholderTextColor="#839188" style={s.field} accessibilityLabel="رقم اتصال أو واتساب"/>
+      <Text style={s.label}>رقم اتصال أو واتساب <Text style={{ color: c.danger, fontSize: 12 }}>إلزامي</Text></Text><TextInput value={contactPhone} onChangeText={setContactPhone} maxLength={24} keyboardType="phone-pad" textAlign="left" placeholder="+963 ..." placeholderTextColor="#839188" style={s.field} accessibilityLabel="رقم اتصال أو واتساب"/>
       <Pressable disabled={busy || addressLoading} onPress={() => void save()} style={[s.saveAddress,(busy || addressLoading)&&s.disabled]} accessibilityRole="button"><Text style={s.saveAddressText}>{addressLoading?'عم نحمّل عنوانك…':busy?'عم نحفظ…':editingAddress?'حفظ التعديلات':'حفظ العنوان'} <Text style={s.submitArrow}>←</Text></Text></Pressable>
     </View>
   </View>;
@@ -2000,7 +1955,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
         <View style={s.profileSectionCard}>
           <View style={s.profileSectionHeading}><View style={s.profileHeadingIcon}><SymbolView name={{ ios: 'mappin.and.ellipse', android: 'location_on', web: 'location_on' }} tintColor={c.primary} size={21}/></View><Text style={s.profileSectionTitle}>عنوان التوصيل</Text></View>
           {selectedAddress ? <View style={s.profileAddressSummary}><Text style={s.profileAddressName}>{selectedAddress.label}</Text><Text style={s.profileAddressLine}>{selectedAddress.neighborhood}، {selectedAddress.city}</Text><Text style={s.profileAddressLine}>{selectedAddress.street}{selectedAddress.building ? '، بناء ' + selectedAddress.building : ''}</Text><Text style={s.profileAddressPhone}>للتواصل: {selectedAddress.contact_phone}</Text></View> : <View style={s.profileAddressEmpty}><Text style={s.profileAddressEmptyTitle}>ما أضفت عنوان توصيل بعد</Text><Text style={s.profileAddressLine}>أضف عنوانك حتى يصير إرسال الطلب أسرع.</Text></View>}
-          <Pressable onPress={() => navigate('addresses')} style={[s.profileSectionAction, !selectedAddress && s.profileSectionActionPrimary]} accessibilityRole="button"><Text style={[s.profileSectionActionText, !selectedAddress && s.profileSectionActionTextPrimary]}>{selectedAddress ? 'إدارة العناوين' : 'إضافة عنوان توصيل'}</Text><SymbolView name={{ ios: 'arrow.left', android: 'arrow_back', web: 'arrow_back' }} tintColor={!selectedAddress ? c.background : c.primary} size={17}/></Pressable>
+          <Pressable onPress={() => navigate('addresses')} style={[s.profileSectionAction, s.profileSectionActionPrimary]} accessibilityRole="button"><Text style={[s.profileSectionActionText, s.profileSectionActionTextPrimary]}>{selectedAddress ? 'تعديل العنوان' : 'إضافة عنوان توصيل'}</Text><SymbolView name={{ ios: 'pencil', android: 'edit', web: 'edit' }} tintColor={theme === 'light' ? '#17210F' : c.background} size={17}/></Pressable>
         </View>
         <View style={s.profileSectionCard}>
           <View style={s.profileSectionHeading}><View style={s.profileHeadingIcon}><SymbolView name={{ ios: 'circle.lefthalf.filled', android: 'contrast', web: 'contrast' }} tintColor={c.primary} size={21}/></View><Text style={s.profileSectionTitle}>المظهر</Text></View>
