@@ -862,7 +862,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     }
   };
   return <View style={[s.driverPanel,s.driverHomePanel]}>{false&&<View style={s.driverPanelTop}><View><Text style={s.driverApplyTitle}>{screen==='home'?'استقبال الطلبات':'قائمة التوصيل'}</Text><Text style={s.driverApplyCopy}>{screen==='home'?'بدّل حالتك من هون لتبدأ أو توقف استقبال العروض.':'شوف العروض الجديدة أو تابع طلباتك النشطة.'}</Text></View><Pressable disabled={busy || refreshing} onPress={() => void manualRefresh()} style={s.driverRefresh} accessibilityRole="button" accessibilityLabel="تحديث طلبات السائق"><Text style={s.driverRefreshGlyph}>↻</Text></Pressable></View>}
-      {operationsAreStale && <Text style={s.driverAvailabilityOffline}>{ordersSyncedAt ? 'طلبات محفوظة وقديمة · آخر مزامنة ' + shortDateTimeFormatter.format(new Date(ordersSyncedAt)) + ' · لا تظهر عناوين العملاء أو المبالغ دون اتصال.' : 'تعذرت مزامنة الخادم. الإجراءات والعروض تحتاج اتصالاً.'}</Text>}
+      {operationsAreStale && !pageLoading && <Text style={s.driverAvailabilityOffline}>{ordersSyncedAt ? 'طلبات محفوظة وقديمة · آخر مزامنة ' + shortDateTimeFormatter.format(new Date(ordersSyncedAt)) + ' · لا تظهر عناوين العملاء أو المبالغ دون اتصال.' : 'تعذرت مزامنة الخادم. الإجراءات والعروض تحتاج اتصالاً.'}</Text>}
     {pageLoading ? <DriverOperationsSkeleton screen={screen}/> : <StaggeredSections transitionKey={`${screen}-ready`}><>
     {screen==='home'&&<View style={s.radarStage}>
       <RadarRings active={profile.is_online}/>
@@ -2009,7 +2009,8 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
 
 function useInternetAvailable() {
   const network = useNetworkState();
-  return network.isConnected === true && network.isInternetReachable !== false;
+  // While the network state is still resolving (undefined) assume online so pages don't flash an offline warning.
+  return network.isConnected !== false && network.isInternetReachable !== false;
 }
 
 function OrderImageGallery({ orderId, bucket = 'order-images', label = 'صور الطلب', defaultOpen = false }: { orderId: string; bucket?: 'order-images' | 'delivery-proofs'; label?: string; defaultOpen?: boolean }) {
