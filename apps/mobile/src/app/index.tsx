@@ -560,6 +560,19 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
 
 function SupportIssueForm({orderId,status,disabled=false}:{orderId:string;status:string;disabled?:boolean}) {
   const { styles: s } = useMobileTheme();
+  const [mineDisputed,setMineDisputed]=useState<boolean|null>(null);
+  // The report is private: only its author is told it is "their" report; the other side sees a neutral note.
+  useEffect(()=>{
+    if(status!=='disputed'||!supabase)return
+    let active=true
+    void (async()=>{
+      const {data:session}=await supabase!.auth.getSession()
+      const me=session.session?.user.id
+      const {data}=await supabase!.from('order_disputes').select('opened_by').eq('order_id',orderId).is('resolved_at',null).limit(1)
+      if(active)setMineDisputed(!!me&&!!data?.some(row=>row.opened_by===me))
+    })()
+    return()=>{active=false}
+  },[orderId,status])
   const online = useInternetAvailable();
   const [expanded,setExpanded]=useState(false);const [reason,setReason]=useState('');const [details,setDetails]=useState('');const [busy,setBusy]=useState(false);const [message,setMessage]=useToastMessage();const [idempotencyKey]=useState(newRequestKey());const [submitted,setSubmitted]=useState(false)
   const submit=async()=>{
@@ -573,7 +586,10 @@ function SupportIssueForm({orderId,status,disabled=false}:{orderId:string;status
     if(error){setMessage(error.message.includes('active')?'في بلاغ مفتوح على هالطلب. تواصل مع الدعم من التنبيهات.':'ما قدرنا نسجل البلاغ. أعد المحاولة بنفس التفاصيل.');return}
     setSubmitted(true);setMessage('وصل البلاغ لفريق لَبّيك، والطلب صار قيد المراجعة.')
   }
-  if(status==='disputed')return <Text accessibilityRole="status" style={s.offerExpiry}>بلاغك قيد مراجعة فريق الدعم. تابع التنبيهات للمستجدات.</Text>
+  if(status==='disputed'){
+    if(mineDisputed===null)return null
+    return <Text accessibilityRole="status" style={s.offerExpiry}>{mineDisputed?'بلاغك قيد مراجعة فريق الدعم. تابع التنبيهات للمستجدات.':'الطلب متوقف مؤقتاً. فريق لَبّيك عم يتابعه وبيتواصل معك إذا لزم.'}</Text>
+  }
   if(!['accepted','assigned','shopping','awaiting_approval','purchased','delivering','delivered','settled'].includes(status)) return null
   return <View style={{marginTop:10}}>{submitted?<Text accessibilityRole="status" style={s.offerExpiry}>{message}</Text>:!expanded?<Pressable onPress={()=>setExpanded(true)} accessibilityRole="button" style={{minHeight:46,borderRadius:14,borderWidth:1,borderStyle:'dashed',borderColor:'#6F8277',flexDirection:'row-reverse',alignItems:'center',justifyContent:'center',gap:8}}><Text style={{color:'#A9B9B0',fontSize:13,fontWeight:'800'}}>⚠️ إبلاغ عن مشكلة بالطلب</Text></Pressable>:<View style={s.dropoff}><Text style={s.dropoffTitle}>إرسال بلاغ للدعم</Text><Text style={{color:'#F0CC83',fontSize:12.5,lineHeight:20,textAlign:'right',marginTop:4}}>البلاغ بيوصل لإدارة لَبّيك فقط، وبيتوقف الطلب لحد ما تراجعه الإدارة.</Text><View style={s.zoneList}>{['مشكلة بالمشتريات','تأخير أو مشكلة بالتوصيل','مبلغ أو تحصيل غير صحيح','مشكلة ثانية'].map(item=><Pressable key={item} onPress={()=>setReason(item)} accessibilityRole="button" accessibilityState={{selected:reason===item}} style={[s.zoneOption,reason===item&&s.zoneSelected]}><Text style={[s.zoneName,reason===item&&s.zoneNameSelected]}>{item}</Text></Pressable>)}</View><TextInput value={details} onChangeText={setDetails} multiline textAlignVertical="top" maxLength={2000} placeholder="اشرح المشكلة لفريق الدعم" placeholderTextColor="#839188" style={[s.field,{minHeight:85}]} accessibilityLabel="تفاصيل المشكلة"/><Pressable disabled={busy || !online || disabled} onPress={()=>void submit()} style={[s.acceptOffer,(busy || !online || disabled)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>{busy?'عم نرسل البلاغ…':online && !disabled?'إرسال البلاغ':'بانتظار الاتصال'}</Text></Pressable><Pressable onPress={()=>{setExpanded(false);setMessage('')}} accessibilityRole="button" style={{minHeight:44,alignSelf:"flex-start",justifyContent:"center",paddingVertical:8}}><Text style={s.offerExpiry}>إغلاق</Text></Pressable>{message?<Text accessibilityRole="alert" style={s.formMessage}>{message}</Text>:null}</View>}</View>
 }
@@ -969,7 +985,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       </View>)}
     </View>;
   };
-  const activeLabels: Record<string, string> = { accepted: 'بانتظار بدء التسوق', assigned: 'بانتظار بدء التسوق', shopping: 'مرحلة التسوق', awaiting_approval: 'بانتظار موافقة العميل', purchased: 'جاهز للتوصيل', delivering: 'قيد التوصيل' };
+  const activeLabels: Record<string, string> = { accepted: 'بانتظار بدء التسوق', assigned: 'بانتظار بدء التسوق', shopping: 'مرحلة التسوق', awaiting_approval: 'بانتظار موافقة العميل', purchased: 'جاهز للتوصيل', delivering: 'قيد التوصيل', disputed: 'متوقف مؤقتاً' };
   const driverSteps = ['قبول', 'تسوق', 'توصيل', 'تسليم'];
   const renderActiveOrder = (order: DriverActiveOrder) => {
     const current = ['purchased', 'delivering'].includes(order.status) ? 2 : 1;
@@ -1523,6 +1539,9 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
   const [declines, setDeclines] = useState<Record<string, string[]>>({});
   const [cashCollected, setCashCollected] = useState<Record<string, number | null>>({});
   const [deliveryNotes, setDeliveryNotes] = useState<Record<string, string>>({});
+  const [dispute, setDispute] = useState<{ id: string; reason: string; details: string; opened_by: string; created_at: string } | null>(null);
+  const [resolution, setResolution] = useState('');
+  const [resolving, setResolving] = useState(false);
   const [pending, setPending] = useState<Record<string, { driver_id: string; expires_at: string }[]>>({});
   const showToast = useAppToast();
   const previousStatuses = useRef<Record<string, string>>({});
@@ -1625,6 +1644,22 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
   const openSheet = (order: AdminMobileOrder) => {
     setFee(order.delivery_quote_set_at ? String(order.delivery_fee_minor) : ''); setReason(''); setMode('all'); setDriverId(''); setSheet(order);
   };
+  useEffect(() => {
+    setDispute(null); setResolution('');
+    if (!sheet || sheet.status !== 'disputed' || !supabase) return;
+    let active = true;
+    void supabase.from('order_disputes').select('id,reason,details,opened_by,created_at').eq('order_id', sheet.id).is('resolved_at', null).limit(1).then(({ data }) => { if (active) setDispute(data?.[0] ?? null); });
+    return () => { active = false; };
+  }, [sheet]);
+  const resolveDispute = async () => {
+    if (!supabase || !dispute) return;
+    if (resolution.trim().length < 5) { setMessage('اكتب ملخص الحل (5 أحرف على الأقل).'); return; }
+    setResolving(true);
+    const { error } = await supabase.rpc('resolve_order_dispute', { p_dispute_id: dispute.id, p_resolution: resolution.trim() });
+    setResolving(false);
+    if (error) { setMessage('ما قدرنا نسجل الحل. جرّب مرة ثانية.'); return; }
+    setSheet(null); await refresh(); setMessage('تم حل البلاغ وإعادة الطلب لحالته السابقة.');
+  };
   const actionable = !!sheet && ['requested', 'quoted', 'searching'].includes(sheet.status) && !sheet.driver_id;
   const priceAndRoute = async () => {
     if (!supabase || !sheet) return;
@@ -1706,6 +1741,15 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
             <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5 }}>السائق</Text><Text style={{ color: color.text, fontSize: 13.5, fontWeight: '800' }}>{nameOf(sheet.driver_id)}</Text></View>
             <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5 }}>وقت التسليم</Text><Text style={{ color: color.text, fontSize: 13.5, fontWeight: '800' }}>{sheet.delivered_at ? shortDateTimeFormatter.format(new Date(sheet.delivered_at)) : '—'}</Text></View>
             {sheet.driver_id && driverPhones[sheet.driver_id] ? <Pressable onPress={() => void Linking.openURL(`tel:${driverPhones[sheet.driver_id!]}`)} accessibilityRole="button" accessibilityLabel="اتصال بالسائق" style={{ minHeight: 44, borderRadius: 13, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 14, fontWeight: '900' }}>📞 اتصال بالسائق · {driverPhones[sheet.driver_id]}</Text></Pressable> : null}
+          </View>}
+          {sheet.status === 'disputed' && <View style={[card, { borderColor: '#C98A2B', gap: 8 }]}>
+            <Text style={{ color: '#F0CC83', fontSize: 14.5, fontWeight: '900', textAlign: 'right' }}>⚠️ بلاغ من {dispute ? (dispute.opened_by === sheet.customer_id ? 'العميل' : 'السائق') + ' ' + nameOf(dispute.opened_by) : '…'}</Text>
+            {dispute ? <>
+              <Text style={{ color: color.text, fontSize: 14, fontWeight: '800', textAlign: 'right' }}>{dispute.reason} · <Text style={{ color: color.muted, fontWeight: '500' }}>{timeAgo(dispute.created_at)}</Text></Text>
+              <Text selectable style={{ color: color.text, fontSize: 14, lineHeight: 23, textAlign: 'right' }}>{dispute.details}</Text>
+              <TextInput value={resolution} onChangeText={setResolution} multiline textAlign="right" textAlignVertical="top" placeholder="اكتب ملخص الحل أو الخطوة التي تمت" placeholderTextColor={color.muted} style={{ minHeight: 70, borderRadius: 12, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, color: color.text, padding: 10, fontSize: 14 }} accessibilityLabel="ملخص الحل" />
+              <Pressable disabled={resolving || !online} onPress={() => void resolveDispute()} accessibilityRole="button" style={{ minHeight: 48, borderRadius: 14, backgroundColor: '#B7FF30', alignItems: 'center', justifyContent: 'center', opacity: resolving || !online ? 0.55 : 1 }}><Text style={{ color: '#0B1411', fontSize: 15, fontWeight: '900' }}>{resolving ? 'لحظة…' : '✅ تم حل البلاغ وإعادة الطلب'}</Text></Pressable>
+            </> : <Text style={{ color: color.muted, fontSize: 13, textAlign: 'right' }}>عم نحمّل تفاصيل البلاغ…</Text>}
           </View>}
           {sheet.status === 'searching' && ((declines[sheet.id]?.length ?? 0) > 0 || (pending[sheet.id]?.length ?? 0) > 0) && <View style={[card, { gap: 6 }]}>
             {(pending[sheet.id] ?? []).map((offer) => <Text key={offer.driver_id} style={{ color: '#F0CC83', fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>⏳ {nameOf(offer.driver_id)} · بانتظار رده</Text>)}
