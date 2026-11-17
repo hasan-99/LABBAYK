@@ -21,7 +21,7 @@ import { enablePushNotifications, hasRegisteredPushToken, unregisterPushNotifica
 import { AuthScreen, PasswordRecoveryScreen } from '@/components/AuthScreen';
 import { LegalLinksSection } from '@/components/LegalLinksSection';
 import { AppText as Text } from '@/components/AppText';
-import { ToastProvider, useToastMessage } from '@/components/Toast';
+import { ToastProvider, useAppToast, useToastMessage } from '@/components/Toast';
 
 const c: any = tokens.color;
 const MobileThemeContext = createContext<{ colors: any; styles: Record<string, any> } | null>(null);
@@ -1321,6 +1321,11 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
   const [names, setNames] = useState<Record<string, string>>({});
   const [addresses, setAddresses] = useState<Record<string, AdminAddress>>({});
   const [driverPhones, setDriverPhones] = useState<Record<string, string>>({});
+  const [declines, setDeclines] = useState<Record<string, string[]>>({});
+  const [pending, setPending] = useState<Record<string, { driver_id: string; expires_at: string }[]>>({});
+  const showToast = useAppToast();
+  const previousStatuses = useRef<Record<string, string>>({});
+  const namesRef = useRef<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<AdminFilter>('action');
@@ -1345,6 +1350,23 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
     else {
       const rows = orderResult.data ?? [];
       setOrders(rows); setDrivers(driverResult.data ?? []);
+      const searchingIds = rows.filter((order) => order.status === 'searching').map((order) => order.id);
+      if (searchingIds.length) {
+        const [declineResult, offerResult] = await Promise.all([
+          supabase.from('order_events').select('order_id,actor_id').eq('event_type', 'driver_declined_offer').in('order_id', searchingIds),
+          supabase.from('order_offers').select('order_id,driver_id,expires_at').eq('status', 'pending').in('order_id', searchingIds),
+        ]);
+        const declineMap: Record<string, string[]> = {};
+        for (const row of declineResult.data ?? []) if (row.actor_id) declineMap[row.order_id] = [...new Set([...(declineMap[row.order_id] ?? []), row.actor_id])];
+        const pendingMap: Record<string, { driver_id: string; expires_at: string }[]> = {};
+        for (const row of offerResult.data ?? []) pendingMap[row.order_id] = [...(pendingMap[row.order_id] ?? []), { driver_id: row.driver_id, expires_at: row.expires_at }];
+        setDeclines(declineMap); setPending(pendingMap);
+      } else { setDeclines({}); setPending({}); }
+      for (const order of rows) {
+        const before = previousStatuses.current[order.id];
+        if (before === 'searching' && ['accepted', 'assigned'].includes(order.status) && order.driver_id) showToast(`قبل ${namesRef.current[order.driver_id] ?? 'سائق'} الطلب #${order.id.slice(0, 6)}`, 'success');
+      }
+      previousStatuses.current = Object.fromEntries(rows.map((order) => [order.id, order.status]));
       const driverIds = [...new Set(rows.flatMap((order) => order.driver_id ? [order.driver_id] : []))];
       if (driverIds.length) {
         const { data: phoneRows } = await supabase.from('driver_profiles').select('user_id,phone_e164').in('user_id', driverIds);
@@ -1355,34 +1377,36 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
         const { data: addressRows } = await supabase.from('addresses').select('id,street,city,neighborhood,building,landmark,contact_phone').in('id', addressIds);
         setAddresses(Object.fromEntries((addressRows ?? []).map((address) => [address.id, address])));
       }
-      if (!initialised.current) { initialised.current = true; if (!rows.some((order) => adminStatusGroup(order.status) === 'action')) setFilter('all'); }
+      if (!initialised.current) { initialised.current = true; if (!rows.some((order) => adminStatusGroup(order.status) === 'action' || (order.status === 'searching'))) setFilter('all'); }
     }
-    if (!userResult.error) setNames(Object.fromEntries((userResult.data ?? []).map((user) => [user.user_id, user.display_name || user.email])));
+    if (!userResult.error) { const nameMap = Object.fromEntries((userResult.data ?? []).map((user) => [user.user_id, user.display_name || user.email])); namesRef.current = nameMap; setNames(nameMap); }
     setLoading(false);
-  }, [setMessage]);
+  }, [setMessage, showToast]);
 
   useEffect(() => { if (online) void refresh(); }, [online, refresh]);
   useEffect(() => {
     if (!supabase) return;
-    const channel = supabase.channel(`admin-mobile-orders-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => void refresh()).on('postgres_changes', { event: '*', schema: 'public', table: 'driver_profiles' }, () => void refresh()).subscribe();
+    const channel = supabase.channel(`admin-mobile-orders-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => void refresh()).on('postgres_changes', { event: '*', schema: 'public', table: 'driver_profiles' }, () => void refresh()).on('postgres_changes', { event: '*', schema: 'public', table: 'order_offers' }, () => void refresh()).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_events' }, (payload) => { const row = payload.new as { event_type?: string; order_id?: string; actor_id?: string | null }; if (row.event_type === 'driver_declined_offer') { showToast(`اعتذر ${row.actor_id ? namesRef.current[row.actor_id] ?? 'سائق' : 'سائق'} عن الطلب #${(row.order_id ?? '').slice(0, 6)}. ما زال عند باقي السائقين.`, 'warning'); void refresh(); } }).subscribe();
     return () => { void supabase?.removeChannel(channel); };
-  }, [refresh, userId]);
+  }, [refresh, showToast, userId]);
 
   const manualRefresh = async () => {
     if (refreshing) return;
     if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; }
     setRefreshing(true); await refresh(); setRefreshing(false); setMessage('تم تحديث الطلبات.');
   };
+  const groupOf = (order: AdminMobileOrder) => order.status === 'searching' && (declines[order.id]?.length ?? 0) > 0 ? 'action' : adminStatusGroup(order.status);
+  const statusLabel = (order: AdminMobileOrder) => order.status === 'searching' && (pending[order.id]?.length ?? 0) === 1 ? 'بانتظار رد السائق' : (orderStatus[order.status] ?? order.status);
   const nameOf = (id: string | null) => id ? (names[id] ?? '#' + id.slice(0, 6)) : '—';
   const counts = useMemo(() => {
     const result: Record<string, number> = { all: orders.length, action: 0, searching: 0, active: 0, done: 0 };
-    for (const order of orders) { const group = adminStatusGroup(order.status); if (group in result) result[group] += 1; }
+    for (const order of orders) { const group = groupOf(order); if (group in result) result[group] += 1; }
     return result;
   }, [orders]);
   const list = useMemo(() => {
     const term = search.trim().toLowerCase();
-    return orders.filter((order) => (filter === 'all' || adminStatusGroup(order.status) === filter) && (!term || order.id.toLowerCase().includes(term) || order.request_text.toLowerCase().includes(term) || order.category.toLowerCase().includes(term) || (names[order.customer_id ?? ''] ?? '').toLowerCase().includes(term)));
-  }, [orders, filter, search, names]);
+    return orders.filter((order) => (filter === 'all' || groupOf(order) === filter) && (!term || order.id.toLowerCase().includes(term) || order.request_text.toLowerCase().includes(term) || order.category.toLowerCase().includes(term) || (names[order.customer_id ?? ''] ?? '').toLowerCase().includes(term)));
+  }, [orders, filter, search, names, declines, pending]);
 
   const toneFor = (status: string) => {
     const group = adminStatusGroup(status);
@@ -1406,7 +1430,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
     setBusy(false);
     if (error) { setMessage('ما قدرنا نحفظ الأجرة أو نرسل الطلب. تأكد من توفر السائق وحاول مرة ثانية.'); return; }
     setSheet(null); await refresh();
-    setMessage(mode === 'driver' ? 'تم تحديد الأجرة وإسناد الطلب للسائق المحدد.' : data ? `تم إرسال العرض إلى ${data} سائق متاح؛ أول من يقبل يحصل على الطلب.` : 'تم حفظ الأجرة، ولا يوجد سائق متاح حالياً. أعد الإرسال عند توفر سائق.');
+    setMessage(mode === 'driver' ? 'تم تحديد الأجرة وإرسال الطلب للسائق المحدد، بانتظار رده.' : data ? `تم إرسال العرض إلى ${data} سائق متاح؛ أول من يقبل يحصل على الطلب.` : 'تم حفظ الأجرة، ولا يوجد سائق متاح حالياً. أعد الإرسال عند توفر سائق.');
   };
 
   const pill = (on: boolean) => ({ minHeight: 38, paddingHorizontal: 14, borderRadius: 19, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.primary : color.surface, flexDirection: 'row-reverse' as const, alignItems: 'center' as const, gap: 7 });
@@ -1433,7 +1457,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
         <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: color.border }}>
           <Pressable onPress={() => setSheet(null)} accessibilityRole="button" accessibilityLabel="رجوع" style={{ width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface, alignItems: 'center', justifyContent: 'center' }}><SymbolView name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }} tintColor={color.text} size={18} /></Pressable>
           <View style={{ flex: 1 }}><Text style={{ color: color.muted, fontSize: 11.5, textAlign: 'right' }}>#{sheet.id.slice(0, 8)} · {timeAgo(sheet.created_at)}</Text><Text style={{ color: color.text, fontSize: 18, fontWeight: '900', textAlign: 'right' }}>طلب {sheet.category}</Text></View>
-          <View style={{ backgroundColor: tone.bg, borderRadius: 11, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: tone.fg, fontSize: 11.5, fontWeight: '900' }}>{orderStatus[sheet.status] ?? sheet.status}</Text></View>
+          <View style={{ backgroundColor: tone.bg, borderRadius: 11, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: tone.fg, fontSize: 11.5, fontWeight: '900' }}>{statusLabel(sheet)}</Text></View>
         </View>
         <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 14, gap: 10, paddingBottom: 20 }}>
           <View style={card}>
@@ -1462,6 +1486,10 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
             <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5 }}>السائق</Text><Text style={{ color: color.text, fontSize: 13.5, fontWeight: '800' }}>{nameOf(sheet.driver_id)}</Text></View>
             <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5 }}>وقت التسليم</Text><Text style={{ color: color.text, fontSize: 13.5, fontWeight: '800' }}>{sheet.delivered_at ? shortDateTimeFormatter.format(new Date(sheet.delivered_at)) : '—'}</Text></View>
             {sheet.driver_id && driverPhones[sheet.driver_id] ? <Pressable onPress={() => void Linking.openURL(`tel:${driverPhones[sheet.driver_id!]}`)} accessibilityRole="button" accessibilityLabel="اتصال بالسائق" style={{ minHeight: 44, borderRadius: 13, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 14, fontWeight: '900' }}>📞 اتصال بالسائق · {driverPhones[sheet.driver_id]}</Text></Pressable> : null}
+          </View>}
+          {sheet.status === 'searching' && ((declines[sheet.id]?.length ?? 0) > 0 || (pending[sheet.id]?.length ?? 0) > 0) && <View style={[card, { gap: 6 }]}>
+            {(pending[sheet.id] ?? []).map((offer) => <Text key={offer.driver_id} style={{ color: '#F0CC83', fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>⏳ {nameOf(offer.driver_id)} · بانتظار رده</Text>)}
+            {(declines[sheet.id] ?? []).map((id) => <Text key={id} style={{ color: '#FF8A8A', fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>⚠️ {nameOf(id)} · اعتذر</Text>)}
           </View>}
           {!delivered && !actionable && <View style={card}><Text style={{ color: color.muted, fontSize: 13.5, textAlign: 'center', lineHeight: 22 }}>{sheet.driver_id ? `الطلب مع السائق ${nameOf(sheet.driver_id)} ولا يحتاج إجراء منك.` : 'ما في إجراءات متاحة لهالطلب حالياً.'}</Text></View>}
           {actionable && <View style={[card, { borderColor: color.primary, gap: 8 }]}>
@@ -1500,10 +1528,10 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
       {loading ? [0, 1, 2].map((item) => <SkeletonCard key={item} style={{ gap: 12 }}><View style={[skRow, { justifyContent: 'space-between' }]}>{sk(90, 26, { borderRadius: 13 })}{sk(70, 12)}</View>{sk('90%', 12, { alignSelf: 'flex-end' })}{sk('60%', 12, { alignSelf: 'flex-end' })}<View style={[skRow, { justifyContent: 'space-between' }]}>{sk(110, 12)}{sk(80, 36, { borderRadius: 12 })}</View></SkeletonCard>)
         : list.length ? <>
           {list.slice(0, visible).map((order) => {
-            const tone = toneFor(order.status); const needs = adminStatusGroup(order.status) === 'action' && order.status !== 'disputed';
+            const tone = toneFor(order.status); const needs = groupOf(order) === 'action' && order.status !== 'disputed'; const declinedNames = (declines[order.id] ?? []).map((id) => nameOf(id)); const pendingOffers = pending[order.id] ?? [];
             return <Pressable key={order.id} onPress={() => openSheet(order)} accessibilityRole="button" accessibilityLabel={`طلب ${order.category}، ${orderStatus[order.status] ?? order.status}`} style={{ backgroundColor: color.surface, borderColor: needs ? '#C98A2B' : color.border, borderWidth: 1, borderRadius: 20, padding: 14, gap: 9 }}>
               <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                <View style={{ backgroundColor: tone.bg, borderRadius: 12, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: tone.fg, fontSize: 12, fontWeight: '900' }}>{orderStatus[order.status] ?? order.status}</Text></View>
+                <View style={{ backgroundColor: tone.bg, borderRadius: 12, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: tone.fg, fontSize: 12, fontWeight: '900' }}>{statusLabel(order)}</Text></View>
                 <Text style={{ color: color.muted, fontSize: 11.5 }}>{timeAgo(order.created_at)} · #{order.id.slice(0, 6)}</Text>
               </View>
               <View style={{ flexDirection: 'row-reverse', gap: 11, alignItems: 'flex-start' }}>
@@ -1519,7 +1547,9 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
                 <Text style={{ color: color.primary, fontSize: 13, fontWeight: '900' }}>{order.delivery_quote_set_at ? numberFormatter.format(order.delivery_fee_minor) + ' ل.س' : 'بلا أجرة'}</Text>
               </View>
               {order.driver_id ? <Text numberOfLines={1} style={{ color: adminStatusGroup(order.status) === 'done' ? color.accent : color.muted, fontSize: 12.5, fontWeight: adminStatusGroup(order.status) === 'done' ? '800' : '400', textAlign: 'right' }}>{adminStatusGroup(order.status) === 'done' ? `✅ سلّمه ${nameOf(order.driver_id)}${order.delivered_at ? ' · ' + timeAgo(order.delivered_at) : ''}` : `🛵 ${nameOf(order.driver_id)}`}</Text> : null}
-              {needs ? <View style={{ minHeight: 42, borderRadius: 14, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 14, fontWeight: '900' }}>{order.delivery_quote_set_at ? 'إرسال الطلب للسائقين ←' : 'تحديد الأجرة وإرسال ←'}</Text></View> : null}
+              {declinedNames.length ? <View style={{ backgroundColor: 'rgba(255,138,138,0.12)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 }}><Text style={{ color: '#FF8A8A', fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>⚠️ اعتذر {declinedNames.length} ({declinedNames.join('، ')})</Text></View> : null}
+              {order.status === 'searching' && pendingOffers.length ? <View style={{ backgroundColor: 'rgba(240,204,131,0.12)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 }}><Text style={{ color: '#F0CC83', fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>{pendingOffers.length === 1 ? `⏳ ${nameOf(pendingOffers[0].driver_id)} · باقي ${Math.max(0, Math.ceil((new Date(pendingOffers[0].expires_at).getTime() - Date.now()) / 60000))} د للرد` : `⏳ بانتظار رد ${pendingOffers.length} سائقين`}</Text></View> : null}
+              {needs ? <View style={{ minHeight: 42, borderRadius: 14, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 14, fontWeight: '900' }}>{order.status === 'searching' ? 'إعادة الإرسال أو إسناد سائق ←' : order.delivery_quote_set_at ? 'إرسال الطلب للسائقين ←' : 'تحديد الأجرة وإرسال ←'}</Text></View> : null}
             </Pressable>;
           })}
           {list.length > visible && <Pressable onPress={() => setVisible((value) => value + 25)} accessibilityRole="button" style={[pill(false), { alignSelf: 'center', justifyContent: 'center' }]}><Text style={{ color: color.primary, fontSize: 13, fontWeight: '800' }}>عرض المزيد ({list.length - visible})</Text></Pressable>}
