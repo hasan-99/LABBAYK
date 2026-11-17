@@ -1,7 +1,7 @@
 import { Children, Fragment, createContext, isValidElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import type { Metadata } from 'expo-router/server';
-import { ActivityIndicator, Animated, AppState, Easing, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Animated, AppState, Easing, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SymbolView, type AndroidSymbol, type SFSymbol } from 'expo-symbols';
 import { useNetworkState } from 'expo-network';
 import type { NotificationResponse } from 'expo-notifications';
@@ -1249,8 +1249,34 @@ function SignedInHome({ userId, email, inviteToken, openOrderId, onSignOut, them
   return <DriverWorkspace userId={userId} email={email} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
 }
 
-type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'customer_id'|'category'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'budget_ceiling_minor'|'created_at'>;
+type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'customer_id'|'address_id'|'category'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'budget_ceiling_minor'|'created_at'>;
 type AdminMobileDriver = Pick<Database['public']['Tables']['driver_profiles']['Row'], 'user_id'|'vehicle_description'>;
+
+const pickupPrefix = 'الشراء من: ';
+const composeRequest = (pickup: string, request: string) => pickup.trim() ? `${pickupPrefix}${pickup.trim()}\n${request.trim()}` : request.trim();
+const splitPickup = (text: string) => { const match = text.match(/^الشراء من: (.+)\n([\s\S]*)$/); return match ? { pickup: match[1].trim(), body: match[2].trim() } : { pickup: '', body: text }; };
+type AdminAddress = Pick<Database['public']['Tables']['addresses']['Row'], 'id' | 'street' | 'city' | 'neighborhood' | 'building' | 'landmark' | 'contact_phone'>;
+const thumbCache = new Map<string, { url: string | null; count: number }>();
+function AdminOrderThumb({ orderId }: { orderId: string }) {
+  const { colors: c } = useMobileTheme();
+  const [info, setInfo] = useState<{ url: string | null; count: number } | null>(() => thumbCache.get(orderId) ?? null);
+  useEffect(() => {
+    if (info || !supabase) return;
+    let active = true;
+    void supabase.storage.from('order-images').list(orderId, { limit: 3, sortBy: { column: 'name', order: 'asc' } }).then(async ({ data, error }) => {
+      if (error || !data?.length) { thumbCache.set(orderId, { url: null, count: 0 }); if (active) setInfo({ url: null, count: 0 }); return; }
+      const { data: signed } = await supabase!.storage.from('order-images').createSignedUrls([`${orderId}/${data[0].name}`], 600);
+      const result = { url: signed?.[0]?.signedUrl ?? null, count: data.length };
+      thumbCache.set(orderId, result); if (active) setInfo(result);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [info, orderId]);
+  if (!info?.count) return null;
+  return <View style={{ width: 68, height: 68 }}>
+    {info.url ? <Image source={{ uri: info.url }} style={{ width: 68, height: 68, borderRadius: 15, backgroundColor: c.raised }} contentFit="cover" cachePolicy="memory-disk" /> : <View style={{ width: 68, height: 68, borderRadius: 15, backgroundColor: c.raised }} />}
+    {info.count > 1 && <View style={{ position: 'absolute', bottom: -5, left: -5, backgroundColor: c.primary, borderRadius: 9, paddingHorizontal: 6, minHeight: 18, justifyContent: 'center' }}><Text style={{ color: c.background, fontSize: 10.5, fontWeight: '900' }}>{info.count}</Text></View>}
+  </View>;
+}
 
 const adminStatusGroup = (status: string) => ['requested', 'quoted', 'disputed'].includes(status) ? 'action' : status === 'searching' ? 'searching' : ['accepted', 'assigned', 'shopping', 'awaiting_approval', 'purchased', 'delivering'].includes(status) ? 'active' : ['delivered', 'settled'].includes(status) ? 'done' : 'other';
 const adminFilters = [{ key: 'action', label: 'تحتاج إجراء' }, { key: 'searching', label: 'عند السائقين' }, { key: 'active', label: 'جارية' }, { key: 'done', label: 'منتهية' }, { key: 'all', label: 'الكل' }] as const;
@@ -1270,6 +1296,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
   const [orders, setOrders] = useState<AdminMobileOrder[]>([]);
   const [drivers, setDrivers] = useState<AdminMobileDriver[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
+  const [addresses, setAddresses] = useState<Record<string, AdminAddress>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<AdminFilter>('action');
@@ -1286,7 +1313,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
   const refresh = useCallback(async () => {
     if (!supabase) return;
     const [orderResult, driverResult, userResult] = await Promise.all([
-      supabase.from('orders').select('id,customer_id,category,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,budget_ceiling_minor,created_at').order('created_at', { ascending: false }).limit(150),
+      supabase.from('orders').select('id,customer_id,address_id,category,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,budget_ceiling_minor,created_at').order('created_at', { ascending: false }).limit(150),
       supabase.from('driver_profiles').select('user_id,vehicle_description').eq('review_status', 'approved').eq('is_online', true).order('created_at'),
       supabase.rpc('admin_list_users'),
     ]);
@@ -1294,6 +1321,11 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
     else {
       const rows = orderResult.data ?? [];
       setOrders(rows); setDrivers(driverResult.data ?? []);
+      const addressIds = [...new Set(rows.flatMap((order) => order.address_id ? [order.address_id] : []))];
+      if (addressIds.length) {
+        const { data: addressRows } = await supabase.from('addresses').select('id,street,city,neighborhood,building,landmark,contact_phone').in('id', addressIds);
+        setAddresses(Object.fromEntries((addressRows ?? []).map((address) => [address.id, address])));
+      }
       if (!initialised.current) { initialised.current = true; if (!rows.some((order) => adminStatusGroup(order.status) === 'action')) setFilter('all'); }
     }
     if (!userResult.error) setNames(Object.fromEntries((userResult.data ?? []).map((user) => [user.user_id, user.display_name || user.email])));
@@ -1378,9 +1410,16 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
                 <View style={{ backgroundColor: tone.bg, borderRadius: 12, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: tone.fg, fontSize: 12, fontWeight: '900' }}>{orderStatus[order.status] ?? order.status}</Text></View>
                 <Text style={{ color: color.muted, fontSize: 11.5 }}>{timeAgo(order.created_at)} · #{order.id.slice(0, 6)}</Text>
               </View>
-              <Text numberOfLines={2} style={{ color: color.text, fontSize: 15, fontWeight: '800', lineHeight: 23, textAlign: 'right' }}>{order.request_text}</Text>
+              <View style={{ flexDirection: 'row-reverse', gap: 11, alignItems: 'flex-start' }}>
+                <AdminOrderThumb orderId={order.id} />
+                <Text numberOfLines={3} style={{ flex: 1, color: color.text, fontSize: 15, fontWeight: '800', lineHeight: 23, textAlign: 'right' }}>{splitPickup(order.request_text).body}</Text>
+              </View>
+              <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
+                {splitPickup(order.request_text).pickup ? <><Text numberOfLines={1} style={{ flexShrink: 1, color: color.text, fontSize: 12.5, fontWeight: '800' }}>🛒 {splitPickup(order.request_text).pickup}</Text><View style={{ flex: 1, minWidth: 14, borderTopWidth: 2, borderStyle: 'dashed', borderColor: color.border }} /></> : null}
+                <Text numberOfLines={1} style={{ flexShrink: 1, color: color.muted, fontSize: 12.5 }}>📍 {order.address_id && addresses[order.address_id] ? `${addresses[order.address_id].neighborhood}، ${addresses[order.address_id].city}` : '—'}</Text>
+              </View>
               <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                <Text numberOfLines={1} style={{ color: color.muted, fontSize: 12.5, flex: 1, textAlign: 'right' }}>{order.category} · {nameOf(order.customer_id)}</Text>
+                <Text numberOfLines={1} style={{ color: color.muted, fontSize: 12.5, flex: 1, textAlign: 'right' }}>👤 {nameOf(order.customer_id)} · ميزانية {numberFormatter.format(order.budget_ceiling_minor)}</Text>
                 <Text style={{ color: color.primary, fontSize: 13, fontWeight: '900' }}>{order.delivery_quote_set_at ? numberFormatter.format(order.delivery_fee_minor) + ' ل.س' : 'بلا أجرة'}</Text>
               </View>
               {order.driver_id ? <Text numberOfLines={1} style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>🛵 {nameOf(order.driver_id)}</Text> : null}
@@ -1398,14 +1437,22 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
             <View style={{ flex: 1, minWidth: 0 }}><Text style={style.sheetKicker}>#{sheet.id.slice(0, 8)} · {timeAgo(sheet.created_at)}</Text><Text style={style.sheetTitle}>{sheet.category}</Text></View>
             <Pressable onPress={() => setSheet(null)} style={style.sheetClose} accessibilityRole="button" accessibilityLabel="إغلاق"><SymbolView name={{ ios: 'xmark', android: 'close', web: 'close' }} tintColor={color.muted} size={16} /></Pressable>
           </View>
+          {sheet && <OrderImageGallery orderId={sheet.id} defaultOpen />}
           <View style={style.sheetBox}>
-            <Text style={style.sheetBody}>{sheet.request_text}</Text>
+            <Text style={style.sheetBody}>{splitPickup(sheet.request_text).body}</Text>
+          </View>
+          <View style={style.sheetBox}>
+            <View style={{ paddingRight: 26 }}>
+              <View style={{ position: 'absolute', right: 8, top: 14, bottom: 14, borderRightWidth: 2, borderStyle: 'dashed', borderRightColor: color.border }} />
+              <View style={{ marginVertical: 8 }}><View style={{ position: 'absolute', right: -24, top: 6, width: 12, height: 12, borderRadius: 6, backgroundColor: color.primary }} /><Text style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>من (الشراء)</Text><Text style={{ color: color.text, fontSize: 14.5, fontWeight: '800', lineHeight: 22, textAlign: 'right' }}>{splitPickup(sheet.request_text).pickup || 'غير محدد من العميل'}</Text></View>
+              <View style={{ marginVertical: 8 }}><View style={{ position: 'absolute', right: -24, top: 6, width: 12, height: 12, borderRadius: 6, backgroundColor: color.accent }} /><Text style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>إلى (التسليم)</Text><Text style={{ color: color.text, fontSize: 14.5, fontWeight: '800', lineHeight: 22, textAlign: 'right' }}>{sheet.address_id && addresses[sheet.address_id] ? [addresses[sheet.address_id].neighborhood + '، ' + addresses[sheet.address_id].city, addresses[sheet.address_id].street, addresses[sheet.address_id].building ? 'بناء ' + addresses[sheet.address_id].building : '', addresses[sheet.address_id].landmark].filter(Boolean).join(' · ') : '—'}</Text></View>
+            </View>
             <View style={style.nDivider} />
             {([['الحالة', orderStatus[sheet.status] ?? sheet.status], ['العميل', nameOf(sheet.customer_id)], ['ميزانية الشراء', numberFormatter.format(sheet.budget_ceiling_minor) + ' ل.س'], ['أجرة التوصيل', sheet.delivery_quote_set_at ? numberFormatter.format(sheet.delivery_fee_minor) + ' ل.س' : 'غير محددة'], ['السائق', nameOf(sheet.driver_id)]] as const).map(([label, value]) => <View key={label} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', gap: 10, paddingVertical: 4 }}><Text style={{ color: color.muted, fontSize: 14 }}>{label}</Text><Text style={{ color: color.text, fontSize: 14, fontWeight: '800', flexShrink: 1, textAlign: 'left' }}>{value}</Text></View>)}
+            {sheet.address_id && addresses[sheet.address_id]?.contact_phone ? <Pressable onPress={() => void Linking.openURL(`tel:${addresses[sheet.address_id!].contact_phone}`)} accessibilityRole="button" accessibilityLabel="اتصال بالعميل" style={{ marginTop: 8, minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 14, fontWeight: '900' }}>📞 اتصال بالعميل · {addresses[sheet.address_id].contact_phone}</Text></Pressable> : null}
           </View>
-          {sheet && <OrderImageGallery orderId={sheet.id} />}
           {actionable ? <>
-            <View style={{ gap: 6 }}><Text style={{ color: color.text, fontSize: 14, fontWeight: '800', textAlign: 'right' }}>أجرة التوصيل (ل.س)</Text><TextInput value={fee} onChangeText={(value) => setFee(value.replace(/\D/g, '').slice(0, 9))} keyboardType="number-pad" placeholder="مثال: 15000" placeholderTextColor={color.muted} style={input} accessibilityLabel="أجرة التوصيل" /></View>
+            <View style={{ gap: 6 }}><Text style={{ color: color.text, fontSize: 14, fontWeight: '800', textAlign: 'right' }}>أجرة التوصيل (ل.س)</Text><TextInput value={fee} onChangeText={(value) => setFee(value.replace(/\D/g, '').slice(0, 9))} keyboardType="number-pad" placeholder="مثال: 15000" placeholderTextColor={color.muted} style={input} accessibilityLabel="أجرة التوصيل" /><View style={{ flexDirection: 'row-reverse', gap: 7 }}>{[10000, 15000, 20000, 25000].map((amount) => <Pressable key={amount} onPress={() => setFee(String(amount))} accessibilityRole="button" style={{ flex: 1, minHeight: 40, borderRadius: 12, borderWidth: 1, borderColor: fee === String(amount) ? color.primary : color.border, backgroundColor: fee === String(amount) ? color.raised : color.surface, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: fee === String(amount) ? color.primary : color.muted, fontSize: 13, fontWeight: '800' }}>{numberFormatter.format(amount)}</Text></Pressable>)}</View></View>
             <TextInput value={reason} onChangeText={setReason} placeholder="سبب التسعير (اختياري)" placeholderTextColor={color.muted} style={input} accessibilityLabel="سبب التسعير" />
             <View style={{ flexDirection: 'row-reverse', gap: 8 }}>
               <Pressable onPress={() => setMode('all')} accessibilityRole="button" accessibilityState={{ selected: mode === 'all' }} style={[pill(mode === 'all'), { flex: 1, justifyContent: 'center' }]}><Text style={{ color: mode === 'all' ? color.background : color.text, fontSize: 13, fontWeight: '800' }}>كل المتاحين ({drivers.length})</Text></Pressable>
@@ -1424,6 +1471,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   const { colors: c, styles: s } = useMobileTheme();
   const online = useInternetAvailable();
   const [request, setRequest] = useState('');
+  const [pickup, setPickup] = useState('');
   const [category, setCategory] = useState('');
   const [budgetCeiling, setBudgetCeiling] = useState('');
   const [tab, setTab] = useState(() => inviteToken ? 'profile' : 'home');
@@ -1647,7 +1695,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     setSending(true); setRequestMessage('');
     let orderId = pendingOrderId;
     if (!orderId) {
-      const { data, error } = await supabase.rpc('create_customer_order', { p_idempotency_key: requestKey.current, p_address_id: addressId, p_category: category, p_request_text: request.trim(), p_budget_ceiling_minor: budget });
+      const { data, error } = await supabase.rpc('create_customer_order', { p_idempotency_key: requestKey.current, p_address_id: addressId, p_category: category, p_request_text: composeRequest(pickup, request), p_budget_ceiling_minor: budget });
       if (error || !data) {
         setSending(false);
         setRequestMessage(error?.message.includes('Damascus and Rif Dimashq') ? 'التوصيل متاح حالياً بدمشق وريف دمشق فقط. عدّل عنوان التسليم.' : 'ما قدرنا نرسل الطلب. تأكد من العنوان والاتصال وحاول مرة ثانية.');
@@ -1695,7 +1743,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     }
     setSending(false);
     await clearCustomerOrderDraft(userId);
-    requestKey.current = newRequestKey(); setRequest(''); setCategory(''); setBudgetCeiling(''); setOrderImages([]); setPendingOrderId(''); setRequestMessage('وصلنا طلبك! الإدارة رح تحدد أجرة التوصيل وتتابع إسناده لسائق.'); navigate('orders');
+    requestKey.current = newRequestKey(); setRequest(''); setPickup(''); setCategory(''); setBudgetCeiling(''); setOrderImages([]); setPendingOrderId(''); setRequestMessage('وصلنا طلبك! الإدارة رح تحدد أجرة التوصيل وتتابع إسناده لسائق.'); navigate('orders');
   };
   const pickOrderImages = async () => {
     if (sending) return;
@@ -1755,6 +1803,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       </View>
       <View style={s.formCard}><View style={s.formHeader}><View style={s.formStep}><Text style={s.formStepText}>01</Text></View><View style={s.formHeaderCopy}><Text style={s.formTitle}>شو بدك نجيبلك؟</Text><Text style={s.formSubtitle}>اكتب طلبك بالتفصيل، والصورة بتساعدنا نفهمك أسرع.</Text></View><View style={s.cashBadge}><Text style={s.cashBadgeText}>دفع كاش</Text></View></View>{draftSaveError ? <Text style={s.formMessage}>تعذّر حفظ المسودة على هذا الجهاز.</Text> : null}
         <View style={s.formSection}><Text style={s.label}>تفاصيل الطلب</Text><TextInput editable={draftReady && !pendingOrderId} value={request} onChangeText={(value) => { draftDirty.current = true; setRequest(value); }} maxLength={4000} multiline textAlignVertical="top" placeholder="مثال: جرة غاز ممتلئة مع توصيلها للبيت..." placeholderTextColor="#809087" style={[s.input,s.orderRequestInput]} accessibilityLabel="اكتب تفاصيل طلبك" /></View>
+        <View style={s.formSection}><View style={s.sectionHead}><Text style={s.label}>من وين نشتري؟</Text><Text style={s.sectionHint}>اختياري · بيساعد السائق والإدارة</Text></View><TextInput editable={draftReady && !pendingOrderId} value={pickup} onChangeText={(value) => setPickup(value.slice(0, 120))} maxLength={120} placeholder="مثال: محل الغاز بشارع الجلاء" placeholderTextColor="#809087" style={s.input} accessibilityLabel="مكان الشراء"/></View>
         <View style={s.formSection}><View style={s.sectionHead}><Text style={s.label}>اختار القسم</Text><Text style={s.sectionHint}>بيساعدنا نجهّز طلبك</Text></View><View style={[s.chips,s.categoryChips]}>{categories.map((item) => <Pressable key={item} disabled={!draftReady || !!pendingOrderId} onPress={() => { draftDirty.current = true; setCategory(item); if (!request) setRequest(item + ': '); }} style={[s.chip, category === item && s.chipActive]} accessibilityRole="button" accessibilityState={{ selected: category === item, disabled: !draftReady || !!pendingOrderId }}><Text style={[s.chipText, category === item && s.chipTextActive]}>{category === item ? '✓  ' : ''}{item}</Text></Pressable>)}</View></View>
         <View style={s.formSection}><View style={s.sectionHead}><Text style={s.label}>أعلى ميزانية للمشتريات</Text><Text style={s.sectionHint}>حتى يضلّ السعر بإيدك</Text></View><View style={s.moneyField}><TextInput editable={draftReady && !pendingOrderId} value={budgetCeiling ? numberFormatter.format(Number(budgetCeiling)) : ''} onChangeText={(value) => { draftDirty.current = true; setBudgetCeiling(normalizeDigits(value)); }} keyboardType="number-pad" textAlign="left" placeholder="100,000" placeholderTextColor="#809087" style={s.moneyInput} accessibilityLabel="سقف الميزانية بالليرة السورية"/><View style={s.currencyBadge}><Text style={s.currencyBadgeText}>ل.س</Text></View></View><Text style={s.budgetHint}>مثال: 100,000 ليرة سورية</Text></View>
         <View style={s.photoSection}><View style={s.photoHead}><View><Text style={s.label}>صور تساعدنا نفهم طلبك</Text><Text style={s.sectionHint}>اختياري · حتى 3 صور</Text></View><Text style={s.photoCount}>{orderImages.length}/3</Text></View>
