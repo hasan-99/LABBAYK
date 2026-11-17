@@ -8,6 +8,7 @@ import type { NotificationResponse } from 'expo-notifications';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Updates from 'expo-updates';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { tokens } from '@labbayk/design-tokens';
 import type { Session } from '@supabase/supabase-js';
@@ -30,6 +31,7 @@ function useMobileTheme() {
   return theme;
 }
 const mobileThemeKey = 'labbayk-theme';
+const buildStamp = Updates.isEmbeddedLaunch ? 'النسخة المثبّتة (بدون تحديث)' : `تحديث ${Updates.createdAt ? Updates.createdAt.toISOString().slice(0, 16).replace('T', ' ') : (Updates.updateId ?? '').slice(0, 8)}`;
 const lightPalette = { ...tokens.color, background: '#F5F7F2', surface: '#FFFFFF', raised: '#EFF5E8', surfaceRaised: '#EFF5E8', border: '#DCE4D8', text: '#20241F', muted: '#5D645B', primary: '#343A32', accent: '#287A55', danger: '#B42318' } as unknown as typeof tokens.color;
 const lightColorMap: Record<string, string> = {
   '#0B1411':'#F5F7F2','#101A14':'#F5F7F2','#0F1A13':'#F5F7F2','#111c16':'#F5F7F2','#121d16':'#F5F7F2',
@@ -628,6 +630,22 @@ function RadarRings({ active }: { active: boolean }) {
   return <>{rings.map((ring, index) => <Animated.View key={index} pointerEvents="none" style={{ position: 'absolute', width: 150, height: 150, borderRadius: 75, borderWidth: 2, borderColor: c.primary, opacity: ring.interpolate({ inputRange: [0, 1], outputRange: [0.7, 0] }), transform: [{ scale: ring.interpolate({ inputRange: [0, 1], outputRange: [1, 2] }) }] }} />)}</>;
 }
 
+function AppShellSkeleton() {
+  const { colors: c, styles: s } = useMobileTheme();
+  return <SafeAreaView style={s.safe}>
+    <View accessibilityRole="progressbar" accessibilityLabel="جاري التحميل" style={{ flex: 1 }}>
+      <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: c.border }}>
+        <View style={skRow}>{sk(52, 52, { borderRadius: 14 })}<View style={{ gap: 7, alignItems: 'flex-end' }}>{sk(70, 15)}{sk(96, 11)}</View></View>
+        <View style={{ alignItems: 'center', gap: 5 }}>{sk(42, 42, { borderRadius: 21 })}{sk(34, 9)}</View>
+      </View>
+      <View style={{ flex: 1, paddingHorizontal: 20 }}><DriverOperationsSkeleton screen="home" /></View>
+      <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-around', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 10, borderTopWidth: 1, borderTopColor: c.border, backgroundColor: c.surface }}>
+        {[0, 1, 2, 3].map((item) => <View key={item} style={{ alignItems: 'center', gap: 6 }}>{sk(26, 26, { borderRadius: 8 })}{sk(44, 9)}</View>)}
+      </View>
+    </View>
+  </SafeAreaView>;
+}
+
 function DriverOperationsSkeleton({ screen }: { screen: 'home' | 'orders' }) {
   const { colors: c } = useMobileTheme();
   if (screen === 'home') return <View accessibilityRole="progressbar" accessibilityLabel="تحميل الصفحة الرئيسية للسائق" style={{ gap: 14, marginTop: 10 }}>
@@ -1124,7 +1142,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
       <ScrollView style={s.bodyScroll} contentContainerStyle={s.driverContent} keyboardShouldPersistTaps="handled">
         <StaggeredSections transitionKey={`${tab}-${loading ? 'loading' : 'ready'}`} animateSingle>
         {tab === 'home' ? <>
-          {loading ? <View accessibilityRole="progressbar" accessibilityLabel="تحميل ملف السائق" style={{gap:12}}><View style={[s.driverOnboardingCard,{minHeight:230,justifyContent:'center',gap:16}]}><SkeletonBlock width={54} height={54} style={{alignSelf:'flex-end',borderRadius:17}}/><SkeletonBlock width="43%" height={12}/><SkeletonBlock width="66%" height={25}/><SkeletonBlock width="91%" height={12}/><SkeletonBlock width="76%" height={12}/><SkeletonBlock width="100%" height={48} style={{alignSelf:'auto',borderRadius:13,marginTop:5}}/></View><View style={s.driverStatsRow}><View style={[s.driverStat,{minHeight:68}]}><SkeletonBlock width="48%" height={13}/></View><View style={[s.driverStat,{minHeight:68}]}><SkeletonBlock width="48%" height={13}/></View></View></View> : profileLoadError ? <View style={s.driverOnboardingCard}><Text style={s.driverOnboardingTitle}>ما قدرنا نحمّل ملفك</Text><Text style={s.driverOnboardingCopy}>{profileLoadError}</Text><Pressable disabled={!online} onPress={() => { setLoading(true); setProfileRefreshKey((value) => value + 1); }} style={[s.driverOnboardingButton,!online&&s.disabled]} accessibilityRole="button"><Text style={s.driverOnboardingButtonText}>{online?'إعادة المحاولة':'بانتظار الاتصال'}</Text></Pressable></View> : !profileComplete ? <View style={s.driverOnboardingCard}>
+          {loading ? <DriverOperationsSkeleton screen="home"/> : profileLoadError ? <View style={s.driverOnboardingCard}><Text style={s.driverOnboardingTitle}>ما قدرنا نحمّل ملفك</Text><Text style={s.driverOnboardingCopy}>{profileLoadError}</Text><Pressable disabled={!online} onPress={() => { setLoading(true); setProfileRefreshKey((value) => value + 1); }} style={[s.driverOnboardingButton,!online&&s.disabled]} accessibilityRole="button"><Text style={s.driverOnboardingButtonText}>{online?'إعادة المحاولة':'بانتظار الاتصال'}</Text></Pressable></View> : !profileComplete ? <View style={s.driverOnboardingCard}>
             <View style={s.driverOnboardingIcon}><SymbolView name={{ ios: 'person.text.rectangle.fill', android: 'badge', web: 'badge' }} tintColor="#0B1411" size={27}/></View>
             <Text style={s.driverOnboardingStep}>الخطوة الأولى · قبل استقبال الطلبات</Text>
             <Text style={s.driverOnboardingTitle}>كمّل ملف السائق</Text>
@@ -1136,7 +1154,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
           </>}
         </> : tab === 'orders' ? <>
           <View style={s.driverPageIntro}><Text style={s.driverHeroEyebrow}>تشغيلك اليومي</Text><Text style={s.accountPageTitle}>الطلبات</Text><Text style={s.accountPageSubtitle}>العروض الجديدة والطلبات اللي عم توصلها.</Text></View>
-          {loading && <View accessibilityRole="progressbar" accessibilityLabel="تحميل الطلبات" style={{gap:12}}>{[0,1].map((item)=><View key={item} style={[s.driverOrdersSkeleton,{minHeight:140,marginBottom:0}]}><View style={s.driverSkeletonTop}><View style={s.driverSkeletonPill}/><View style={s.driverSkeletonLine}/></View><View style={[s.driverSkeletonLine,{width:'88%'}]}/><View style={[s.driverSkeletonLine,{width:'61%'}]}/><View style={[s.driverSkeletonButton,{alignSelf:'flex-end'}]}/></View>)}</View>}
+          {loading && <DriverOperationsSkeleton screen="orders"/>}
           {profileLoadError && <View style={[s.driverOnboardingCard,{marginTop:12}]}><Text style={s.driverOnboardingTitle}>ما قدرنا نحمّل بياناتك</Text><Text style={s.driverOnboardingCopy}>{profileLoadError}</Text><Pressable disabled={!online} onPress={() => { setLoading(true); setProfileRefreshKey((value) => value + 1); }} style={[s.driverOnboardingButton,!online&&s.disabled]} accessibilityRole="button"><Text style={s.driverOnboardingButtonText}>{online?'إعادة المحاولة':'بانتظار الاتصال'}</Text></Pressable></View>}
         </> : tab === 'profile' ? <>
           <View style={s.driverPageIntro}><Text style={s.driverHeroEyebrow}>بياناتك الأساسية</Text><Text style={s.accountPageTitle}>ملف السائق</Text><Text style={s.accountPageSubtitle}>الزبون وفريق لَبّيك بيستخدموا هالمعلومات للتواصل.</Text></View>
@@ -1164,6 +1182,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
             <Pressable onPress={onToggleTheme} style={s.profileThemeRow} accessibilityRole="button" accessibilityLabel={theme === 'dark' ? 'تفعيل الوضع الفاتح' : 'تفعيل الوضع الداكن'}><View style={s.profileThemeIcon}><SymbolView name={{ ios: theme === 'dark' ? 'sun.max.fill' : 'moon.fill', android: theme === 'dark' ? 'light_mode' : 'dark_mode', web: theme === 'dark' ? 'light_mode' : 'dark_mode' }} tintColor={c.primary} size={20}/></View><View style={s.profileThemeCopy}><Text style={s.profileThemeTitle}>المظهر · {theme === 'dark' ? 'داكن' : 'فاتح'}</Text><Text style={s.profileThemeHint}>اضغط للتبديل إلى الوضع {theme === 'dark' ? 'الفاتح' : 'الداكن'}</Text></View><Text style={s.profileThemeStateText}>تغيير</Text></Pressable>
             <LegalLinksSection theme={theme}/>
             <Pressable onPress={onSignOut} style={s.profileLogout} accessibilityRole="button"><SymbolView name={{ ios: 'rectangle.portrait.and.arrow.right', android: 'logout', web: 'logout' }} tintColor={c.danger} size={18}/><Text style={s.profileLogoutText}>تسجيل الخروج</Text></Pressable>
+            <Text style={s.versionStamp}>{buildStamp}</Text>
           </>}
         </> : null}
         </StaggeredSections>
@@ -1184,6 +1203,19 @@ function SignedInHome({ userId, email, inviteToken, openOrderId, onSignOut, them
   const [reviewStatus, setReviewStatus] = useState<string | null>(null);
   const [roles, setRoles] = useState<string[]>([]);
   const [checked, setChecked] = useState(false);
+  const serverChecked = useRef(false);
+  // Route instantly from the last known role, then confirm with the server in the background.
+  useEffect(() => {
+    let active = true;
+    void AsyncStorage.getItem(`labbayk-role-${userId}`).then((raw) => {
+      if (!active || !raw || serverChecked.current) return;
+      try {
+        const cached = JSON.parse(raw) as { reviewStatus?: string | null; roles?: string[] };
+        if (Array.isArray(cached.roles)) { setReviewStatus(cached.reviewStatus ?? null); setRoles(cached.roles); setChecked(true); }
+      } catch { /* ignore a corrupt cache */ }
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [userId]);
   useEffect(() => {
     let active = true;
     void hasRegisteredPushToken(userId).then((registered) => {
@@ -1201,12 +1233,17 @@ function SignedInHome({ userId, email, inviteToken, openOrderId, onSignOut, them
           supabase!.from('driver_profiles').select('review_status').eq('user_id', userId).maybeSingle(),
           supabase!.from('user_roles').select('role').eq('user_id', userId),
         ]);
-        if (active) { setReviewStatus(driver?.review_status ?? null); setRoles(roleRows?.map((row) => row.role) ?? []); }
+        if (active) {
+          const nextRoles = roleRows?.map((row) => row.role) ?? [];
+          serverChecked.current = true;
+          setReviewStatus(driver?.review_status ?? null); setRoles(nextRoles);
+          void AsyncStorage.setItem(`labbayk-role-${userId}`, JSON.stringify({ reviewStatus: driver?.review_status ?? null, roles: nextRoles })).catch(() => undefined);
+        }
       } finally { if (active) setChecked(true); }
     })();
     return () => { active = false; };
   }, [online, userId]);
-  if (supabase && online && !checked) return <SafeAreaView style={s.safe}><View accessibilityRole="progressbar" accessibilityLabel="تحميل مساحة حسابك" style={{ flex: 1, justifyContent: 'center', padding: 24, gap: 18 }}><View style={[s.brand, { alignSelf: 'flex-end' }]}><View style={s.brandMark}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={s.brandLogo} contentFit="contain" accessibilityLabel="شعار لَبّيك" /></View><View><Text style={s.brandName}>لَبّيك</Text><Text style={s.brandTag}>عم نجهّز مساحتك</Text></View></View><View style={[s.formCard, { minHeight: 164, justifyContent: 'center', gap: 16 }]}><SkeletonBlock width="46%" height={22} /><SkeletonBlock width="88%" height={12} /><SkeletonBlock width="67%" height={12} /></View><View style={[s.formCard, { minHeight: 92, justifyContent: 'center', gap: 14 }]}><SkeletonBlock width="62%" height={13} /><SkeletonBlock width="82%" height={11} /></View></View></SafeAreaView>;
+  if (supabase && online && !checked) return <AppShellSkeleton />;
   if (roles.includes('super_admin')) return <AdminWorkspace userId={userId} email={email} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
   if (reviewStatus !== 'approved') return <CustomerHome key={inviteToken ?? 'customer-home'} userId={userId} email={email} inviteToken={inviteToken} openOrderId={openOrderId} showDriverFlow={!!inviteToken || !!reviewStatus} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
   return <DriverWorkspace userId={userId} email={email} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
@@ -1841,7 +1878,7 @@ export default function HomeScreen() {
   const screen = !supabaseConfigured
     ? <AuthScreen inviteToken={inviteToken || undefined} theme={theme} />
     : !ready
-      ? <SafeAreaView style={styles.safe}><ActivityIndicator color={colors.primary} /></SafeAreaView>
+      ? <AppShellSkeleton />
       : passwordRecovery
         ? <PasswordRecoveryScreen onDone={() => setPasswordRecovery(false)} theme={theme} />
       : !session
@@ -1896,4 +1933,5 @@ const styleDefinitions = {
   homeActive:{flexDirection:'row-reverse',alignItems:'center',gap:12,padding:14,marginBottom:12,borderRadius:22,backgroundColor:c.surface,borderWidth:1,borderColor:c.border},homeActiveIcon:{width:46,height:46,borderRadius:15,alignItems:'center',justifyContent:'center',backgroundColor:c.raised,borderWidth:1,borderColor:c.border},homeActiveTitle:{color:c.text,fontSize:15,fontWeight:'900',textAlign:'right'},homeActiveSub:{color:c.muted,fontSize:12.5,marginTop:2,textAlign:'right'},
   balanceLabel:{color:c.muted,fontSize:14,textAlign:'center'},balanceValue:{color:c.primary,fontSize:40,fontWeight:'900',textAlign:'center',marginTop:6},balanceUnit:{fontSize:20,fontWeight:'800'},balanceBadge:{marginTop:12,paddingHorizontal:14,minHeight:34,borderRadius:17,alignItems:'center',justifyContent:'center',backgroundColor:c.raised,borderWidth:1,borderColor:c.border},balanceBadgeDue:{borderColor:'#C98A2B'},balanceBadgeText:{color:c.accent,fontSize:13,fontWeight:'800',textAlign:'center'},balanceBadgeTextDue:{color:'#F0CC83'},
   liveCard:{borderRadius:26,borderWidth:1.5,borderColor:'#57763D',backgroundColor:c.background,padding:18,gap:12,shadowColor:c.primary,shadowOpacity:0.25,shadowRadius:22,shadowOffset:{width:0,height:0},elevation:6},liveCardTop:{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between'},liveCardCode:{color:c.accent,fontSize:15,fontWeight:'900',writingDirection:'ltr'},liveBadge:{minHeight:38,paddingHorizontal:16,borderRadius:19,backgroundColor:c.primary,alignItems:'center',justifyContent:'center'},liveBadgeText:{color:'#0B1411',fontSize:14,fontWeight:'900'},liveRow:{flexDirection:'row-reverse',alignItems:'flex-start',gap:8},liveDot:{width:10,height:10,borderRadius:5,marginTop:8},liveRowLabel:{color:c.text,fontSize:16,fontWeight:'900'},liveRowValue:{flex:1,color:c.muted,fontSize:16,lineHeight:24,textAlign:'right'},liveDivider:{height:1,backgroundColor:c.border},liveStats:{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',gap:10},liveStat:{color:c.muted,fontSize:15},liveStatValue:{color:c.text,fontSize:16,fontWeight:'900'},liveAccept:{minHeight:62,borderRadius:22,backgroundColor:c.primary,alignItems:'center',justifyContent:'center',shadowColor:c.primary,shadowOpacity:0.35,shadowRadius:14,shadowOffset:{width:0,height:4},elevation:5},liveAcceptText:{color:'#0B1411',fontSize:19,fontWeight:'900'},liveSecondary:{flex:1.6,minHeight:56,borderRadius:20,borderWidth:1,borderColor:c.primary,backgroundColor:c.raised,alignItems:'center',justifyContent:'center'},liveSecondaryText:{color:c.primary,fontSize:15,fontWeight:'900'},liveClose:{flex:1,minHeight:56,borderRadius:20,borderWidth:1,borderColor:c.border,backgroundColor:c.background,alignItems:'center',justifyContent:'center'},liveCloseText:{color:c.text,fontSize:15,fontWeight:'900'},
+  versionStamp:{color:c.muted,fontSize:11,textAlign:'center',marginTop:14,opacity:0.8},
 };
