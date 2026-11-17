@@ -654,7 +654,13 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   const [activeOrders, setActiveOrders] = useState<DriverActiveOrder[]>([]);
   const [offersCount, setOffersCount] = useState(0);
   const [activeOrdersCount, setActiveOrdersCount] = useState(0);
-  const [orderSection, setOrderSection] = useState<'offers' | 'active'>('offers');
+  const [orderSection, setOrderSection] = useState<'offers' | 'active' | 'history'>('offers');
+  const [history, setHistory] = useState<HistoryOrder[] | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyPeriod, setHistoryPeriod] = useState<HistoryPeriod>('today');
+  const [historyOpen, setHistoryOpen] = useState<string | null>(null);
+  const [historyAddresses, setHistoryAddresses] = useState<Record<string, { neighborhood: string; city: string; street: string; building: string | null; landmark: string | null }>>({});
+  const [historyExtra, setHistoryExtra] = useState<Record<string, { cash: number | null; note: string | null }>>({});
   const [dismissedOfferId, setDismissedOfferId] = useState<string | null>(null);
   const [imagesOpen, setImagesOpen] = useState<Record<string, boolean>>({});
   const [collectDrafts, setCollectDrafts] = useState<Record<string, string>>({});
@@ -766,11 +772,31 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   useEffect(() => () => { if (refreshTimer.current) clearTimeout(refreshTimer.current); }, []);
   // Initial load and realtime refresh are server synchronization, not derived render state.
   useEffect(() => { setLoading(true); void refresh(); }, [refresh]);
+  const loadHistory = useCallback(async () => {
+    if (!supabase || !online) return;
+    setHistoryLoading(true);
+    const { data, error } = await supabase.from('orders').select('id,category,request_text,status,delivery_fee_minor,purchase_amount_minor,budget_ceiling_minor,delivered_at,address_id').eq('driver_id', userId).in('status', ['delivered', 'settled']).order('delivered_at', { ascending: false }).limit(100);
+    if (error) { setMessage('ما قدرنا نحمّل سجل طلباتك. جرّب مرة ثانية.'); setHistoryLoading(false); return; }
+    const rows = data ?? [];
+    setHistory(rows);
+    const addressIds = [...new Set(rows.flatMap((order) => order.address_id ? [order.address_id] : []))];
+    if (addressIds.length) {
+      const { data: addressRows } = await supabase.from('addresses').select('id,neighborhood,city,street,building,landmark').in('id', addressIds);
+      setHistoryAddresses(Object.fromEntries((addressRows ?? []).map((row) => [row.id, row])));
+    }
+    if (rows.length) {
+      const { data: extraRows, error: extraError } = await supabase.from('orders').select('id,cash_collected_minor,delivery_note').in('id', rows.map((order) => order.id));
+      if (!extraError) setHistoryExtra(Object.fromEntries((extraRows ?? []).map((row) => [row.id, { cash: row.cash_collected_minor, note: row.delivery_note }])));
+    }
+    setHistoryLoading(false);
+  }, [online, userId, setMessage]);
+  useEffect(() => { if (orderSection === 'history' && history === null) void loadHistory(); }, [orderSection, history, loadHistory]);
   const manualRefresh = async () => {
     if (busy || refreshing) return;
     if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; }
     setRefreshing(true); setLoading(true);
     await refresh();
+    if (orderSection === 'history') await loadHistory();
     setRefreshing(false); setRefreshToastPending(true);
   };
   useEffect(() => {
@@ -885,6 +911,53 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       setBusy(false); setMessage('ما قدرنا نأكد التسليم. تأكد من الاتصال وجرّب مرة ثانية.');
     }
   };
+  const renderHistory = () => {
+    if (history === null && !online) return <View style={s.noOffers}><Text style={s.noOffersTitle}>السجل يحتاج اتصالاً</Text><Text style={s.noOffersCopy}>اتصل بالإنترنت حتى نحمّل طلباتك المنتهية.</Text></View>;
+    if (history === null) return <View accessibilityRole="progressbar" accessibilityLabel="تحميل السجل" style={{ gap: 10, marginTop: 6 }}>{[0, 1, 2].map((item) => <SkeletonCard key={item} style={[skRow, { padding: 11 }]}>{sk(58, 58, { borderRadius: 14 })}<View style={skCol}>{sk('70%', 14)}{sk('50%', 11)}{sk('60%', 11)}</View>{sk(56, 20)}</SkeletonCard>)}</View>;
+    const cutoff = historyCutoff(historyPeriod);
+    const rows = history.filter((order) => order.delivered_at && new Date(order.delivered_at).getTime() >= cutoff);
+    const fees = rows.reduce((sum, order) => sum + order.delivery_fee_minor, 0);
+    const knownCash = rows.filter((order) => historyExtra[order.id]?.cash != null);
+    const cashTotal = knownCash.reduce((sum, order) => sum + (historyExtra[order.id]?.cash ?? 0), 0);
+    const groups: { label: string; items: HistoryOrder[] }[] = [];
+    for (const order of rows) { const label = dayLabel(order.delivered_at as string); const last = groups[groups.length - 1]; if (last && last.label === label) last.items.push(order); else groups.push({ label, items: [order] }); }
+    return <View style={{ gap: 10, marginTop: 4 }}>
+      <View style={{ backgroundColor: c.surface, borderColor: '#3F6A2E', borderWidth: 1, borderRadius: 20, padding: 12, gap: 9 }}>
+        <Text style={{ color: c.muted, fontSize: 13, fontWeight: '800', textAlign: 'right' }}>{historyPeriod === 'today' ? '📅 اليوم' : historyPeriod === 'week' ? '📅 آخر 7 أيام' : '📅 كل الطلبات'}</Text>
+        <View style={{ flexDirection: 'row-reverse' }}>
+          {([['طلبات', String(rows.length), false], ['أجرتك', numberFormatter.format(fees), true], ...(knownCash.length ? [['المحصَّل', numberFormatter.format(cashTotal), false]] as const : [])] as const).map(([label, value, strong], index) => <View key={label} style={{ flex: 1, alignItems: 'center', borderRightWidth: index ? 1 : 0, borderRightColor: c.border }}><Text style={{ color: c.muted, fontSize: 11 }}>{label}</Text><Text style={{ color: strong ? c.primary : c.text, fontSize: 16.5, fontWeight: '900' }}>{value}</Text></View>)}
+        </View>
+      </View>
+      <View style={{ flexDirection: 'row-reverse', gap: 7 }}>
+        {([['today', 'اليوم'], ['week', 'هذا الأسبوع'], ['all', 'الكل']] as const).map(([key, label]) => { const on = historyPeriod === key; return <Pressable key={key} onPress={() => setHistoryPeriod(key)} accessibilityRole="button" accessibilityState={{ selected: on }} style={{ minHeight: 36, paddingHorizontal: 14, borderRadius: 18, borderWidth: 1, borderColor: on ? '#B7FF30' : c.border, backgroundColor: on ? '#B7FF30' : c.surface, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: on ? '#0B1411' : c.muted, fontSize: 12.5, fontWeight: '800' }}>{label}</Text></Pressable>; })}
+      </View>
+      {!rows.length ? <View style={s.noOffers}><View style={s.emptyIconWrap}><SymbolView name={{ ios: 'clock.arrow.circlepath', android: 'history', web: 'history' }} tintColor={c.primary} size={26}/></View><Text style={s.noOffersTitle}>ما في طلبات منتهية</Text><Text style={s.noOffersCopy}>{historyPeriod === 'all' ? 'لما تنهي أول طلب بيظهر هون.' : 'جرّب فترة أطول من الأزرار فوق.'}</Text></View> : groups.map((group) => <View key={group.label} style={{ gap: 9 }}>
+        <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', marginHorizontal: 2, marginTop: 4 }}><Text style={{ color: c.muted, fontSize: 12.5, fontWeight: '800' }}>{group.label}</Text><Text style={{ color: c.muted, fontSize: 12.5 }}>{group.items.length} طلب</Text></View>
+        {group.items.map((order) => { const open = historyOpen === order.id; const extra = historyExtra[order.id]; const addr = order.address_id ? historyAddresses[order.address_id] : undefined; const { pickup, body } = splitPickup(order.request_text); const expected = (order.purchase_amount_minor ?? 0) + order.delivery_fee_minor; return <Pressable key={order.id} onPress={() => setHistoryOpen(open ? null : order.id)} accessibilityRole="button" accessibilityState={{ expanded: open }} style={{ backgroundColor: c.surface, borderColor: open ? c.primary : c.border, borderWidth: 1, borderRadius: 20, padding: 11, gap: 10 }}>
+          <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11 }}>
+            <AdminOrderThumb orderId={order.id} bucket="delivery-proofs" />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text numberOfLines={1} style={{ color: c.text, fontSize: 14.5, fontWeight: '900', textAlign: 'right' }}>{body}</Text>
+              <Text numberOfLines={1} style={{ color: c.muted, fontSize: 12, textAlign: 'right', marginTop: 1 }}>{order.category}{addr ? ' · ' + addr.neighborhood : ''} · {order.delivered_at ? notificationTimeFormatter.format(new Date(order.delivered_at)) : ''}</Text>
+              <Text numberOfLines={1} style={{ color: c.muted, fontSize: 11.5, textAlign: 'right', marginTop: 3 }}>مشتريات <Text style={{ color: c.text, fontWeight: '800' }}>{order.purchase_amount_minor !== null ? numberFormatter.format(order.purchase_amount_minor) : '—'}</Text>{extra?.cash != null ? '  ·  استلمت ' : ''}<Text style={{ color: c.text, fontWeight: '800' }}>{extra?.cash != null ? numberFormatter.format(extra.cash) : ''}</Text></Text>
+            </View>
+            <View style={{ alignItems: 'flex-start' }}><Text style={{ color: c.primary, fontSize: 15.5, fontWeight: '900' }}>{numberFormatter.format(order.delivery_fee_minor)}</Text><Text style={{ color: c.accent, fontSize: 11, fontWeight: '800', marginTop: 2 }}>{order.status === 'settled' ? '✅ تمت التسوية' : '✅ تم التوصيل'}</Text></View>
+          </View>
+          {open && <View style={{ gap: 9, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 10 }}>
+            <Text selectable style={{ color: c.text, fontSize: 14.5, fontWeight: '700', lineHeight: 23, textAlign: 'right' }}>{body}</Text>
+            {pickup ? <Text style={{ color: c.muted, fontSize: 13, textAlign: 'right' }}>🏪 الشراء من: <Text style={{ color: c.text, fontWeight: '800' }}>{pickup}</Text></Text> : null}
+            {addr ? <Text style={{ color: c.muted, fontSize: 13, lineHeight: 21, textAlign: 'right' }}>📍 {addr.neighborhood}، {addr.city} · {[addr.street, addr.building ? 'بناء ' + addr.building : '', addr.landmark].filter(Boolean).join(' · ')}</Text> : null}
+            <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 6 }}>
+              {([['ميزانية الزبون', numberFormatter.format(order.budget_ceiling_minor)], ['مشتريات', order.purchase_amount_minor !== null ? numberFormatter.format(order.purchase_amount_minor) : '—'], ['المطلوب', numberFormatter.format(expected)], ...(extra?.cash != null ? [['استلمت', numberFormatter.format(extra.cash)]] as const : [])] as const).map(([label, value]) => <View key={label} style={{ backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 10, paddingHorizontal: 9, paddingVertical: 4, flexDirection: 'row-reverse', gap: 5 }}><Text style={{ color: c.muted, fontSize: 11.5 }}>{label}</Text><Text style={{ color: c.text, fontSize: 11.5, fontWeight: '900' }}>{value}</Text></View>)}
+              {extra?.cash != null && extra.cash > expected ? <View style={{ backgroundColor: 'rgba(82,213,160,0.14)', borderRadius: 10, paddingHorizontal: 9, paddingVertical: 4 }}><Text style={{ color: c.accent, fontSize: 11.5, fontWeight: '900' }}>إكرامية {numberFormatter.format(extra.cash - expected)}</Text></View> : null}
+            </View>
+            {extra?.note ? <Text style={{ color: c.muted, fontSize: 13, lineHeight: 21, textAlign: 'right' }}>📝 {extra.note}</Text> : null}
+            <AdminImageStrip orderId={order.id} bucket="delivery-proofs" size={84} emptyText="ما في صورة تسليم لهذا الطلب." />
+          </View>}
+        </Pressable>; })}
+      </View>)}
+    </View>;
+  };
   const activeLabels: Record<string, string> = { accepted: 'بانتظار بدء التسوق', assigned: 'بانتظار بدء التسوق', shopping: 'مرحلة التسوق', awaiting_approval: 'بانتظار موافقة العميل', purchased: 'جاهز للتوصيل', delivering: 'قيد التوصيل' };
   const driverSteps = ['قبول', 'تسوق', 'توصيل', 'تسليم'];
   const renderActiveOrder = (order: DriverActiveOrder) => {
@@ -972,13 +1045,13 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     {screen === 'home' && <View style={s.driverCommissionSummary}><View style={s.driverCommissionBadge}><SymbolView name={{ios:'banknote.fill',android:'payments',web:'payments'}} tintColor={c.primary} size={18}/></View><View style={{flex:1,alignItems:'flex-end'}}><Text style={s.driverCommissionTitle}>العمولة المستحقة</Text><Text style={s.driverCommissionCopy}>{walletUnavailable?'تعذر تحميل رصيد العمولة. أعد المحاولة.':walletBalance === null ? online ? 'عم نتحقق من رصيدك.' : 'الرصيد يظهر عند الاتصال.' : walletBalance < 0 ? `عليك ${numberFormatter.format(Math.abs(walletBalance))} ل.س بعد تسوية الطلبات.` : walletBalance > 0 ? `إلك رصيد ${numberFormatter.format(walletBalance)} ل.س.` : 'ما عليك عمولات مستحقة حالياً.'}</Text></View></View>}
     {screen === 'orders' && <>
       <View style={s.driverOrderTabs}>
-        {([{ key: 'offers', label: 'عروض جديدة', count: offersCount }, { key: 'active', label: 'طلباتي النشطة', count: activeOrdersCount }] as const).map((item) => { const on = orderSection === item.key; return <Pressable key={item.key} onPress={() => setOrderSection(item.key)} accessibilityRole="button" accessibilityLabel={`${item.label}، ${item.count}`} accessibilityState={{ selected: on }} style={[s.oTab, on && s.oTabOn]}><Text style={[s.oTabText, on && s.oTabTextOn]}>{item.label}</Text><View style={[s.oTabCount, on && s.oTabCountOn, !on && item.count > 0 && s.oTabCountHot]}><Text style={[s.oTabCountText, on && s.oTabCountTextOn, !on && item.count > 0 && s.oTabCountTextHot]}>{item.count}</Text></View></Pressable>; })}
+        {([{ key: 'offers', label: 'عروض', count: offersCount }, { key: 'active', label: 'نشطة', count: activeOrdersCount }, { key: 'history', label: 'السجل', count: history?.length ?? 0 }] as const).map((item) => { const on = orderSection === item.key; return <Pressable key={item.key} onPress={() => setOrderSection(item.key)} accessibilityRole="button" accessibilityLabel={`${item.label}، ${item.count}`} accessibilityState={{ selected: on }} style={[s.oTab, on && s.oTabOn]}><Text style={[s.oTabText, on && s.oTabTextOn]}>{item.label}</Text><View style={[s.oTabCount, on && s.oTabCountOn, !on && item.key !== 'history' && item.count > 0 && s.oTabCountHot]}><Text style={[s.oTabCountText, on && s.oTabCountTextOn, !on && item.key !== 'history' && item.count > 0 && s.oTabCountTextHot]}>{item.count}</Text></View></Pressable>; })}
       </View>
-      <View style={s.driverOrdersToolbar}><View style={s.driverOrdersToolbarTitleRow}><Text style={s.driverOrdersToolbarTitle}>{orderSection === 'offers' ? 'عروض قريبة منك' : 'طلباتك النشطة'}</Text></View><Pressable disabled={busy || refreshing} onPress={() => void manualRefresh()} style={[s.driverToolbarRefresh, busy && s.disabled]} accessibilityRole="button" accessibilityLabel="تحديث طلبات السائق"><SymbolView name={{ ios: 'arrow.clockwise', android: 'refresh', web: 'refresh' }} tintColor={c.primary} size={15}/><Text style={s.driverToolbarRefreshText}>{refreshing ? 'لحظة…' : 'تحديث'}</Text></Pressable></View>
+      <View style={s.driverOrdersToolbar}><View style={s.driverOrdersToolbarTitleRow}><Text style={s.driverOrdersToolbarTitle}>{orderSection === 'offers' ? 'عروض قريبة منك' : orderSection === 'active' ? 'طلباتك النشطة' : 'سجل طلباتك'}</Text></View><Pressable disabled={busy || refreshing} onPress={() => void manualRefresh()} style={[s.driverToolbarRefresh, busy && s.disabled]} accessibilityRole="button" accessibilityLabel="تحديث طلبات السائق"><SymbolView name={{ ios: 'arrow.clockwise', android: 'refresh', web: 'refresh' }} tintColor={c.primary} size={15}/><Text style={s.driverToolbarRefreshText}>{refreshing ? 'لحظة…' : 'تحديث'}</Text></Pressable></View>
       <View style={orderSection === 'offers' ? undefined : s.hidden}>{!profile.is_online && <View style={s.driverOrdersHint}><SymbolView name={{ios:'pause.circle.fill',android:'pause_circle',web:'pause_circle'}} tintColor={c.accent} size={19}/><Text style={s.driverOrdersHintText}>الاستقبال متوقف. فعّله من الرئيسية حتى تقدر تقبل عرضاً.</Text></View>}
     {offers.length ? offers.map((offer) => <View key={offer.id} style={s.driverIncomingCard}><View style={s.driverIncomingTop}><View style={s.driverOrderCategoryPill}><Text style={s.driverOrderCategoryPillText}>{offer.order.category}</Text></View><View style={s.driverFeeHighlight}><Text style={s.driverFeeLabel}>أجرة التوصيل</Text><Text style={s.driverFeeValue}>{numberFormatter.format(offer.order.delivery_fee_minor)} ل.س</Text></View></View><Text style={s.driverOfferRequest}>{offer.order.request_text}</Text><OrderImageGallery orderId={offer.order.id} defaultOpen/><View style={s.driverOfferDestination}><View style={s.driverOfferSectionTitle}><SymbolView name={{ios:'mappin.and.ellipse',android:'location_on',web:'location_on'}} tintColor={c.primary} size={17}/><Text style={s.dropoffTitle}>مكان التوصيل</Text></View>{offer.order.address?<><Text style={s.dropoffText}>{offer.order.address.street}{offer.order.address.building?'، بناء '+offer.order.address.building:''}</Text><Text style={s.dropoffText}>{offer.order.address.neighborhood}، {offer.order.address.city}{offer.order.address.landmark?' · '+offer.order.address.landmark:''}</Text></>:<Text style={s.dropoffText}>عم نحمل عنوان التوصيل…</Text>}</View><View style={s.driverOfferBudget}><Text style={s.driverOrderFactLabel}>الحد الأعلى لمشتريات العميل</Text><Text style={s.driverOrderFactValue}>حتى {numberFormatter.format(offer.order.budget_ceiling_minor)} ل.س</Text><Text style={s.dropoffText}>أي مبلغ أعلى يحتاج موافقة العميل.</Text></View><OfferCountdown expiresAt={offer.expires_at}/><View style={s.offerActions}><Pressable disabled={busy || !profile.is_online || !online || operationsAreStale || !offer.order.address} onPress={() => void accept(offer.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale || !offer.order.address)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>قبول العرض</Text></Pressable><Pressable disabled={busy || !online || operationsAreStale} onPress={() => void decline(offer.id)} style={[s.declineOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.declineOfferText}>رفض</Text></Pressable></View></View>) : <View style={s.noOffers}><View style={s.emptyIconWrap}><SymbolView name={{ios:'sparkles',android:'new_releases',web:'new_releases'}} tintColor={c.primary} size={26}/></View><Text style={s.noOffersTitle}>ما في عروض حالياً</Text><Text style={s.noOffersCopy}>لما يوصلك عرض جديد بيظهر هون. فيك تحدّث القائمة بأي وقت.</Text></View>}
     </View><View style={orderSection === 'active' ? undefined : s.hidden}>{!!activeOrders.length && <>{activeOrders.map(renderActiveOrder)}</>}
-    {!activeOrders.length && <View style={s.noOffers}><View style={s.emptyIconWrap}><SymbolView name={{ios:'shippingbox.fill',android:'local_shipping',web:'local_shipping'}} tintColor={c.primary} size={26}/></View><Text style={s.noOffersTitle}>ما عندك طلبات نشطة</Text><Text style={s.noOffersCopy}>بعد قبول عرض، تفاصيله وخطوات التوصيل بتظهر هون.</Text></View>}</View></>}
+    {!activeOrders.length && <View style={s.noOffers}><View style={s.emptyIconWrap}><SymbolView name={{ios:'shippingbox.fill',android:'local_shipping',web:'local_shipping'}} tintColor={c.primary} size={26}/></View><Text style={s.noOffersTitle}>ما عندك طلبات نشطة</Text><Text style={s.noOffersCopy}>بعد قبول عرض، تفاصيله وخطوات التوصيل بتظهر هون.</Text></View>}</View><View style={orderSection === 'history' ? undefined : s.hidden}>{renderHistory()}</View></>}
     </></StaggeredSections>}
     {screen==='home'&&(()=>{const live=offers.find(o=>o.id!==dismissedOfferId);const open=isActive&&!!live&&profile.is_online&&online&&!pageLoading;const can=!(busy||!profile.is_online||!online||operationsAreStale||!live?.order.address);const closeSheet=()=>setDismissedOfferId(live?.id??null);return <Modal visible={open} transparent animationType="slide" onRequestClose={closeSheet}>
       <Pressable style={s.sheetBackdrop} onPress={closeSheet} accessibilityLabel="إغلاق"><Pressable style={s.sheet} onPress={()=>{}}>
@@ -1398,6 +1471,21 @@ function CustomerDriverRow({ orderId, status }: { orderId: string; status: strin
     <View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{contact.display_name}</Text><Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>{['delivered', 'settled'].includes(status) ? 'سلّم طلبك' : 'سائقك'}</Text></View>
     {contact.phone && !['delivered', 'settled'].includes(status) ? <Pressable onPress={() => void Linking.openURL(`tel:${contact.phone}`)} accessibilityRole="button" accessibilityLabel="اتصال بالسائق" style={{ minHeight: 40, borderRadius: 12, backgroundColor: '#B7FF30', paddingHorizontal: 13, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#0B1411', fontSize: 13, fontWeight: '900' }}>📞 اتصال</Text></Pressable> : null}
   </View>;
+}
+
+type HistoryOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id' | 'category' | 'request_text' | 'status' | 'delivery_fee_minor' | 'purchase_amount_minor' | 'budget_ceiling_minor' | 'delivered_at' | 'address_id'>;
+type HistoryPeriod = 'today' | 'week' | 'all';
+function historyCutoff(period: HistoryPeriod) {
+  if (period === 'all') return 0;
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return period === 'today' ? start : start - 6 * 86400000;
+}
+function dayLabel(iso: string) {
+  const date = new Date(iso); const now = new Date();
+  const day = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const diff = Math.round((day(now) - day(date)) / 86400000);
+  return diff <= 0 ? 'اليوم' : diff === 1 ? 'أمس' : notificationDateFormatter.format(date);
 }
 
 const adminStatusGroup = (status: string) => ['requested', 'quoted', 'disputed'].includes(status) ? 'action' : status === 'searching' ? 'searching' : ['accepted', 'assigned', 'shopping', 'awaiting_approval', 'purchased', 'delivering'].includes(status) ? 'active' : ['delivered', 'settled'].includes(status) ? 'done' : 'other';
