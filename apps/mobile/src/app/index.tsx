@@ -670,12 +670,13 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
   const [, setMessage] = useToastMessage();
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
   const [walletUnavailable, setWalletUnavailable] = useState(false);
-  const [loadedScreen, setLoadedScreen] = useState<'home' | 'orders' | null>(null);
-  const pageLoading = loading || loadedScreen !== screen;
+  const [loadedScreens, setLoadedScreens] = useState<{ home: boolean; orders: boolean }>({ home: false, orders: false });
+  // The skeleton only shows the first time a screen loads (or on a manual refresh); switching tabs refreshes quietly.
+  const pageLoading = !loadedScreens[screen] || (refreshing && loading);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const channelTopic = useRef(`driver-orders-${userId}-${newRequestKey()}`);
   const refresh = useCallback(async () => {
-    if (!supabase) { setOperationsAreStale(true); setLoadedScreen(screen); setLoading(false); return; }
+    if (!supabase) { setOperationsAreStale(true); setLoadedScreens((current) => ({ ...current, [screen]: true })); setLoading(false); return; }
     try {
     const cachedSnapshot = await loadDriverOrdersSnapshot(userId);
     if (cachedSnapshot) {
@@ -758,7 +759,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     } catch {
       setOperationsAreStale(true);
     } finally {
-      setLoadedScreen(screen);
+      setLoadedScreens((current) => ({ ...current, [screen]: true }));
       setLoading(false);
     }
   }, [online, screen, userId, setMessage]);
