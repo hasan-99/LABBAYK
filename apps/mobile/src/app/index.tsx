@@ -1249,7 +1249,7 @@ function SignedInHome({ userId, email, inviteToken, openOrderId, onSignOut, them
   return <DriverWorkspace userId={userId} email={email} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
 }
 
-type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'customer_id'|'address_id'|'category'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'budget_ceiling_minor'|'created_at'>;
+type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'customer_id'|'address_id'|'delivered_at'|'category'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'budget_ceiling_minor'|'created_at'>;
 type AdminMobileDriver = Pick<Database['public']['Tables']['driver_profiles']['Row'], 'user_id'|'vehicle_description'>;
 
 const pickupPrefix = 'الشراء من: ';
@@ -1257,20 +1257,20 @@ const composeRequest = (pickup: string, request: string) => pickup.trim() ? `${p
 const splitPickup = (text: string) => { const match = text.match(/^الشراء من: (.+)\n([\s\S]*)$/); return match ? { pickup: match[1].trim(), body: match[2].trim() } : { pickup: '', body: text }; };
 type AdminAddress = Pick<Database['public']['Tables']['addresses']['Row'], 'id' | 'street' | 'city' | 'neighborhood' | 'building' | 'landmark' | 'contact_phone'>;
 const thumbCache = new Map<string, { url: string | null; count: number }>();
-function AdminOrderThumb({ orderId }: { orderId: string }) {
+function AdminOrderThumb({ orderId, bucket = 'order-images' }: { orderId: string; bucket?: 'order-images' | 'delivery-proofs' }) {
   const { colors: c } = useMobileTheme();
-  const [info, setInfo] = useState<{ url: string | null; count: number } | null>(() => thumbCache.get(orderId) ?? null);
+  const [info, setInfo] = useState<{ url: string | null; count: number } | null>(() => thumbCache.get(`${bucket}:${orderId}`) ?? null);
   useEffect(() => {
     if (info || !supabase) return;
     let active = true;
-    void supabase.storage.from('order-images').list(orderId, { limit: 3, sortBy: { column: 'name', order: 'asc' } }).then(async ({ data, error }) => {
-      if (error || !data?.length) { thumbCache.set(orderId, { url: null, count: 0 }); if (active) setInfo({ url: null, count: 0 }); return; }
-      const { data: signed } = await supabase!.storage.from('order-images').createSignedUrls([`${orderId}/${data[0].name}`], 600);
+    void supabase.storage.from(bucket).list(orderId, { limit: 3, sortBy: { column: 'name', order: 'asc' } }).then(async ({ data, error }) => {
+      if (error || !data?.length) { thumbCache.set(`${bucket}:${orderId}`, { url: null, count: 0 }); if (active) setInfo({ url: null, count: 0 }); return; }
+      const { data: signed } = await supabase!.storage.from(bucket).createSignedUrls([`${orderId}/${data[0].name}`], 600);
       const result = { url: signed?.[0]?.signedUrl ?? null, count: data.length };
-      thumbCache.set(orderId, result); if (active) setInfo(result);
+      thumbCache.set(`${bucket}:${orderId}`, result); if (active) setInfo(result);
     }).catch(() => undefined);
     return () => { active = false; };
-  }, [info, orderId]);
+  }, [bucket, info, orderId]);
   if (!info?.count) return null;
   return <View style={{ width: 68, height: 68 }}>
     {info.url ? <Image source={{ uri: info.url }} style={{ width: 68, height: 68, borderRadius: 15, backgroundColor: c.raised }} contentFit="cover" cachePolicy="memory-disk" /> : <View style={{ width: 68, height: 68, borderRadius: 15, backgroundColor: c.raised }} />}
@@ -1297,6 +1297,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
   const [drivers, setDrivers] = useState<AdminMobileDriver[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
   const [addresses, setAddresses] = useState<Record<string, AdminAddress>>({});
+  const [driverPhones, setDriverPhones] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<AdminFilter>('action');
@@ -1313,7 +1314,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
   const refresh = useCallback(async () => {
     if (!supabase) return;
     const [orderResult, driverResult, userResult] = await Promise.all([
-      supabase.from('orders').select('id,customer_id,address_id,category,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,budget_ceiling_minor,created_at').order('created_at', { ascending: false }).limit(150),
+      supabase.from('orders').select('id,customer_id,address_id,delivered_at,category,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,budget_ceiling_minor,created_at').order('created_at', { ascending: false }).limit(150),
       supabase.from('driver_profiles').select('user_id,vehicle_description').eq('review_status', 'approved').eq('is_online', true).order('created_at'),
       supabase.rpc('admin_list_users'),
     ]);
@@ -1321,6 +1322,11 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
     else {
       const rows = orderResult.data ?? [];
       setOrders(rows); setDrivers(driverResult.data ?? []);
+      const driverIds = [...new Set(rows.flatMap((order) => order.driver_id ? [order.driver_id] : []))];
+      if (driverIds.length) {
+        const { data: phoneRows } = await supabase.from('driver_profiles').select('user_id,phone_e164').in('user_id', driverIds);
+        setDriverPhones(Object.fromEntries((phoneRows ?? []).flatMap((row) => row.phone_e164 ? [[row.user_id, row.phone_e164]] : [])));
+      }
       const addressIds = [...new Set(rows.flatMap((order) => order.address_id ? [order.address_id] : []))];
       if (addressIds.length) {
         const { data: addressRows } = await supabase.from('addresses').select('id,street,city,neighborhood,building,landmark,contact_phone').in('id', addressIds);
@@ -1411,7 +1417,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
                 <Text style={{ color: color.muted, fontSize: 11.5 }}>{timeAgo(order.created_at)} · #{order.id.slice(0, 6)}</Text>
               </View>
               <View style={{ flexDirection: 'row-reverse', gap: 11, alignItems: 'flex-start' }}>
-                <AdminOrderThumb orderId={order.id} />
+                <AdminOrderThumb orderId={order.id} bucket={adminStatusGroup(order.status) === 'done' ? 'delivery-proofs' : 'order-images'} />
                 <Text numberOfLines={3} style={{ flex: 1, color: color.text, fontSize: 15, fontWeight: '800', lineHeight: 23, textAlign: 'right' }}>{splitPickup(order.request_text).body}</Text>
               </View>
               <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
@@ -1422,7 +1428,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
                 <Text numberOfLines={1} style={{ color: color.muted, fontSize: 12.5, flex: 1, textAlign: 'right' }}>👤 {nameOf(order.customer_id)} · ميزانية {numberFormatter.format(order.budget_ceiling_minor)}</Text>
                 <Text style={{ color: color.primary, fontSize: 13, fontWeight: '900' }}>{order.delivery_quote_set_at ? numberFormatter.format(order.delivery_fee_minor) + ' ل.س' : 'بلا أجرة'}</Text>
               </View>
-              {order.driver_id ? <Text numberOfLines={1} style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>🛵 {nameOf(order.driver_id)}</Text> : null}
+              {order.driver_id ? <Text numberOfLines={1} style={{ color: adminStatusGroup(order.status) === 'done' ? color.accent : color.muted, fontSize: 12.5, fontWeight: adminStatusGroup(order.status) === 'done' ? '800' : '400', textAlign: 'right' }}>{adminStatusGroup(order.status) === 'done' ? `✅ سلّمه ${nameOf(order.driver_id)}${order.delivered_at ? ' · ' + timeAgo(order.delivered_at) : ''}` : `🛵 ${nameOf(order.driver_id)}`}</Text> : null}
               {needs ? <View style={{ minHeight: 42, borderRadius: 14, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 14, fontWeight: '900' }}>{order.delivery_quote_set_at ? 'إرسال الطلب للسائقين ←' : 'تحديد الأجرة وإرسال ←'}</Text></View> : null}
             </Pressable>;
           })}
@@ -1438,6 +1444,13 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
             <Pressable onPress={() => setSheet(null)} style={style.sheetClose} accessibilityRole="button" accessibilityLabel="إغلاق"><SymbolView name={{ ios: 'xmark', android: 'close', web: 'close' }} tintColor={color.muted} size={16} /></Pressable>
           </View>
           {sheet && <OrderImageGallery orderId={sheet.id} defaultOpen />}
+          {['delivered', 'settled'].includes(sheet.status) && <View style={[style.sheetBox, { borderColor: color.accent, gap: 10 }]}>
+            <Text style={{ color: color.accent, fontSize: 15, fontWeight: '900', textAlign: 'right' }}>✅ إثبات التسليم</Text>
+            <OrderImageGallery orderId={sheet.id} bucket="delivery-proofs" label="صورة التسليم" defaultOpen />
+            <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', gap: 10 }}><Text style={{ color: color.muted, fontSize: 14 }}>السائق</Text><Text style={{ color: color.text, fontSize: 14, fontWeight: '800', flexShrink: 1 }}>{nameOf(sheet.driver_id)}</Text></View>
+            <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', gap: 10 }}><Text style={{ color: color.muted, fontSize: 14 }}>وقت التسليم</Text><Text style={{ color: color.text, fontSize: 14, fontWeight: '800' }}>{sheet.delivered_at ? shortDateTimeFormatter.format(new Date(sheet.delivered_at)) : '—'}</Text></View>
+            {sheet.driver_id && driverPhones[sheet.driver_id] ? <Pressable onPress={() => void Linking.openURL(`tel:${driverPhones[sheet.driver_id!]}`)} accessibilityRole="button" accessibilityLabel="اتصال بالسائق" style={{ minHeight: 44, borderRadius: 14, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 14, fontWeight: '900' }}>📞 اتصال بالسائق · {driverPhones[sheet.driver_id]}</Text></Pressable> : null}
+          </View>}
           <View style={style.sheetBox}>
             <Text style={style.sheetBody}>{splitPickup(sheet.request_text).body}</Text>
           </View>
@@ -1460,7 +1473,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
             </View>
             {mode === 'driver' && (drivers.length ? <View style={{ gap: 8 }}>{drivers.map((driver) => { const on = driverId === driver.user_id; return <Pressable key={driver.user_id} onPress={() => setDriverId(driver.user_id)} accessibilityRole="radio" accessibilityState={{ selected: on }} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10, minHeight: 54, paddingHorizontal: 14, borderRadius: 16, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.raised : color.surface }}><View style={{ width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: on ? color.primary : color.muted, alignItems: 'center', justifyContent: 'center' }}>{on && <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: color.primary }} />}</View><View style={{ flex: 1 }}><Text style={{ color: color.text, fontSize: 14.5, fontWeight: '800', textAlign: 'right' }}>{nameOf(driver.user_id)}</Text><Text style={{ color: color.muted, fontSize: 12, textAlign: 'right', marginTop: 1 }}>{driver.vehicle_description || 'بدون وصف مركبة'}</Text></View></Pressable>; })}</View> : <Text style={{ color: '#F0CC83', fontSize: 13, textAlign: 'right' }}>ما في سائق متاح حالياً. فيك ترسل للجميع لما يتوفر سائق.</Text>)}
             <Pressable disabled={busy || !online} onPress={() => void priceAndRoute()} accessibilityRole="button" style={{ minHeight: 58, borderRadius: 18, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', opacity: busy || !online ? 0.55 : 1 }}><Text style={{ color: color.background, fontSize: 16.5, fontWeight: '900' }}>{busy ? 'عم نحفظ ونرسل…' : mode === 'driver' ? 'تحديد الأجرة وإسناد السائق' : 'تحديد الأجرة وإرسال للجميع'}</Text></Pressable>
-          </> : <Text style={{ color: color.muted, fontSize: 13.5, textAlign: 'center', lineHeight: 22 }}>{sheet.driver_id ? 'الطلب مع السائق ولا يحتاج إجراء منك.' : 'ما في إجراءات متاحة لهالطلب حالياً.'}</Text>}
+          </> : <Text style={{ color: color.muted, fontSize: 13.5, textAlign: 'center', lineHeight: 22 }}>{['delivered', 'settled'].includes(sheet.status) ? 'تم تسليم الطلب. التفاصيل وإثبات التسليم أعلاه.' : sheet.driver_id ? 'الطلب مع السائق ولا يحتاج إجراء منك.' : 'ما في إجراءات متاحة لهالطلب حالياً.'}</Text>}
         </ScrollView>}
       </Pressable></Pressable>
     </Modal>
