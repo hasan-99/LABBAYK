@@ -88,6 +88,7 @@ export function LegalPage({ page }: { page: PageName }) {
   const content = pageContent[page];
   useEffect(() => {
     if (Platform.OS === 'web') document.title = `${content.title} | لَبّيك`;
+    return () => { if (Platform.OS === 'web') document.title = 'لَبّيك | اطلب، والباقي علينا.'; };
   }, [content.title]);
   const deleteSignedInAccount = async () => {
     if (!supabase || !account) return;
