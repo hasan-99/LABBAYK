@@ -1,5 +1,6 @@
 import { Link } from 'expo-router';
-import { Pressable, View } from 'react-native';
+import { Linking, Pressable, View } from 'react-native';
+import { useSupportContact, whatsappUrl } from '@/lib/support-contact';
 import { SymbolView, type AndroidSymbol, type SFSymbol } from 'expo-symbols';
 import { AppText as Text } from '@/components/AppText';
 
@@ -11,10 +12,18 @@ const pages: { href: '/privacy' | '/terms' | '/support'; title: string; detail: 
 
 export function LegalLinksSection({ theme }: { theme: 'dark' | 'light' }) {
   const dark = theme === 'dark';
+  const support = useSupportContact();
   const colors = dark
     ? { surface: '#142119', raised: '#17251C', border: '#2C4034', text: '#F3F7F3', muted: '#A9B9B0', accent: '#B7FF30', danger: '#F0787F', dangerBg: '#291C1D' }
     : { surface: '#FFFFFF', raised: '#EFF5E8', border: '#DCE4D8', text: '#20241F', muted: '#5D645B', accent: '#287A55', danger: '#B42318', dangerBg: '#FBE9E7' };
   return <View style={{ gap: 12, marginTop: 14 }}>
+    {(support?.phone || support?.whatsapp) ? <View style={{ padding: 15, borderRadius: 18, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, gap: 9 }}>
+      <Text style={{ color: colors.text, fontSize: 16, fontWeight: '800', textAlign: 'right' }}>تواصل مع الإدارة</Text>
+      <View style={{ flexDirection: 'row-reverse', gap: 9 }}>
+        {support.phone ? <Pressable onPress={() => void Linking.openURL(`tel:${support.phone}`)} accessibilityRole="button" accessibilityLabel="اتصال بالإدارة" style={{ flex: 1, minHeight: 48, borderRadius: 14, backgroundColor: '#B7FF30', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#0B1411', fontSize: 14, fontWeight: '900' }}>📞 اتصال</Text></Pressable> : null}
+        {support.whatsapp ? <Pressable onPress={() => void Linking.openURL(whatsappUrl(support.whatsapp as string))} accessibilityRole="button" accessibilityLabel="واتساب الإدارة" style={{ flex: 1, minHeight: 48, borderRadius: 14, backgroundColor: '#25D366', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#06210F', fontSize: 14, fontWeight: '900' }}>💬 واتساب</Text></Pressable> : null}
+      </View>
+    </View> : null}
     <View style={{ padding: 15, borderRadius: 18, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }}>
       <Text style={{ color: colors.text, fontSize: 16, fontWeight: '800', textAlign: 'right', marginBottom: 5 }}>السياسات والمساعدة</Text>
       <Text style={{ color: colors.muted, fontSize: 12, textAlign: 'right', marginBottom: 9 }}>كل ما يخص استخدامك وبياناتك والتواصل معنا.</Text>

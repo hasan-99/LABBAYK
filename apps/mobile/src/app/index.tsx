@@ -20,6 +20,8 @@ import { clearDriverOrdersSnapshot, loadDriverOrdersSnapshot, saveDriverOrdersSn
 import { enablePushNotifications, hasRegisteredPushToken, unregisterPushNotifications } from '@/lib/push-notifications';
 import { AuthScreen, PasswordRecoveryScreen } from '@/components/AuthScreen';
 import { LegalLinksSection } from '@/components/LegalLinksSection';
+import { SUPPORT_EMAIL } from '@/lib/legal-contact';
+import { useSupportContact, whatsappUrl } from '@/lib/support-contact';
 import { AppText as Text } from '@/components/AppText';
 import { ToastProvider, useAppToast, useToastMessage } from '@/components/Toast';
 
@@ -691,6 +693,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   const [historyExtra, setHistoryExtra] = useState<Record<string, { cash: number | null; note: string | null }>>({});
   const [dismissedOfferId, setDismissedOfferId] = useState<string | null>(null);
   const [imagesOpen, setImagesOpen] = useState<Record<string, boolean>>({});
+  const support = useSupportContact();
   const [collectDrafts, setCollectDrafts] = useState<Record<string, string>>({});
   const [deliveryDraft, setDeliveryDraft] = useState<{ orderId: string; uri: string; mimeType: string } | null>(null);
   const [deliveryNote, setDeliveryNote] = useState('');
@@ -994,6 +997,42 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     const bigButton = { minHeight: 56, borderRadius: 18, backgroundColor: '#B7FF30', alignItems: 'center' as const, justifyContent: 'center' as const, opacity: locked ? 0.55 : 1 };
     const bigText = { color: '#0B1411', fontSize: 16.5, fontWeight: '900' as const };
     const addr = order.address;
+    if (order.status === 'disputed') return <View key={order.id} style={{ backgroundColor: c.surface, borderColor: '#C98A2B', borderWidth: 1, borderRadius: 22, padding: 13, gap: 11, marginTop: 10, marginBottom: 6 }}>
+      <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
+        <View style={{ backgroundColor: '#3A2D18', borderRadius: 12, paddingHorizontal: 11, minHeight: 28, justifyContent: 'center' }}><Text style={{ color: '#F0CC83', fontSize: 12.5, fontWeight: '900' }}>⏸ متوقف مؤقتاً</Text></View>
+        <Text style={{ color: c.muted, fontSize: 12 }}>#{order.id.slice(0, 6)} · {order.category}</Text>
+      </View>
+      <View style={{ flexDirection: 'row-reverse', gap: 12, alignItems: 'flex-start', backgroundColor: 'rgba(240,204,131,0.12)', borderColor: '#C98A2B', borderWidth: 1.5, borderRadius: 18, padding: 13 }}>
+        <View style={{ width: 46, height: 46, borderRadius: 15, backgroundColor: '#3A2D18', alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontSize: 22 }}>⏸</Text></View>
+        <View style={{ flex: 1 }}><Text style={{ color: '#F0CC83', fontSize: 16, fontWeight: '900', textAlign: 'right', marginBottom: 3 }}>الطلب متوقف مؤقتاً</Text><Text style={{ color: c.text, fontSize: 13.5, lineHeight: 23, textAlign: 'right' }}>لا تكمل أي خطوة ولا تتواصل مع الزبون. تواصل مع إدارة لَبّيك.</Text></View>
+      </View>
+      <View style={{ gap: 7 }}>
+        {support?.phone ? <Pressable onPress={() => void Linking.openURL(`tel:${support.phone}`)} accessibilityRole="button" accessibilityLabel="اتصال بالإدارة" style={{ minHeight: 54, borderRadius: 16, backgroundColor: '#B7FF30', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#0B1411', fontSize: 15.5, fontWeight: '900' }}>📞 اتصال بالإدارة</Text></Pressable> : null}
+        {support?.whatsapp ? <Pressable onPress={() => void Linking.openURL(whatsappUrl(support.whatsapp as string))} accessibilityRole="button" accessibilityLabel="واتساب الإدارة" style={{ minHeight: 54, borderRadius: 16, backgroundColor: '#25D366', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#06210F', fontSize: 15.5, fontWeight: '900' }}>💬 واتساب الإدارة</Text></Pressable> : null}
+        {!support?.phone && !support?.whatsapp ? <Pressable onPress={() => void Linking.openURL(`mailto:${SUPPORT_EMAIL}`)} accessibilityRole="button" accessibilityLabel="مراسلة الإدارة" style={{ minHeight: 54, borderRadius: 16, backgroundColor: '#B7FF30', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#0B1411', fontSize: 15.5, fontWeight: '900' }}>✉️ مراسلة الإدارة</Text></Pressable> : null}
+        <Text style={{ color: c.muted, fontSize: 12, textAlign: 'center' }}>الإدارة متاحة للرد على طلبك</Text>
+      </View>
+      <View style={{ backgroundColor: c.background, borderColor: c.border, borderWidth: 1, borderRadius: 16, padding: 11, gap: 3 }}>
+        <Text style={{ color: c.muted, fontSize: 11.5, fontWeight: '800', textAlign: 'right' }}>🛒 المطلوب شراؤه</Text>
+        <Text style={{ color: c.text, fontSize: 15.5, fontWeight: '900', lineHeight: 25, textAlign: 'right' }}>{splitPickup(order.request_text).body}</Text>
+      </View>
+      <View style={{ opacity: 0.45, flexDirection: 'row-reverse', alignItems: 'flex-start', justifyContent: 'space-between', marginHorizontal: 4 }}>
+        <View style={{ position: 'absolute', top: 10, right: '12%', left: '12%', height: 3, backgroundColor: c.border }} />
+        {driverSteps.map((label, index) => <View key={label} style={{ flex: 1, alignItems: 'center' }}>
+          <View style={{ width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: index === 0 ? '#B7FF30' : c.raised, borderWidth: 2, borderColor: index === 1 ? '#F0CC83' : index === 0 ? '#B7FF30' : c.border }}>{index === 0 ? <Text style={{ color: '#0B1411', fontSize: 11, fontWeight: '900' }}>✓</Text> : null}</View>
+          <Text style={{ color: c.muted, fontSize: 10.5, fontWeight: '800', marginTop: 4 }}>{label}</Text>
+        </View>)}
+      </View>
+      <View style={{ backgroundColor: c.background, borderColor: c.border, borderWidth: 1, borderRadius: 16, padding: 11, gap: 3 }}>
+        <Text style={{ color: c.muted, fontSize: 11.5, fontWeight: '800', textAlign: 'right' }}>📍 عنوان التوصيل</Text>
+        {addr ? <><Text style={{ color: c.text, fontSize: 15, fontWeight: '900', textAlign: 'right' }}>{addr.label}</Text><Text style={{ color: c.muted, fontSize: 13, lineHeight: 21, textAlign: 'right' }}>{addr.neighborhood}، {addr.city} · {[addr.street, addr.building ? 'بناء ' + addr.building : '', addr.landmark].filter(Boolean).join(' · ')}</Text></> : <Text style={{ color: c.muted, fontSize: 13, textAlign: 'right' }}>—</Text>}
+      </View>
+      <View style={{ flexDirection: 'row-reverse', backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 14, paddingVertical: 7, paddingHorizontal: 6 }}>
+        <View style={{ flex: 1, alignItems: 'center' }}><Text style={{ color: c.muted, fontSize: 10.5, fontWeight: '700' }}>ميزانية الزبون</Text><Text style={{ color: c.text, fontSize: 13.5, fontWeight: '900', marginTop: 1 }}>{numberFormatter.format(order.budget_ceiling_minor)}</Text></View>
+        <View style={{ flex: 1, alignItems: 'center', borderRightWidth: 1, borderRightColor: c.border }}><Text style={{ color: c.muted, fontSize: 10.5, fontWeight: '700' }}>أجرتك</Text><Text style={{ color: c.primary, fontSize: 13.5, fontWeight: '900', marginTop: 1 }}>{numberFormatter.format(order.delivery_fee_minor)}</Text></View>
+      </View>
+      <View style={{ minHeight: 54, borderRadius: 18, borderWidth: 1.5, borderStyle: 'dashed', borderColor: c.border, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: c.muted, fontSize: 15, fontWeight: '900' }}>⏳ بانتظار فريق لَبّيك</Text></View>
+    </View>;
     return <View key={order.id} style={{ backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 22, padding: 13, gap: 11, marginTop: 10, marginBottom: 6 }}>
       <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
         <View style={{ backgroundColor: '#26391C', borderRadius: 12, paddingHorizontal: 11, minHeight: 28, justifyContent: 'center' }}><Text style={{ color: '#B7FF30', fontSize: 12.5, fontWeight: '900' }}>{activeLabels[order.status] ?? orderStatus[order.status] ?? order.status}</Text></View>
