@@ -1556,6 +1556,8 @@ function dayLabel(iso: string) {
   return diff <= 0 ? 'اليوم' : diff === 1 ? 'أمس' : notificationDateFormatter.format(date);
 }
 
+const eventLabels: Record<string, string> = { order_requested: 'أُرسل الطلب', delivery_quote_set: 'حُددت الأجرة', offers_dispatched: 'أُرسل للسائقين', driver_assigned: 'عُيّن سائق', order_accepted: 'قبل السائق الطلب', driver_declined_offer: 'اعتذر سائق', shopping_started: 'بدأ التسوق', purchase_amount_proposed_within_budget: 'سُجل مبلغ المشتريات', purchase_completed: 'تأكد الشراء', delivery_started: 'بدأ التوصيل', delivery_confirmed: 'تم تأكيد التسليم', order_disputed: 'وصل بلاغ', dispute_resolved: 'حُل البلاغ', order_paused_by_admin: 'أوقفه الأدمن مؤقتاً', admin_cancelled: 'ألغاه الأدمن', customer_cancelled: 'ألغاه العميل', cash_settled: 'تمت التسوية' };
+
 const adminStatusGroup = (status: string) => ['requested', 'quoted', 'disputed'].includes(status) ? 'action' : status === 'searching' ? 'searching' : ['accepted', 'assigned', 'shopping', 'awaiting_approval', 'purchased', 'delivering'].includes(status) ? 'active' : ['delivered', 'settled'].includes(status) ? 'done' : 'other';
 const adminFilters = [{ key: 'action', label: 'تحتاج إجراء' }, { key: 'searching', label: 'عند السائقين' }, { key: 'active', label: 'جارية' }, { key: 'done', label: 'منتهية' }, { key: 'all', label: 'الكل' }] as const;
 type AdminFilter = typeof adminFilters[number]['key'];
@@ -1584,6 +1586,8 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
   const [resolution, setResolution] = useState('');
   const [openDisputes, setOpenDisputes] = useState<Record<string, boolean>>({});
   const [cancelReason, setCancelReason] = useState('');
+  const [timelineOpen, setTimelineOpen] = useState(false);
+  const [timeline, setTimeline] = useState<{ id: number; event_type: string; actor_id: string | null; created_at: string; details: Record<string, unknown> | null }[] | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [pending, setPending] = useState<Record<string, { driver_id: string; expires_at: string }[]>>({});
@@ -1717,6 +1721,13 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
     if (error) { setMessage('ما قدرنا نوقف الطلب. تأكد أنه ما زال جارياً وجرّب مرة ثانية.'); return; }
     setSheet(null); await refresh(); setMessage('تم إيقاف الطلب مؤقتاً.');
   };
+  useEffect(() => {
+    setTimeline(null);
+    if (!sheet || !timelineOpen || !supabase) return;
+    let active = true;
+    void supabase.from('order_events').select('id,event_type,actor_id,created_at,details').eq('order_id', sheet.id).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(30).then(({ data }) => { if (active) setTimeline((data ?? []) as { id: number; event_type: string; actor_id: string | null; created_at: string; details: Record<string, unknown> | null }[]); });
+    return () => { active = false; };
+  }, [sheet, timelineOpen]);
   const resolveDispute = async () => {
     if (!supabase || !dispute) return;
     if (resolution.trim().length < 5) { setMessage('اكتب ملخص الحل (5 أحرف على الأقل).'); return; }
@@ -1822,6 +1833,10 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
             {(pending[sheet.id] ?? []).map((offer) => <Text key={offer.driver_id} style={{ color: '#F0CC83', fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>⏳ {nameOf(offer.driver_id)} · بانتظار رده</Text>)}
             {(declines[sheet.id] ?? []).map((id) => <Text key={id} style={{ color: '#FF8A8A', fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>⚠️ {nameOf(id)} · اعتذر</Text>)}
           </View>}
+          <View style={[card, { gap: 8 }]}>
+            <Pressable onPress={() => setTimelineOpen((value) => !value)} accessibilityRole="button" accessibilityState={{ expanded: timelineOpen }} style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', minHeight: 38 }}><Text style={{ color: color.text, fontSize: 14, fontWeight: '900' }}>🕘 سجل الطلب</Text><Text style={{ color: color.primary, fontSize: 12.5, fontWeight: '900' }}>{timelineOpen ? 'إخفاء ⌃' : 'عرض ⌄'}</Text></Pressable>
+            {timelineOpen ? (timeline === null ? <Text style={{ color: color.muted, fontSize: 13, textAlign: 'right' }}>عم نحمّل السجل…</Text> : timeline.length ? timeline.map((event) => { const detail = event.details ?? {}; const from = typeof detail.previous_status === 'string' ? detail.previous_status : typeof detail.previous_order_status === 'string' ? detail.previous_order_status : ''; return <View key={event.id} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', gap: 8, borderTopWidth: 1, borderTopColor: color.border, paddingTop: 6 }}><View style={{ flex: 1 }}><Text style={{ color: color.text, fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>{eventLabels[event.event_type] ?? event.event_type}{from ? ` (من: ${orderStatus[from] ?? from})` : ''}</Text><Text style={{ color: color.muted, fontSize: 11.5, textAlign: 'right' }}>{event.actor_id ? nameOf(event.actor_id) : 'النظام'}</Text></View><Text style={{ color: color.muted, fontSize: 11.5 }}>{shortDateTimeFormatter.format(new Date(event.created_at))}</Text></View>; }) : <Text style={{ color: color.muted, fontSize: 13, textAlign: 'right' }}>ما في أحداث مسجلة.</Text>) : null}
+          </View>
           {!['delivered', 'settled', 'cancelled'].includes(sheet.status) && <View style={[card, { gap: 8 }]}>
             <Text style={{ color: '#FF8A8A', fontSize: 13.5, fontWeight: '900', textAlign: 'right' }}>🚫 إلغاء الطلب</Text>
             <TextInput value={cancelReason} onChangeText={setCancelReason} placeholder="سبب الإلغاء (إلزامي)" placeholderTextColor={color.muted} style={{ minHeight: 46, borderRadius: 12, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, color: color.text, paddingHorizontal: 12, textAlign: 'right', fontSize: 14 }} accessibilityLabel="سبب الإلغاء" />
