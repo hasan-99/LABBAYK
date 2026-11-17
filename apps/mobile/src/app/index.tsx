@@ -633,6 +633,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
   const [orderSection, setOrderSection] = useState<'offers' | 'active'>('offers');
   const [dismissedOfferId, setDismissedOfferId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [balanceOpen, setBalanceOpen] = useState(false);
   const [refreshToastPending, setRefreshToastPending] = useState(false);
   const [operationsAreStale, setOperationsAreStale] = useState(false);
   const [ordersSyncedAt, setOrdersSyncedAt] = useState('');
@@ -863,7 +864,7 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     {screen==='home'&&<View style={s.homePills}>
       <Pressable onPress={()=>{setOrderSection('offers');onOpenOrders()}} accessibilityRole="button" accessibilityLabel={`عروض جديدة، ${offersCount}`} style={[s.homePill,offersCount>0&&s.homePillHot]}><Text style={s.homePillValue}>{offersCount}</Text><Text style={s.homePillLabel}>عروض جديدة</Text></Pressable>
       <Pressable onPress={()=>{setOrderSection('active');onOpenOrders()}} accessibilityRole="button" accessibilityLabel={`طلبات نشطة، ${activeOrdersCount}`} style={s.homePill}><Text style={[s.homePillValue,activeOrdersCount===0&&{color:c.text}]}>{activeOrdersCount}</Text><Text style={s.homePillLabel}>طلبات نشطة</Text></Pressable>
-      <View style={s.homePill}><Text style={[s.homePillValue,(walletBalance===null||walletBalance>=0)&&{color:c.text}]}>{walletBalance===null?'—':numberFormatter.format(Math.abs(walletBalance))}</Text><Text style={s.homePillLabel}>{walletBalance!==null&&walletBalance<0?'عمولة مستحقة':'رصيد ل.س'}</Text></View>
+      <Pressable onPress={()=>setBalanceOpen(true)} accessibilityRole="button" accessibilityLabel="تفاصيل العمولة المستحقة" style={s.homePill}><Text style={[s.homePillValue,(walletBalance===null||walletBalance>=0)&&{color:c.text}]}>{walletBalance===null?'—':numberFormatter.format(Math.abs(walletBalance))}</Text><Text style={s.homePillLabel}>{walletBalance!==null&&walletBalance<0?'عمولة مستحقة':'رصيد ل.س'}</Text></Pressable>
     </View>}
     {screen==='home'&&offers[0]&&profile.is_online&&<Pressable onPress={()=>{setOrderSection('offers');onOpenOrders()}} accessibilityRole="button" style={s.homeLive}>
       <View style={s.homeLiveHead}><Text style={s.homeLiveKicker}>⚡ عرض بانتظارك</Text></View>
@@ -909,6 +910,21 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
         </>}
       </Pressable></Pressable>
     </Modal>})()}
+    {screen==='home'&&<Modal visible={balanceOpen} transparent animationType="slide" onRequestClose={()=>setBalanceOpen(false)}>
+      <Pressable style={s.sheetBackdrop} onPress={()=>setBalanceOpen(false)} accessibilityLabel="إغلاق"><Pressable style={s.sheet} onPress={()=>{}}>
+        <View style={s.sheetHandle}/>
+        <View style={s.sheetHead}>
+          <View style={{flex:1,minWidth:0}}><Text style={s.sheetTitle}>تفاصيل العمولة المستحقة</Text></View>
+          <Pressable onPress={()=>setBalanceOpen(false)} style={s.sheetClose} accessibilityRole="button" accessibilityLabel="إغلاق"><SymbolView name={{ios:'xmark',android:'close',web:'close'}} tintColor={c.muted} size={16}/></Pressable>
+        </View>
+        <View style={[s.sheetBox,{alignItems:'center',paddingVertical:22}]}>
+          <Text style={s.balanceLabel}>{walletBalance!==null&&walletBalance>0?'رصيدك لدى لَبّيك':'الرصيد المستحق للدفع'}</Text>
+          <Text style={s.balanceValue}>{walletUnavailable?'—':walletBalance===null?'…':numberFormatter.format(Math.abs(walletBalance))} <Text style={s.balanceUnit}>ل.س</Text></Text>
+          <View style={[s.balanceBadge,walletBalance!==null&&walletBalance<0&&s.balanceBadgeDue]}><Text style={[s.balanceBadgeText,walletBalance!==null&&walletBalance<0&&s.balanceBadgeTextDue]}>{walletUnavailable?'تعذر تحميل الرصيد. أعد المحاولة.':walletBalance===null?(online?'عم نتحقق من رصيدك…':'الرصيد يظهر عند الاتصال.'):walletBalance<0?'عليك دفعها بعد تسوية الطلبات':walletBalance>0?'إلك رصيد بالمحفظة':'✓ حسابك مسوّى بالكامل'}</Text></View>
+        </View>
+        <Pressable onPress={()=>setBalanceOpen(false)} style={s.sheetCta} accessibilityRole="button"><Text style={s.sheetCtaText}>حسناً</Text></Pressable>
+      </Pressable></Pressable>
+    </Modal>}
   </View>;
 }
 
@@ -1848,4 +1864,5 @@ const styleDefinitions = {
   homePills:{flexDirection:'row-reverse',gap:9,marginTop:16,marginBottom:12},homePill:{flex:1,alignItems:'center',paddingVertical:12,paddingHorizontal:6,borderRadius:20,backgroundColor:c.surface,borderWidth:1,borderColor:c.border},homePillHot:{borderColor:c.primary},homePillValue:{color:c.primary,fontSize:24,fontWeight:'900'},homePillLabel:{color:c.muted,fontSize:11.5,marginTop:2,textAlign:'center'},
   homeLive:{borderRadius:22,padding:14,marginBottom:12,backgroundColor:c.surface,borderWidth:1,borderColor:c.primary,borderRightWidth:4},homeLiveHead:{flexDirection:'row-reverse',marginBottom:8},homeLiveKicker:{color:c.primary,fontSize:12.5,fontWeight:'900'},homeLiveMain:{flexDirection:'row-reverse',alignItems:'flex-end',justifyContent:'space-between',gap:10},homeLiveTitle:{color:c.text,fontSize:15,fontWeight:'800',textAlign:'right'},homeLiveSub:{color:c.muted,fontSize:12.5,marginTop:3,textAlign:'right'},homeLiveFee:{color:c.primary,fontSize:22,fontWeight:'900'},homeLiveFeeUnit:{color:c.muted,fontSize:12,fontWeight:'500'},homeLiveCta:{marginTop:12,minHeight:46,borderRadius:15,backgroundColor:c.primary,alignItems:'center',justifyContent:'center'},homeLiveCtaText:{color:'#0B1411',fontSize:14.5,fontWeight:'900'},
   homeActive:{flexDirection:'row-reverse',alignItems:'center',gap:12,padding:14,marginBottom:12,borderRadius:22,backgroundColor:c.surface,borderWidth:1,borderColor:c.border},homeActiveIcon:{width:46,height:46,borderRadius:15,alignItems:'center',justifyContent:'center',backgroundColor:c.raised,borderWidth:1,borderColor:c.border},homeActiveTitle:{color:c.text,fontSize:15,fontWeight:'900',textAlign:'right'},homeActiveSub:{color:c.muted,fontSize:12.5,marginTop:2,textAlign:'right'},
+  balanceLabel:{color:c.muted,fontSize:14,textAlign:'center'},balanceValue:{color:c.primary,fontSize:40,fontWeight:'900',textAlign:'center',marginTop:6},balanceUnit:{fontSize:20,fontWeight:'800'},balanceBadge:{marginTop:12,paddingHorizontal:14,minHeight:34,borderRadius:17,alignItems:'center',justifyContent:'center',backgroundColor:c.raised,borderWidth:1,borderColor:c.border},balanceBadgeDue:{borderColor:'#C98A2B'},balanceBadgeText:{color:c.accent,fontSize:13,fontWeight:'800',textAlign:'center'},balanceBadgeTextDue:{color:'#F0CC83'},
 };
