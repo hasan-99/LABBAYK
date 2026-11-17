@@ -1543,6 +1543,8 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
   const [dispute, setDispute] = useState<{ id: string; reason: string; details: string; opened_by: string; created_at: string } | null>(null);
   const [resolution, setResolution] = useState('');
   const [openDisputes, setOpenDisputes] = useState<Record<string, boolean>>({});
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelling, setCancelling] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [pending, setPending] = useState<Record<string, { driver_id: string; expires_at: string }[]>>({});
   const showToast = useAppToast();
@@ -1655,6 +1657,17 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
     void supabase.from('order_disputes').select('id,reason,details,opened_by,created_at').eq('order_id', sheet.id).is('resolved_at', null).limit(1).then(({ data }) => { if (active) setDispute(data?.[0] ?? null); });
     return () => { active = false; };
   }, [sheet, openDisputes]);
+  const cancelOrder = async () => {
+    if (!supabase || !sheet) return;
+    if (cancelReason.trim().length < 5) { setMessage('اكتب سبب الإلغاء (5 أحرف على الأقل).'); return; }
+    const afterPurchase = sheet.purchase_amount_minor !== null || ['purchased', 'delivering'].includes(sheet.status);
+    if (!(await confirmAction('إلغاء الطلب؟', afterPurchase ? 'السائق اشترى الأغراض أصلاً. بيتلغى الطلب وبتضل المبالغ مسجلة للتسوية اليدوية.' : 'رح يتلغى الطلب وبيوصل إشعار للعميل.', 'إلغاء الطلب'))) return;
+    setCancelling(true);
+    const { error } = await supabase.rpc('cancel_admin_order', { p_order_id: sheet.id, p_reason: cancelReason.trim() });
+    setCancelling(false);
+    if (error) { setMessage('ما قدرنا نلغي الطلب. إذا السائق اشترى الأغراض لازم يكون في بلاغ مفتوح على الطلب.'); return; }
+    setCancelReason(''); setSheet(null); await refresh(); setMessage('تم إلغاء الطلب.');
+  };
   const pauseOrder = async () => {
     if (!supabase || !dispute) return;
     if (!(await confirmAction('إيقاف الطلب مؤقتاً؟', 'السائق والعميل بيشوفوا إن الطلب متوقف مؤقتاً. بيرجع لحالته لما تحل البلاغ.', 'إيقاف الطلب'))) return;
@@ -1768,6 +1781,12 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
           {sheet.status === 'searching' && ((declines[sheet.id]?.length ?? 0) > 0 || (pending[sheet.id]?.length ?? 0) > 0) && <View style={[card, { gap: 6 }]}>
             {(pending[sheet.id] ?? []).map((offer) => <Text key={offer.driver_id} style={{ color: '#F0CC83', fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>⏳ {nameOf(offer.driver_id)} · بانتظار رده</Text>)}
             {(declines[sheet.id] ?? []).map((id) => <Text key={id} style={{ color: '#FF8A8A', fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>⚠️ {nameOf(id)} · اعتذر</Text>)}
+          </View>}
+          {!['delivered', 'settled', 'cancelled'].includes(sheet.status) && <View style={[card, { gap: 8 }]}>
+            <Text style={{ color: '#FF8A8A', fontSize: 13.5, fontWeight: '900', textAlign: 'right' }}>🚫 إلغاء الطلب</Text>
+            <TextInput value={cancelReason} onChangeText={setCancelReason} placeholder="سبب الإلغاء (إلزامي)" placeholderTextColor={color.muted} style={{ minHeight: 46, borderRadius: 12, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, color: color.text, paddingHorizontal: 12, textAlign: 'right', fontSize: 14 }} accessibilityLabel="سبب الإلغاء" />
+            <Pressable disabled={cancelling || !online} onPress={() => void cancelOrder()} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: '#FF8A8A', alignItems: 'center', justifyContent: 'center', opacity: cancelling || !online ? 0.55 : 1 }}><Text style={{ color: '#FF8A8A', fontSize: 14.5, fontWeight: '900' }}>{cancelling ? 'لحظة…' : 'إلغاء الطلب'}</Text></Pressable>
+            {sheet.purchase_amount_minor !== null || ['purchased', 'delivering'].includes(sheet.status) ? <Text style={{ color: color.muted, fontSize: 12, lineHeight: 19, textAlign: 'right' }}>السائق اشترى الأغراض: الإلغاء بعد الشراء بيحتاج بلاغاً مفتوحاً على الطلب، وبتضل المبالغ مسجلة للتسوية اليدوية.</Text> : null}
           </View>}
           {!delivered && !actionable && <View style={card}><Text style={{ color: color.muted, fontSize: 13.5, textAlign: 'center', lineHeight: 22 }}>{sheet.driver_id ? `الطلب مع السائق ${nameOf(sheet.driver_id)} ولا يحتاج إجراء منك.` : 'ما في إجراءات متاحة لهالطلب حالياً.'}</Text></View>}
           {actionable && <View style={[card, { borderColor: color.primary, gap: 8 }]}>
