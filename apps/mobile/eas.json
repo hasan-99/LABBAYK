@@ -1,4 +1,7 @@
 {
+  "cli": {
+    "appVersionSource": "remote"
+  },
   "build": {
     "development": {
       "developmentClient": true,
@@ -19,7 +22,8 @@
       "channel": "production",
       "android": {
         "buildType": "app-bundle"
-      }
+      },
+      "autoIncrement": true
     }
   }
 }
