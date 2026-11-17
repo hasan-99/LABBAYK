@@ -672,18 +672,6 @@ function DriverOperations({ userId, screen = 'orders', profileComplete = true, o
     if (!walletError) { setWalletBalance(walletRows?.find((row) => row.driver_id === userId)?.balance_minor ?? 0); setWalletUnavailable(false); }
     else { setWalletBalance(null); setWalletUnavailable(true); }
     if (driver.data) setProfile(driver.data);
-    if (screen === 'home') {
-      const [offerCountResult, activeCountResult] = await Promise.all([
-        supabase.from('order_offers').select('id', { count: 'exact', head: true }).eq('driver_id', userId).eq('status', 'pending').gt('expires_at', new Date().toISOString()),
-        supabase.from('orders').select('id', { count: 'exact', head: true }).eq('driver_id', userId).neq('status', 'delivered').neq('status', 'settled').neq('status', 'cancelled'),
-      ]);
-      if (!offerCountResult.error) setOffersCount(offerCountResult.count ?? 0);
-      if (!activeCountResult.error) setActiveOrdersCount(activeCountResult.count ?? 0);
-      const syncFailed = !!driver.error || !!offerCountResult.error || !!activeCountResult.error;
-      setOperationsAreStale(syncFailed);
-      if (!syncFailed) setMessage('');
-      return;
-    }
     const [offerRows, assigned] = await Promise.all([
       supabase.from('order_offers').select('id,order_id,expires_at').eq('driver_id', userId).eq('status', 'pending').gt('expires_at', new Date().toISOString()).order('expires_at'),
       supabase.from('orders').select('id,status,category,request_text,delivery_fee_minor,budget_ceiling_minor,purchase_amount_minor,purchase_approved_at,created_at,address_id').eq('driver_id', userId).neq('status', 'delivered').neq('status', 'settled').neq('status', 'cancelled').order('created_at', { ascending: false }),
