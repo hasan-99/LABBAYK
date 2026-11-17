@@ -21,7 +21,7 @@ import { enablePushNotifications, hasRegisteredPushToken, unregisterPushNotifica
 import { AuthScreen, PasswordRecoveryScreen } from '@/components/AuthScreen';
 import { LegalLinksSection } from '@/components/LegalLinksSection';
 import { SUPPORT_EMAIL } from '@/lib/legal-contact';
-import { useSupportContact, whatsappUrl } from '@/lib/support-contact';
+import { ltrPhone, prettyPhone, useSupportContact, whatsappUrl } from '@/lib/support-contact';
 import { AppText as Text } from '@/components/AppText';
 import { ToastProvider, useAppToast, useToastMessage } from '@/components/Toast';
 
@@ -1010,6 +1010,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
         {support?.phone ? <Pressable onPress={() => void Linking.openURL(`tel:${support.phone}`)} accessibilityRole="button" accessibilityLabel="اتصال بالإدارة" style={{ minHeight: 54, borderRadius: 16, backgroundColor: '#B7FF30', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#0B1411', fontSize: 15.5, fontWeight: '900' }}>📞 اتصال بالإدارة</Text></Pressable> : null}
         {support?.whatsapp ? <Pressable onPress={() => void Linking.openURL(whatsappUrl(support.whatsapp as string))} accessibilityRole="button" accessibilityLabel="واتساب الإدارة" style={{ minHeight: 54, borderRadius: 16, backgroundColor: '#25D366', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#06210F', fontSize: 15.5, fontWeight: '900' }}>💬 واتساب الإدارة</Text></Pressable> : null}
         {!support?.phone && !support?.whatsapp ? <Pressable onPress={() => void Linking.openURL(`mailto:${SUPPORT_EMAIL}`)} accessibilityRole="button" accessibilityLabel="مراسلة الإدارة" style={{ minHeight: 54, borderRadius: 16, backgroundColor: '#B7FF30', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#0B1411', fontSize: 15.5, fontWeight: '900' }}>✉️ مراسلة الإدارة</Text></Pressable> : null}
+        {support?.phone ? <Text selectable style={{ color: c.text, fontSize: 15, fontWeight: '900', textAlign: 'center' }}>{ltrPhone(prettyPhone(support.phone))}</Text> : null}
         <Text style={{ color: c.muted, fontSize: 12, textAlign: 'center' }}>الإدارة متاحة للرد على طلبك</Text>
       </View>
       <View style={{ backgroundColor: c.background, borderColor: c.border, borderWidth: 1, borderRadius: 16, padding: 11, gap: 3 }}>
@@ -1060,7 +1061,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
         {addr ? <>
           <Text style={{ color: c.text, fontSize: 15, fontWeight: '900', lineHeight: 24, textAlign: 'right' }}>{addr.label}</Text>
           <Text style={{ color: c.muted, fontSize: 13, lineHeight: 21, textAlign: 'right' }}>{addr.neighborhood}، {addr.city}{'\n'}{[addr.street, addr.building ? 'بناء ' + addr.building : '', addr.landmark].filter(Boolean).join(' · ')}</Text>
-          <Pressable onPress={() => void Linking.openURL(`tel:${addr.contact_phone}`)} accessibilityRole="button" accessibilityLabel="اتصال بالزبون" style={{ marginTop: 8, minHeight: 46, borderRadius: 14, backgroundColor: '#B7FF30', flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 9 }}><Text style={{ color: '#0B1411', fontSize: 14.5, fontWeight: '900' }}>📞 اتصال بالزبون</Text><Text style={{ color: '#0B1411', fontSize: 13.5, fontWeight: '800', writingDirection: 'ltr' }}>{addr.contact_phone}</Text></Pressable>
+          <Pressable onPress={() => void Linking.openURL(`tel:${addr.contact_phone}`)} accessibilityRole="button" accessibilityLabel="اتصال بالزبون" style={{ marginTop: 8, minHeight: 46, borderRadius: 14, backgroundColor: '#B7FF30', flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 9 }}><Text style={{ color: '#0B1411', fontSize: 14.5, fontWeight: '900' }}>📞 اتصال بالزبون</Text><Text style={{ color: '#0B1411', fontSize: 13.5, fontWeight: '800', writingDirection: 'ltr' }}>{ltrPhone(addr.contact_phone)}</Text></Pressable>
         </> : <Text style={{ color: c.muted, fontSize: 13, textAlign: 'right' }}>{operationsAreStale ? 'يظهر العنوان عند رجوع الاتصال.' : 'عم نحمل العنوان…'}</Text>}
       </View>
       <View style={{ flexDirection: 'row-reverse', backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 14, paddingVertical: 7, paddingHorizontal: 6 }}>
@@ -1769,7 +1770,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
           <View style={card}>
             <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11 }}>
               <View style={{ width: 42, height: 42, borderRadius: 21, borderWidth: 2, borderColor: color.primary, backgroundColor: color.raised, alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontSize: 19 }}>👤</Text></View>
-              <View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 18, fontWeight: '900', textAlign: 'right' }}>{nameOf(sheet.customer_id)}</Text>{address?.contact_phone ? <Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', writingDirection: 'ltr' }}>{address.contact_phone}</Text> : null}</View>
+              <View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 18, fontWeight: '900', textAlign: 'right' }}>{nameOf(sheet.customer_id)}</Text>{address?.contact_phone ? <Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', writingDirection: 'ltr' }}>{ltrPhone(address.contact_phone)}</Text> : null}</View>
               {address?.contact_phone ? <Pressable onPress={() => void Linking.openURL(`tel:${address.contact_phone}`)} accessibilityRole="button" accessibilityLabel="اتصال بالعميل" style={{ minHeight: 44, borderRadius: 13, backgroundColor: color.primary, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 14, fontWeight: '900' }}>📞 اتصال</Text></Pressable> : null}
             </View>
             <View style={{ height: 1, backgroundColor: color.border, marginVertical: 10 }} />
@@ -1805,7 +1806,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
             })()}
             <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5 }}>السائق</Text><Text style={{ color: color.text, fontSize: 13.5, fontWeight: '800' }}>{nameOf(sheet.driver_id)}</Text></View>
             <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5 }}>وقت التسليم</Text><Text style={{ color: color.text, fontSize: 13.5, fontWeight: '800' }}>{sheet.delivered_at ? shortDateTimeFormatter.format(new Date(sheet.delivered_at)) : '—'}</Text></View>
-            {sheet.driver_id && driverPhones[sheet.driver_id] ? <Pressable onPress={() => void Linking.openURL(`tel:${driverPhones[sheet.driver_id!]}`)} accessibilityRole="button" accessibilityLabel="اتصال بالسائق" style={{ minHeight: 44, borderRadius: 13, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 14, fontWeight: '900' }}>📞 اتصال بالسائق · {driverPhones[sheet.driver_id]}</Text></Pressable> : null}
+            {sheet.driver_id && driverPhones[sheet.driver_id] ? <Pressable onPress={() => void Linking.openURL(`tel:${driverPhones[sheet.driver_id!]}`)} accessibilityRole="button" accessibilityLabel="اتصال بالسائق" style={{ minHeight: 44, borderRadius: 13, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 14, fontWeight: '900' }}>📞 اتصال بالسائق · {ltrPhone(driverPhones[sheet.driver_id])}</Text></Pressable> : null}
           </View>}
           {(sheet.status === 'disputed' || openDisputes[sheet.id]) && <View style={[card, { borderColor: '#C98A2B', gap: 8 }]}>
             <Text style={{ color: '#F0CC83', fontSize: 14.5, fontWeight: '900', textAlign: 'right' }}>⚠️ بلاغ من {dispute ? (dispute.opened_by === sheet.customer_id ? 'العميل' : 'السائق') + ' ' + nameOf(dispute.opened_by) : '…'}</Text>
@@ -2325,7 +2326,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
         </View>
         <View style={s.profileSectionCard}>
           <View style={s.profileSectionHeading}><View style={s.profileHeadingIcon}><SymbolView name={{ ios: 'mappin.and.ellipse', android: 'location_on', web: 'location_on' }} tintColor={c.primary} size={21}/></View><Text style={s.profileSectionTitle}>عنوان التوصيل</Text></View>
-          {selectedAddress ? <View style={s.profileAddressSummary}><Text style={s.profileAddressName}>{selectedAddress.label}</Text><Text style={s.profileAddressLine}>{selectedAddress.neighborhood}، {selectedAddress.city}</Text><Text style={s.profileAddressLine}>{selectedAddress.street}{selectedAddress.building ? '، بناء ' + selectedAddress.building : ''}</Text><Text style={s.profileAddressPhone}>للتواصل: {selectedAddress.contact_phone}</Text></View> : <View style={s.profileAddressEmpty}><Text style={s.profileAddressEmptyTitle}>ما أضفت عنوان توصيل بعد</Text><Text style={s.profileAddressLine}>أضف عنوانك حتى يصير إرسال الطلب أسرع.</Text></View>}
+          {selectedAddress ? <View style={s.profileAddressSummary}><Text style={s.profileAddressName}>{selectedAddress.label}</Text><Text style={s.profileAddressLine}>{selectedAddress.neighborhood}، {selectedAddress.city}</Text><Text style={s.profileAddressLine}>{selectedAddress.street}{selectedAddress.building ? '، بناء ' + selectedAddress.building : ''}</Text><Text style={s.profileAddressPhone}>للتواصل: {ltrPhone(selectedAddress.contact_phone)}</Text></View> : <View style={s.profileAddressEmpty}><Text style={s.profileAddressEmptyTitle}>ما أضفت عنوان توصيل بعد</Text><Text style={s.profileAddressLine}>أضف عنوانك حتى يصير إرسال الطلب أسرع.</Text></View>}
           <Pressable onPress={() => navigate('addresses')} style={[s.profileSectionAction, s.profileSectionActionPrimary]} accessibilityRole="button"><Text style={[s.profileSectionActionText, s.profileSectionActionTextPrimary]}>{selectedAddress ? 'تعديل العنوان' : 'إضافة عنوان توصيل'}</Text><SymbolView name={{ ios: 'pencil', android: 'edit', web: 'edit' }} tintColor={theme === 'light' ? '#17210F' : c.background} size={17}/></Pressable>
         </View>
         <View style={s.profileSectionCard}>

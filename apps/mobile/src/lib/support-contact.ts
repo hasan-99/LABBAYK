@@ -22,3 +22,10 @@ export function useSupportContact(): SupportContact | null {
 }
 
 export const whatsappUrl = (number: string) => `https://wa.me/${number.replace(/\D/g, '')}`;
+
+// Phone numbers are left-to-right text: isolate them so the "+" and digit groups never flip inside Arabic (RTL) lines.
+export const ltrPhone = (number: string) => `\u2066${number}\u2069`;
+export const prettyPhone = (number: string) => {
+  const digits = number.replace(/[^\d+]/g, '');
+  return /^\+963\d{9}$/.test(digits) ? `+963 ${digits.slice(4, 7)} ${digits.slice(7, 10)} ${digits.slice(10)}` : number;
+};
