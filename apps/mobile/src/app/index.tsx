@@ -158,7 +158,7 @@ export function generateMetadata(): Metadata {
 }
 type Address = Database['public']['Tables']['addresses']['Row'];
 type DriverOfferAddress = Pick<Address, 'id'|'label'|'street'|'city'|'neighborhood'|'building'|'landmark'>;
-type CustomerOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'category'|'request_text'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'budget_ceiling_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'>;
+type CustomerOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'category'|'request_text'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'budget_ceiling_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'> & { driver_id?: string | null; delivered_at?: string | null };
 type DriverOfferCard = { id: string; expires_at: string; order: Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'category'|'request_text'|'delivery_fee_minor'|'budget_ceiling_minor'|'address_id'> & { address: DriverOfferAddress | null } };
 type DriverActiveOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'category'|'request_text'|'delivery_fee_minor'|'budget_ceiling_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'address_id'> & { address: Pick<Address, 'id'|'label'|'street'|'city'|'neighborhood'|'contact_phone'|'building'|'landmark'> | null };
 const newRequestKey = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => { const value = Math.random() * 16 | 0; return (char === 'x' ? value : (value & 3 | 8)).toString(16); });
@@ -1256,6 +1256,39 @@ function AdminImageStrip({ orderId, bucket = 'order-images', size = 64, emptyTex
   </View>;
 }
 
+const trackSteps = ['تم الطلب', 'سائق', 'تسوق', 'بالطريق', 'تسليم'];
+const trackIndex = (status: string) => ['requested', 'quoted', 'searching'].includes(status) ? 1 : ['accepted', 'assigned', 'shopping', 'awaiting_approval'].includes(status) ? 2 : ['purchased', 'delivering'].includes(status) ? 3 : ['delivered', 'settled'].includes(status) ? 5 : -1;
+const customerGroup = (status: string) => ['delivered', 'settled'].includes(status) ? 'done' : status === 'cancelled' ? 'cancelled' : 'live';
+function OrderTrack({ status }: { status: string }) {
+  const { colors: c } = useMobileTheme();
+  const current = trackIndex(status);
+  if (current < 0) return null;
+  return <View accessibilityRole="progressbar" accessibilityLabel={`مرحلة الطلب: ${orderStatus[status] ?? status}`} style={{ flexDirection: 'row-reverse', alignItems: 'flex-start', justifyContent: 'space-between', marginHorizontal: 2 }}>
+    <View style={{ position: 'absolute', top: 10, right: '10%', left: '10%', height: 3, borderRadius: 2, backgroundColor: c.border }} />
+    {trackSteps.map((label, index) => { const done = index < current; const now = index === current; return <View key={label} style={{ flex: 1, alignItems: 'center' }}>
+      <View style={{ width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: done ? '#B7FF30' : c.raised, borderWidth: 2, borderColor: done || now ? '#B7FF30' : c.border }}>{done ? <Text style={{ color: '#0B1411', fontSize: 11, fontWeight: '900' }}>✓</Text> : now ? <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#B7FF30' }} /> : null}</View>
+      <Text style={{ color: done ? c.text : now ? c.primary : c.muted, fontSize: 10.5, fontWeight: '800', marginTop: 5 }}>{label}</Text>
+    </View>; })}
+  </View>;
+}
+function CustomerDriverRow({ orderId, status }: { orderId: string; status: string }) {
+  const { colors: c } = useMobileTheme();
+  const online = useInternetAvailable();
+  const [contact, setContact] = useState<{ display_name: string; phone: string | null } | null>(null);
+  useEffect(() => {
+    if (!supabase || !online) return;
+    let active = true;
+    void supabase.rpc('get_order_driver_contact', { p_order_id: orderId }).then(({ data, error }) => { if (active && !error && data?.[0]) setContact(data[0]); });
+    return () => { active = false; };
+  }, [online, orderId]);
+  if (!contact) return null;
+  return <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11, backgroundColor: c.background, borderColor: c.border, borderWidth: 1, borderRadius: 16, paddingHorizontal: 11, paddingVertical: 9 }}>
+    <View style={{ width: 38, height: 38, borderRadius: 19, borderWidth: 2, borderColor: '#B7FF30', backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontSize: 17 }}>🛵</Text></View>
+    <View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{contact.display_name}</Text><Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>{['delivered', 'settled'].includes(status) ? 'سلّم طلبك' : 'سائقك'}</Text></View>
+    {contact.phone && !['delivered', 'settled'].includes(status) ? <Pressable onPress={() => void Linking.openURL(`tel:${contact.phone}`)} accessibilityRole="button" accessibilityLabel="اتصال بالسائق" style={{ minHeight: 40, borderRadius: 12, backgroundColor: '#B7FF30', paddingHorizontal: 13, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#0B1411', fontSize: 13, fontWeight: '900' }}>📞 اتصال</Text></Pressable> : null}
+  </View>;
+}
+
 const adminStatusGroup = (status: string) => ['requested', 'quoted', 'disputed'].includes(status) ? 'action' : status === 'searching' ? 'searching' : ['accepted', 'assigned', 'shopping', 'awaiting_approval', 'purchased', 'delivering'].includes(status) ? 'active' : ['delivered', 'settled'].includes(status) ? 'done' : 'other';
 const adminFilters = [{ key: 'action', label: 'تحتاج إجراء' }, { key: 'searching', label: 'عند السائقين' }, { key: 'active', label: 'جارية' }, { key: 'done', label: 'منتهية' }, { key: 'all', label: 'الكل' }] as const;
 type AdminFilter = typeof adminFilters[number]['key'];
@@ -1525,6 +1558,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   const [tabHistory, setTabHistory] = useState<string[]>([]);
   const [notificationCount,setNotificationCount]=useState(0);
   const [notificationOrderId,setNotificationOrderId]=useState<string|null>(null);
+  const [orderFilter,setOrderFilter]=useState<'all'|'live'|'done'>('all');
   const [addressSummary, setAddressSummary] = useState('ما تحدد لسه');
   const [addressId, setAddressId] = useState('');
   const addressIdRef = useRef('');
@@ -1689,7 +1723,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   }, [userId]);
   const fetchCustomerOrders = useCallback(async () => {
     if (!supabase || !online) return null;
-    const { data, error } = await supabase.from('orders').select('id,status,category,request_text,delivery_fee_minor,delivery_quote_set_at,delivery_quote_approved_at,budget_ceiling_minor,purchase_amount_minor,purchase_approved_at,created_at').order('created_at', { ascending: false }).limit(30);
+    const { data, error } = await supabase.from('orders').select('id,status,category,request_text,delivery_fee_minor,delivery_quote_set_at,delivery_quote_approved_at,budget_ceiling_minor,purchase_amount_minor,purchase_approved_at,created_at,driver_id,delivered_at').order('created_at', { ascending: false }).limit(30);
     return error ? null : data ?? [];
   }, [online]);
   useEffect(() => {
@@ -1835,6 +1869,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   const hasAddress = !!addressId;
   const addressReadyForOrder = hasAddress;
   const accountInitial = (profileName.trim()[0] || email.trim()[0] || 'ح').toLocaleUpperCase('ar');
+  const orderCounts = { all: orders.length, live: orders.filter((order) => customerGroup(order.status) === 'live').length, done: orders.filter((order) => customerGroup(order.status) === 'done').length };
   const displayedOrders = notificationOrderId ? [...orders].sort((left,right) => Number(right.id === notificationOrderId) - Number(left.id === notificationOrderId)) : orders;
   return <SafeAreaView style={s.safe}>
     <View accessibilityRole="main" style={{flex:1}}>
@@ -1862,23 +1897,14 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       <Pressable disabled={sending || !draftReady || !online} onPress={() => { if (!hasAddress) { navigate('addresses'); return; } void submitOrder(); }} style={[s.submit, (sending || !draftReady || !online)&&s.disabled]} accessibilityRole="button"><Text style={s.submitText}>{!hasAddress?'إضافة عنوان تسليم':!online?'بانتظار الاتصال':sending?'عم نرسل الطلب والصور…':pendingOrderId?'إكمال رفع الصور وإرسال الطلب':'إرسال الطلب'} <Text style={s.submitArrow}>←</Text></Text></Pressable>
       {requestMessage ? <Text accessibilityRole="alert" style={s.requestMessage}>{requestMessage}</Text> : null}
       </> : tab === 'orders' ? <View style={s.orderPage}><StaggeredSections transitionKey={`${tab}-orders`}>
-        <View style={[s.ordersIntro,s.ordersIntroCard]}>
-          <View style={s.ordersIntroTop}>
-            <View style={s.ordersEyebrowLine}><View style={s.ordersEyebrowDot}/><Text style={s.ordersEyebrow}>متابعة الطلبات</Text></View>
-            <Pressable onPress={goBack} style={s.ordersBackButton} accessibilityRole="button" accessibilityLabel={`العودة إلى ${tabHistory[tabHistory.length - 1] === 'profile' ? 'حسابي' : 'الرئيسية'}`}><SymbolView name={{ios:'arrow.left',android:'arrow_back',web:'arrow_back'}} tintColor={theme === 'light' ? '#385616' : c.primary} size={15}/><Text style={s.ordersBackButtonText}>{tabHistory[tabHistory.length - 1] === 'profile' ? 'حسابي' : 'الرئيسية'}</Text></Pressable>
-          </View>
-          <View style={s.ordersIntroMain}>
-            <View style={s.ordersIntroCopy}>
-              <Text style={s.ordersTitle}>طلباتي</Text>
-              <Text style={s.ordersDescription}>كل طلب وتفاصيله وتحديثاته بمكان واحد.</Text>
-            </View>
-            <View style={s.ordersIntroTools}>
-              <View style={s.ordersCountBadge}>{ordersLoading ? <SkeletonBlock width={21} height={22} style={{ alignSelf: 'auto' }} /> : <Text style={s.ordersCountValue}>{orders.length}</Text>}<Text style={s.ordersCountLabel}>طلب</Text></View>
-              <Pressable onPress={() => { if (ordersLoading) return; if (!online) { setOrderActionMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setNotificationsRefreshKey((value) => value + 1); setOrdersLoading(true); void fetchCustomerOrders().then((rows) => { if (rows) { applyCustomerOrders(rows); setOrderActionMessage('تم تحديث الطلبات.'); } else setOrderActionMessage('ما قدرنا نحدّث الطلبات. جرّب مرة ثانية.'); }).finally(() => setOrdersLoading(false)); }} accessibilityRole="button" accessibilityLabel="تحديث الطلبات والتنبيهات" style={s.ordersRefreshButton}>
-                <SymbolView name={{ios:'arrow.clockwise',android:'refresh',web:'refresh'}} tintColor={c.primary} size={19}/>
-              </Pressable>
-            </View>
-          </View>
+        <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', marginTop: 4, marginBottom: 2 }}>
+          <View><Text style={s.accountPageTitle}>طلباتي</Text><Text style={s.accountPageSubtitle}>تابع كل طلب خطوة بخطوة</Text></View>
+          <Pressable onPress={() => { if (ordersLoading) return; if (!online) { setOrderActionMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setNotificationsRefreshKey((value) => value + 1); setOrdersLoading(true); void fetchCustomerOrders().then((rows) => { if (rows) { applyCustomerOrders(rows); setOrderActionMessage('تم تحديث الطلبات.'); } else setOrderActionMessage('ما قدرنا نحدّث الطلبات. جرّب مرة ثانية.'); }).finally(() => setOrdersLoading(false)); }} accessibilityRole="button" accessibilityLabel="تحديث الطلبات والتنبيهات" style={s.ordersRefreshButton}>
+            <SymbolView name={{ios:'arrow.clockwise',android:'refresh',web:'refresh'}} tintColor={c.primary} size={19}/>
+          </Pressable>
+        </View>
+        <View style={{ flexDirection: 'row-reverse', gap: 7, marginVertical: 10 }}>
+          {([['all', 'الكل'], ['live', 'جارية'], ['done', 'مسلّمة']] as const).map(([key, label]) => { const on = orderFilter === key; return <Pressable key={key} onPress={() => setOrderFilter(key)} accessibilityRole="button" accessibilityState={{ selected: on }} style={{ minHeight: 38, flexDirection: 'row-reverse', alignItems: 'center', gap: 6, paddingHorizontal: 15, borderRadius: 19, borderWidth: 1, borderColor: on ? '#B7FF30' : c.border, backgroundColor: on ? '#B7FF30' : c.surface }}><Text style={{ color: on ? '#0B1411' : c.muted, fontSize: 13, fontWeight: '800' }}>{label}</Text><Text style={{ color: on ? '#0B1411' : c.muted, fontSize: 13, fontWeight: '900' }}>{orderCounts[key]}</Text></Pressable>; })}
         </View>
         {ordersAreStale && <View style={s.offlineOrders}>
           <Text style={s.offlineOrdersTitle}>{ordersSyncedAt ? 'بيانات محفوظة وقديمة للعرض فقط' : 'ما في نسخة محفوظة من طلباتك'}</Text>
@@ -1888,39 +1914,26 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
           </Pressable>}
         </View>}
         {orderActionMessage ? <Text accessibilityRole="status" style={s.formMessage}>{orderActionMessage}</Text> : null}
-        {ordersLoading ? <OrdersSkeleton styles={s} /> : orders.length ? displayedOrders.map((order) => <View key={order.id} style={[s.orderCard,order.id===notificationOrderId&&s.notificationOrderCard]}>
-          {order.id===notificationOrderId&&<Text style={s.notificationOrderLabel}>الطلب المرتبط بهذا الإشعار</Text>}
-          <View style={s.orderCardHead}>
-            <View style={s.orderMeta}>
-              <Text style={s.orderMetaId}>طلب #{order.id.slice(0,8)}</Text>
-              <Text style={s.orderDate}>{shortDateTimeFormatter.format(new Date(order.created_at))}</Text>
-            </View>
-            <View style={[s.orderStatusPill,order.status==='cancelled'&&s.orderStatusCancelled]}>
-              <View style={[s.orderStatusDot,order.status==='cancelled'&&s.orderStatusDotCancelled]}/>
-              <Text style={[s.orderStatus,order.status==='cancelled'&&s.orderStatusTextCancelled]}>{orderStatus[order.status] ?? order.status}</Text>
-            </View>
+        {ordersLoading ? <OrdersSkeleton styles={s} /> : orders.length ? displayedOrders.filter((order) => orderFilter === 'all' || customerGroup(order.status) === orderFilter).map((order) => { const group = customerGroup(order.status); const done = group === 'done'; const cancelled = group === 'cancelled'; const hasDriver = !!order.driver_id && !cancelled && !['searching', 'requested', 'quoted'].includes(order.status); return <View key={order.id} style={{ backgroundColor: c.surface, borderColor: order.id === notificationOrderId ? '#B7FF30' : group === 'live' ? '#3F6A2E' : c.border, borderWidth: order.id === notificationOrderId ? 2 : 1, borderRadius: 22, padding: 14, gap: 11, marginBottom: 11 }}>
+          {order.id === notificationOrderId && <Text style={s.notificationOrderLabel}>الطلب المرتبط بهذا الإشعار</Text>}
+          <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
+            <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 6, backgroundColor: cancelled ? '#451E21' : done ? c.raised : '#26391C', borderRadius: 12, paddingHorizontal: 11, minHeight: 28 }}><Text style={{ color: cancelled ? '#FF8A8A' : done ? c.accent : '#B7FF30', fontSize: 12.5, fontWeight: '900' }}>{done ? '✅ ' : ''}{orderStatus[order.status] ?? order.status}</Text></View>
+            <Text style={{ color: c.muted, fontSize: 11.5 }}>{shortDateTimeFormatter.format(new Date(order.created_at))} · #{order.id.slice(0, 6)}</Text>
           </View>
-          <View style={s.orderRequestBlock}>
-            <Text style={s.orderCategory}>{order.category}</Text>
-            <Text style={s.orderRequest} numberOfLines={3}>{ordersAreStale ? 'تفاصيل الطلب تظهر عند رجوع الاتصال.' : order.request_text}</Text>
+          <View style={{ flexDirection: 'row-reverse', gap: 11, alignItems: 'flex-start' }}>
+            {!ordersAreStale && <AdminOrderThumb orderId={order.id} />}
+            <View style={{ flex: 1 }}><Text numberOfLines={3} style={{ color: c.text, fontSize: 15, fontWeight: '800', lineHeight: 23, textAlign: 'right' }}>{ordersAreStale ? 'تفاصيل الطلب تظهر عند رجوع الاتصال.' : splitPickup(order.request_text).body}</Text><Text style={{ color: c.muted, fontSize: 12, marginTop: 2, textAlign: 'right' }}>{order.category}</Text></View>
           </View>
-          {!ordersAreStale && <OrderImageGallery orderId={order.id}/>}
-          <View style={s.orderFacts}>
-            <View style={s.orderFact}>
-              <Text style={s.orderFactLabel}>أجرة التوصيل</Text>
-              <Text style={s.orderFactValue}>{ordersAreStale ? 'يظهر عند الاتصال' : order.delivery_quote_set_at ? numberFormatter.format(order.delivery_fee_minor) + ' ل.س' : 'بانتظار تحديدها من الإدارة'}</Text>
-            </View>
-            <View style={s.orderFact}>
-              <Text style={s.orderFactLabel}>ميزانية المشتريات</Text>
-              <Text style={s.orderFactValue}>{ordersAreStale ? 'يظهر عند الاتصال' : numberFormatter.format(order.budget_ceiling_minor) + ' ل.س'}</Text>
-            </View>
+          {!cancelled && <OrderTrack status={order.status} />}
+          {hasDriver && !ordersAreStale && <CustomerDriverRow orderId={order.id} status={order.status} />}
+          <View style={{ flexDirection: 'row-reverse', gap: 8 }}>
+            <View style={{ flex: 1, backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 14, paddingVertical: 7, paddingHorizontal: 11 }}><Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>أجرة التوصيل</Text><Text style={{ color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{ordersAreStale ? '—' : order.delivery_quote_set_at ? numberFormatter.format(order.delivery_fee_minor) + ' ل.س' : 'قيد التحديد'}</Text></View>
+            <View style={{ flex: 1, backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 14, paddingVertical: 7, paddingHorizontal: 11 }}><Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>{order.purchase_amount_minor !== null ? 'مبلغ المشتريات' : 'ميزانية المشتريات'}</Text><Text style={{ color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{ordersAreStale ? '—' : numberFormatter.format(order.purchase_amount_minor ?? order.budget_ceiling_minor) + ' ل.س'}</Text></View>
           </View>
-          {!ordersAreStale && order.purchase_amount_minor !== null && <Text style={s.purchaseAmountLine}>المبلغ بعد الشراء: {numberFormatter.format(order.purchase_amount_minor)} ل.س</Text>}
-          {order.status === 'delivering' && <Text style={s.offerExpiry}>السائق بالطريق لعندك. رح يصوّر التسليم ويأكده بنفسه، ما بتحتاج تسوي شي.</Text>}
-          {(order.status === 'delivered' || order.status === 'settled') && !ordersAreStale && <OrderImageGallery orderId={order.id} bucket="delivery-proofs" label="صورة التسليم"/>}
+          {done && !ordersAreStale && <View style={{ borderColor: c.accent, borderWidth: 1, borderRadius: 16, padding: 9, gap: 7 }}><Text style={{ color: c.accent, fontSize: 13.5, fontWeight: '900', textAlign: 'right' }}>صورة التسليم{order.delivered_at ? ' · ' + shortDateTimeFormatter.format(new Date(order.delivered_at)) : ''}</Text><AdminImageStrip orderId={order.id} bucket="delivery-proofs" size={84} emptyText="ما في صورة تسليم لهذا الطلب." /></View>}
           {(['requested','quoted','searching','accepted','assigned','awaiting_approval'].includes(order.status) || (order.status === 'shopping' && order.purchase_amount_minor === null)) && <Pressable disabled={orderActionBusy === order.id || !online || ordersAreStale} onPress={() => void cancelOrder(order.id)} style={[s.cancelOrder, (orderActionBusy === order.id || !online || ordersAreStale) && s.disabled]} accessibilityRole="button"><Text style={s.cancelOrderText}>إلغاء الطلب</Text></Pressable>}
           <SupportIssueForm orderId={order.id} status={order.status} disabled={ordersAreStale}/>
-        </View>) : <View style={s.empty}>
+        </View>; }) : <View style={s.empty}>
           <Text style={s.emptyMark}>≋</Text>
           <Text style={s.emptyTitle}>{ordersAreStale ? 'ما في طلبات محفوظة للعرض' : 'ما عندك طلبات حالياً'}</Text>
           <Text style={s.emptyCopy}>{ordersAreStale ? 'اتصل بالإنترنت حتى نحمّل أحدث حالة.' : 'أول طلب إلك رح يظهر هون.'}</Text>
