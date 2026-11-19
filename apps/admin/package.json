@@ -11,7 +11,6 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
-    "@labbayk/design-tokens": "workspace:*",
     "@labbayk/shared": "workspace:*",
     "@supabase/supabase-js": "2.119.0",
     "react": "^19.3.1",

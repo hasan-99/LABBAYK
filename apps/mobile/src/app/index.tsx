@@ -1,5 +1,5 @@
 import { Children, Component, Fragment, createContext, isValidElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Link, useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import type { Metadata } from 'expo-router/server';
 import { ActivityIndicator, Alert, Animated, AppState, Easing, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, Share, StyleSheet, TextInput, View, type ScrollViewProps } from 'react-native';
 import { SymbolView, type AndroidSymbol, type SFSymbol } from 'expo-symbols';
@@ -686,7 +686,6 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   const [activeOrdersCount, setActiveOrdersCount] = useState(0);
   const [orderSection, setOrderSection] = useState<'offers' | 'active' | 'history'>('offers');
   const [history, setHistory] = useState<HistoryOrder[] | null>(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
   const [historyPeriod, setHistoryPeriod] = useState<HistoryPeriod>('today');
   const [historyOpen, setHistoryOpen] = useState<string | null>(null);
   const [historyAddresses, setHistoryAddresses] = useState<Record<string, { neighborhood: string; city: string; street: string; building: string | null; landmark: string | null }>>({});
@@ -805,9 +804,8 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   useEffect(() => { setLoading(true); void refresh(); }, [refresh]);
   const loadHistory = useCallback(async () => {
     if (!supabase || !online) return;
-    setHistoryLoading(true);
     const { data, error } = await supabase.from('orders').select('id,category,request_text,status,delivery_fee_minor,purchase_amount_minor,budget_ceiling_minor,delivered_at,address_id').eq('driver_id', userId).in('status', ['delivered', 'settled']).order('delivered_at', { ascending: false }).limit(100);
-    if (error) { setMessage('ما قدرنا نحمّل سجل طلباتك. جرّب مرة ثانية.'); setHistoryLoading(false); return; }
+    if (error) { setMessage('ما قدرنا نحمّل سجل طلباتك. جرّب مرة ثانية.'); return; }
     const rows = data ?? [];
     setHistory(rows);
     const addressIds = [...new Set(rows.flatMap((order) => order.address_id ? [order.address_id] : []))];
@@ -819,7 +817,6 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       const { data: extraRows, error: extraError } = await supabase.from('orders').select('id,cash_collected_minor,delivery_note').in('id', rows.map((order) => order.id));
       if (!extraError) setHistoryExtra(Object.fromEntries((extraRows ?? []).map((row) => [row.id, { cash: row.cash_collected_minor, note: row.delivery_note }])));
     }
-    setHistoryLoading(false);
   }, [online, userId, setMessage]);
   useEffect(() => { if (orderSection === 'history' && history === null) void loadHistory(); }, [orderSection, history, loadHistory]);
   const manualRefresh = async () => {
@@ -1411,7 +1408,6 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
 }
 
 function SignedInHome({ userId, email, inviteToken, openOrderId, onSignOut, theme, onToggleTheme }: { userId: string; email: string; inviteToken?: string; openOrderId?: string; onSignOut: () => void; theme: 'dark' | 'light'; onToggleTheme: () => void }) {
-  const { styles: s } = useMobileTheme();
   const online = useInternetAvailable();
   const [reviewStatus, setReviewStatus] = useState<string | null>(null);
   const [roles, setRoles] = useState<string[]>([]);

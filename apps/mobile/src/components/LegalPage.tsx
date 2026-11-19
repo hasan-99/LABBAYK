@@ -35,7 +35,7 @@ const pageContent: Record<PageName, { title: string; subtitle: string; updated: 
     sections: [
       { title: 'عن الخدمة', paragraphs: ['لَبّيك خدمة لطلب شراء احتياجات يومية وتوصيلها ضمن مناطق الخدمة المتاحة في دمشق وريف دمشق. يرسل العميل وصف الطلب وعنوانه وميزانيته، ويتولى سائق معتمد تنفيذ الطلب وفق حالة الطلب والتعليمات الظاهرة في التطبيق.'] },
       { title: 'الحساب والمعلومات', paragraphs: ['قدّم معلومات صحيحة وحدّث الاسم والهاتف والعنوان عند الحاجة. أنت مسؤول عن حماية كلمة السر وعن النشاط الذي يتم من حسابك. حسابات السائقين تتطلب دعوة ومراجعة، ويشترط ملف السائق عمر 18 سنة أو أكثر.'] },
-      { title: 'الأسعار والدفع', paragraphs: ['بعد إرسال الطلب، يحدد فريق الإدارة أجرة التوصيل ويُرسل الطلب إلى السائقين المتاحين، أو يعيّنه لسائق محدد. تظهر الأجرة للعميل والسائق داخل التطبيق، ويطّلع السائق عليها قبل قبول الطلب. أدخل ميزانية المشتريات بوضوح؛ إذا تغيّر مبلغ الشراء يطلب التطبيق موافقتك عند اللزوم. الدفع في النسخة الحالية نقدًا عند الاستلام، ولا يعالج التطبيق بطاقات دفع أو اشتراكات رقمية.'] },
+      { title: 'الأسعار والدفع', paragraphs: ['بعد إرسال الطلب، يحدد فريق الإدارة أجرة التوصيل ويُرسل الطلب إلى السائقين المتاحين، أو يعيّنه لسائق محدد. تظهر الأجرة للعميل والسائق داخل التطبيق، ويطّلع السائق عليها قبل قبول الطلب. أدخل ميزانية المشتريات بوضوح؛ يسجل السائق المبلغ الفعلي للمشتريات في الطلب، ولا يحتاج العميل إلى تأكيد إضافي عبر التطبيق بعد الشراء. الدفع في النسخة الحالية نقدًا عند الاستلام، ولا يعالج التطبيق بطاقات دفع أو اشتراكات رقمية.'] },
       { title: 'الإلغاء والمشكلات', paragraphs: ['تختلف إمكانية الإلغاء حسب مرحلة الطلب، وتظهر الخيارات المتاحة داخل التطبيق. بعد الشراء أو عند وجود خلاف، استخدم بلاغ الدعم المرتبط بالطلب أو تواصل معنا. لا تعتبر الطلبات المتنازع عليها منتهية حتى يراجعها فريق الدعم.'] },
       { title: 'الاستخدام المقبول', paragraphs: ['استخدم الخدمة لطلبات قانونية وآمنة، ولا ترسل محتوى أو صورًا تنتهك حقوق الآخرين أو تعرضهم للخطر. لا تحاول تجاوز ضوابط الحساب أو العبث بالتسعير أو الوصول إلى بيانات مستخدم آخر. قد نوقف الوصول عند إساءة الاستخدام أو وجود خطر أمني، مع توفير قناة للتواصل بشأن القرار.'] },
       { title: 'الجهة المشغّلة', paragraphs: [`تُقدَّم خدمة لَبّيك من ${OPERATOR_NAME}، في دمشق وريف دمشق، سوريا. للتواصل: ${SUPPORT_EMAIL}.`] },
@@ -69,6 +69,7 @@ export function LegalPage({ page }: { page: PageName }) {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [email, setEmail] = useState('');
   const [account, setAccount] = useState<{ id: string; email: string } | null>(null);
+  const [roles, setRoles] = useState<string[]>([]);
   const [checkingAccount, setCheckingAccount] = useState(false);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -77,15 +78,31 @@ export function LegalPage({ page }: { page: PageName }) {
     if (page !== 'delete-account' || !supabase) return;
     let active = true;
     setCheckingAccount(true);
-    void supabase.auth.getSession().then(({ data }) => {
-      if (!active) return;
-      const user = data.session?.user;
-      setAccount(user ? { id: user.id, email: user.email ?? '' } : null);
-    }).catch(() => { if (active) setAccount(null); }).finally(() => { if (active) setCheckingAccount(false); });
+    const sb = supabase;
+    void (async () => {
+      try {
+        const { data } = await sb.auth.getSession();
+        if (!active) return;
+        const user = data.session?.user;
+        if (!user) { setAccount(null); setRoles([]); return; }
+        setAccount({ id: user.id, email: user.email ?? '' });
+        const { data: roleRows } = await sb.from('user_roles').select('role').eq('user_id', user.id);
+        if (active) setRoles(roleRows?.map((row) => row.role as string) ?? []);
+      } catch {
+        if (active) { setAccount(null); setRoles([]); }
+      } finally {
+        if (active) setCheckingAccount(false);
+      }
+    })();
     return () => { active = false; };
   }, [page]);
   const s = useMemo(() => stylesFor(theme), [theme]);
   const content = pageContent[page];
+  const isSupportManaged = roles.some((role) => role === 'driver' || role === 'driver_pending' || role === 'super_admin');
+  useEffect(() => {
+    if (Platform.OS === 'web') document.title = `${content.title} | لَبّيك`;
+    return () => { if (Platform.OS === 'web') document.title = 'لَبّيك | اطلب، والباقي علينا.'; };
+  }, [content.title]);
   const deleteSignedInAccount = async () => {
     if (!supabase || !account) return;
     setBusy(true); setMessage('');
@@ -115,6 +132,17 @@ export function LegalPage({ page }: { page: PageName }) {
     } catch {
       setMessage('تعذر حذف الحساب الآن. حاول مرة أخرى أو تواصل مع الدعم.');
     } finally { setBusy(false); }
+  };
+  const openDriverDeletionSupport = async () => {
+    const subject = 'طلب حذف حساب سائق - لَبّيك';
+    const identifier = account?.email ? `البريد المرتبط بالحساب: ${account.email}` : 'سجّل الدخول من حساب السائق قبل الإرسال.';
+    const body = `مرحبًا فريق لَبّيك،\n\nأطلب حذف حساب السائق الخاص بي وبياناتي الشخصية.\n${identifier}\n\nأعلم أن حساب السائق يتطلب مراجعة الأرصدة والتسويات قبل الحذف، وأرجو إتمام ذلك وإخباري بأي سجلات مالية يجب الاحتفاظ بها قانونيًا.\n\nلا أرسل كلمة السر أو رمز التحقق.`;
+    try {
+      await Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
+      setMessage('فُتحت رسالة بريد جاهزة بطلب حذف حساب السائق. اضغط «إرسال» في تطبيق البريد لإيصالها للدعم.');
+    } catch {
+      setMessage(`تعذر فتح تطبيق البريد. أرسل طلبك يدويًا إلى ${SUPPORT_EMAIL} من بريد حسابك.`);
+    }
   };
   const requestDeletion = async () => {
     if (account) {
@@ -148,7 +176,7 @@ export function LegalPage({ page }: { page: PageName }) {
       <View style={s.hero}><Text style={s.brand}>لَبّيك</Text><Text accessibilityRole="header" style={s.title}>{content.title}</Text><Text style={s.subtitle}>{content.subtitle}</Text><Text style={s.updated}>{content.updated}</Text></View>
       {page === 'support' && <Pressable onPress={contactSupport} accessibilityRole="link" style={s.button}><Text style={s.buttonText}>راسل فريق الدعم · {SUPPORT_EMAIL}</Text></Pressable>}
       {page === 'delete-account' && content.sections.map((section) => <View key={section.title} style={s.card}><Text accessibilityRole="header" style={s.sectionTitle}>{section.title}</Text>{section.paragraphs.map((paragraph, index) => <Text key={index} selectable style={s.copy}>{paragraph}</Text>)}</View>)}
-      {page === 'delete-account' && <View style={s.deleteForm}><Text style={s.deleteNotice}>حذف الحساب نهائي ولا يمكن التراجع عنه. حسابات السائق والإدارة تتطلب مراجعة فريق الدعم.</Text>{checkingAccount ? <ActivityIndicator color={theme === 'dark' ? '#B7FF30' : '#287A55'} /> : account ? <><Text style={s.label}>الحساب الحالي: {account.email || 'حسابك المسجّل'}</Text><Pressable disabled={busy} onPress={() => void requestDeletion()} accessibilityRole="button" style={[s.deleteButton,busy&&{opacity:.6}]}>{busy ? <ActivityIndicator color="#FFFFFF"/> : <Text style={s.deleteButtonText}>حذف حسابي وبياناتي</Text>}</Pressable></> : <><Text style={s.label}>البريد المرتبط بالحساب</Text><TextInput value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} textAlign="left" autoComplete="email" placeholder="name@example.com" placeholderTextColor={theme === 'dark' ? '#839188' : '#65746A'} style={s.input} accessibilityLabel="البريد المرتبط بالحساب"/><Pressable disabled={busy} onPress={() => void requestDeletion()} accessibilityRole="button" style={[s.deleteButton,busy&&{opacity:.6}]}>{busy ? <ActivityIndicator color="#FFFFFF"/> : <Text style={s.deleteButtonText}>إرسال طلب حذف الحساب</Text>}</Pressable></>}{message ? <Text accessibilityRole="status" style={s.formMessage}>{message}</Text> : null}</View>}
+      {page === 'delete-account' && <View style={s.deleteForm}><Text style={s.deleteNotice}>حذف الحساب نهائي ولا يمكن التراجع عنه. حسابات السائق والإدارة تتطلب مراجعة فريق الدعم.</Text>{checkingAccount ? <ActivityIndicator color={theme === 'dark' ? '#B7FF30' : '#287A55'} /> : account ? (isSupportManaged ? <><Text style={s.label}>الحساب الحالي: {account.email || 'حسابك المسجّل'}</Text><Text style={s.copy}>حساب السائق أو الإدارة يتطلب مراجعة الدعم بسبب الأرصدة والسجلات التشغيلية. افتح طلب حذف جاهزًا عبر البريد.</Text><Pressable onPress={() => void openDriverDeletionSupport()} accessibilityRole="button" style={s.deleteButton}><Text style={s.deleteButtonText}>طلب حذف الحساب عبر الدعم</Text></Pressable></> : <><Text style={s.label}>الحساب الحالي: {account.email || 'حسابك المسجّل'}</Text><Pressable disabled={busy} onPress={() => void requestDeletion()} accessibilityRole="button" style={[s.deleteButton,busy&&{opacity:.6}]}>{busy ? <ActivityIndicator color="#FFFFFF"/> : <Text style={s.deleteButtonText}>حذف حسابي وبياناتي</Text>}</Pressable></>) :<><Text style={s.label}>البريد المرتبط بالحساب</Text><TextInput value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} textAlign="left" autoComplete="email" placeholder="name@example.com" placeholderTextColor={theme === 'dark' ? '#839188' : '#65746A'} style={s.input} accessibilityLabel="البريد المرتبط بالحساب"/><Pressable disabled={busy} onPress={() => void requestDeletion()} accessibilityRole="button" style={[s.deleteButton,busy&&{opacity:.6}]}>{busy ? <ActivityIndicator color="#FFFFFF"/> : <Text style={s.deleteButtonText}>إرسال طلب حذف الحساب</Text>}</Pressable></>}{message ? <Text accessibilityRole="status" style={s.formMessage}>{message}</Text> : null}</View>}
       {page === 'support' && message ? <Text accessibilityRole="status" style={s.formMessage}>{message}</Text> : null}
       {page !== 'delete-account' && content.sections.map((section) => <View key={section.title} style={s.card}><Text accessibilityRole="header" style={s.sectionTitle}>{section.title}</Text>{section.paragraphs.map((paragraph, index) => <Text key={index} selectable style={s.copy}>{paragraph}</Text>)}{section.bullets?.map((item) => <View key={item} style={s.bulletRow}><Text style={s.bullet}>•</Text><Text selectable style={s.bulletCopy}>{item}</Text></View>)}</View>)}
       <View style={s.links}><PageLink href="/privacy" label="سياسة الخصوصية" s={s}/><PageLink href="/terms" label="شروط الاستخدام" s={s}/><PageLink href="/support" label="الدعم" s={s}/><PageLink href="/delete-account" label="حذف الحساب" s={s}/></View>
