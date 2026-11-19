@@ -1638,7 +1638,7 @@ function AdminDriversTab({ active, onBadge }: { active: boolean; onBadge: AdminB
   const [working, setWorking] = useState('');
   const [segment, setSegment] = useState<'all' | 'on'>('all');
   const [invites, setInvites] = useState<{ id: string; expires_at: string; redeemed_at: string | null; revoked_at: string | null; created_at: string }[]>([]);
-  const [newInvite, setNewInvite] = useState<{ link: string; token: string } | null>(null);
+  const [newInvite, setNewInvite] = useState<{ webLink: string; appLink: string; token: string } | null>(null);
   const [creating, setCreating] = useState(false);
   const channelKey = useRef(newRequestKey());
   const refresh = useCallback(async () => {
@@ -1688,13 +1688,13 @@ function AdminDriversTab({ active, onBadge }: { active: boolean; onBadge: AdminB
     const { data, error } = await supabase.rpc('admin_create_driver_invite');
     setCreating(false);
     if (error || !data) { setMessage('ما قدرنا ننشئ الدعوة. جرّب مرة ثانية.'); return; }
-    const base = process.env.EXPO_PUBLIC_APP_URL?.trim();
-    setNewInvite({ token: data, link: base ? `${base.replace(/\/+$/, '')}/?invite=${data}` : `labbayk:///?invite=${data}` });
+    const base = (process.env.EXPO_PUBLIC_APP_URL?.trim() || 'https://labbayk.expo.app').replace(/\/+$/, '');
+    setNewInvite({ token: data, webLink: `${base}/?invite=${data}`, appLink: `labbayk:///?invite=${data}` });
     await refresh();
   };
   const shareInvite = async () => {
     if (!newInvite) return;
-    try { await Share.share({ message: `دعوة للانضمام لفريق سائقي لَبّيك:\n${newInvite.link}\n\nأو الصق هالرمز بالتطبيق:\n${newInvite.token}` }); } catch { setMessage('ما قدرنا نفتح المشاركة. انسخ الرابط يدوياً.'); }
+    try { await Share.share({ message: `دعوة للانضمام لفريق سائقي لَبّيك.\n\nرابط الويب (بيشتغل على أي جهاز):\n${newInvite.webLink}\n\nرابط التطبيق (إذا منزّله):\n${newInvite.appLink}\n\nأو الصق هالرمز بالتطبيق:\n${newInvite.token}` }); } catch { setMessage('ما قدرنا نفتح المشاركة. انسخ الرابط يدوياً.'); }
   };
   const revokeInvite = async (id: string) => {
     if (!supabase) return;
@@ -1735,7 +1735,7 @@ function AdminDriversTab({ active, onBadge }: { active: boolean; onBadge: AdminB
           <View style={{ alignSelf: 'center', width: 42, height: 4, borderRadius: 2, backgroundColor: color.border }} />
           <Text style={{ color: color.text, fontSize: 19, fontWeight: '900', textAlign: 'right' }}>دعوة سائق جاهزة</Text>
           <Text style={{ color: color.muted, fontSize: 13.5, lineHeight: 22, textAlign: 'right' }}>أرسل الرابط للسائق. بيفتحه وبيسجّل دخوله وبيصير سائق مباشرة بدون مراجعة. الرابط لمرة وحدة وبينتهي بعد 7 أيام. ما رح تقدر تشوفه مرة ثانية بعد ما تسكّر هالشاشة.</Text>
-          <View style={{ backgroundColor: color.background, borderColor: color.border, borderWidth: 1, borderRadius: 14, padding: 12 }}><Text selectable style={{ color: color.text, fontSize: 12.5, lineHeight: 20, textAlign: 'left', writingDirection: 'ltr' }}>{newInvite?.link}</Text></View>
+          {([['رابط الويب', newInvite?.webLink], ['رابط التطبيق', newInvite?.appLink]] as const).map(([label, link]) => <View key={label} style={{ backgroundColor: color.background, borderColor: color.border, borderWidth: 1, borderRadius: 14, padding: 12, gap: 4 }}><Text style={{ color: color.muted, fontSize: 12, fontWeight: '800', textAlign: 'right' }}>{label}</Text><Text selectable style={{ color: color.text, fontSize: 12, lineHeight: 19, textAlign: 'left', writingDirection: 'ltr' }}>{link}</Text></View>)}
           <Pressable onPress={() => void shareInvite()} accessibilityRole="button" style={{ minHeight: 52, borderRadius: 16, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 16, fontWeight: '900' }}>مشاركة الدعوة</Text></Pressable>
           <Pressable onPress={() => setNewInvite(null)} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: color.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.text, fontSize: 14.5, fontWeight: '800' }}>تم</Text></Pressable>
         </View>
