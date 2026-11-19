@@ -248,6 +248,7 @@ export type Database = {
       }
       driver_invites: {
         Row: {
+          auto_approve: boolean
           created_at: string
           created_by: string
           expires_at: string
@@ -258,6 +259,7 @@ export type Database = {
           token_hash: string
         }
         Insert: {
+          auto_approve?: boolean
           created_at?: string
           created_by: string
           expires_at: string
@@ -268,6 +270,7 @@ export type Database = {
           token_hash: string
         }
         Update: {
+          auto_approve?: boolean
           created_at?: string
           created_by?: string
           expires_at?: string
@@ -927,6 +930,7 @@ export type Database = {
         Returns: boolean
       }
       admin_pause_order: { Args: { p_dispute_id: string }; Returns: undefined }
+      admin_create_driver_invite: { Args: never; Returns: string }
       get_order_driver_contact: {
         Args: { p_order_id: string }
         Returns: { display_name: string; phone: string | null }[]

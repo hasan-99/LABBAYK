@@ -1,7 +1,7 @@
 import { Children, Component, Fragment, createContext, isValidElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import type { Metadata } from 'expo-router/server';
-import { ActivityIndicator, Alert, Animated, AppState, Easing, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, View, type ScrollViewProps } from 'react-native';
+import { ActivityIndicator, Alert, Animated, AppState, Easing, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, Share, StyleSheet, TextInput, View, type ScrollViewProps } from 'react-native';
 import { SymbolView, type AndroidSymbol, type SFSymbol } from 'expo-symbols';
 import { useNetworkState } from 'expo-network';
 import type { NotificationResponse } from 'expo-notifications';
@@ -1196,6 +1196,7 @@ function DriverApplicationFlow({ userId, initialToken }: { userId: string; initi
     if (!supabase || !online) return;
     supabase.from('driver_profiles').select('review_status').eq('user_id', userId).maybeSingle().then(({ data }) => { setStatus(data?.review_status ?? null); setChecked(true); });
   }, [online, userId]);
+  const autoTried = useRef(false);
   const apply = async () => {
     if (!supabase) return;
     const token = inviteCode.replace(/\s/g, '').toLowerCase();
@@ -1204,8 +1205,13 @@ function DriverApplicationFlow({ userId, initialToken }: { userId: string; initi
     const { data, error } = await supabase.rpc('redeem_driver_invite', { p_token: token, p_vehicle_description: vehicle.trim() || undefined });
     setBusy(false);
     if (error) { setMessage('الدعوة غير صالحة أو منتهية أو مستخدمة من قبل. راجع الرمز مع فريق لَبّيك.'); return; }
-    setStatus(data); setInviteCode(''); setMessage('وصل طلب انضمامك لفريق لَبّيك. رح نراجع معلوماتك.');
+    setStatus(data); setInviteCode(''); setMessage(data === 'approved' ? 'أهلاً فيك بفريق لَبّيك! صرت سائق.' : 'وصل طلب انضمامك لفريق لَبّيك. رح نراجع معلوماتك.');
   };
+  useEffect(() => {
+    if (autoTried.current || !checked || status !== null || !online) return;
+    if (!/^[a-f0-9]{64}$/i.test(initialToken ?? '')) return;
+    autoTried.current = true; void apply();
+  }, [checked, status, online, initialToken]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!checked) return <View accessibilityRole="progressbar" accessibilityLabel="تحميل حالة طلب الانضمام" style={[s.driverApplyCard, { minHeight: 166, justifyContent: 'center', gap: 14 }]}><SkeletonBlock width="46%" height={18} /><SkeletonBlock width="82%" height={12} /><SkeletonBlock width="66%" height={12} /></View>;
   if (status === 'approved') return <DriverOperations userId={userId}/>;
   return <View style={s.driverApplyCard}><View style={s.driverApplyMark}><Text style={s.driverApplyIcon}>♙</Text></View><Text style={s.driverApplyTitle}>انضم لفريق السائقين</Text>{status ? <><Text style={s.driverApplyCopy}>{status === 'pending' ? 'طلبك قيد المراجعة. رح يتواصل معك الفريق بعد التحقق.' : status === 'approved' ? 'تم اعتماد حسابك. واجهة السائق قيد التجهيز.' : status === 'suspended' ? 'حساب السائق موقوف حالياً. تواصل مع فريق لَبّيك.' : 'تمت مراجعة الطلب. تواصل مع الفريق إذا بدك تعرف التفاصيل.'}</Text><Text style={s.driverStatus}>{status === 'pending' ? 'بانتظار المراجعة' : status === 'approved' ? 'سائق معتمد' : status === 'suspended' ? 'موقوف' : 'مرفوض'}</Text></> : <><Text style={s.driverApplyCopy}>إذا وصلك رمز دعوة من فريق لَبّيك، دخّله حتى نبدأ مراجعة طلبك.</Text><Text style={s.label}>رمز الدعوة</Text><TextInput value={inviteCode} onChangeText={setInviteCode} autoCapitalize="none" autoCorrect={false} textAlign="left" placeholder="64 حرفاً" placeholderTextColor="#839188" style={s.field} accessibilityLabel="رمز دعوة السائق"/><Text style={s.label}>نوع المركبة <Text style={s.optional}>اختياري</Text></Text><TextInput value={vehicle} onChangeText={setVehicle} placeholder="دراجة، سيارة..." placeholderTextColor="#839188" style={s.field} accessibilityLabel="نوع المركبة" maxLength={160}/><Pressable disabled={busy} onPress={() => void apply()} style={[s.saveAddress,busy&&s.disabled]} accessibilityRole="button"><Text style={s.saveAddressText}>{busy?'عم نتحقق…':'إرسال طلب الانضمام'} <Text style={s.submitArrow}>←</Text></Text></Pressable>{message ? <Text accessibilityRole="alert" style={s.formMessage}>{message}</Text> : null}</>}</View>;
@@ -1635,9 +1641,14 @@ function AdminDriversTab({ active, onBadge }: { active: boolean; onBadge: AdminB
   const [refreshing, setRefreshing] = useState(false);
   const [working, setWorking] = useState('');
   const [segment, setSegment] = useState<'all' | 'on'>('all');
+  const [invites, setInvites] = useState<{ id: string; expires_at: string; redeemed_at: string | null; revoked_at: string | null; created_at: string }[]>([]);
+  const [newInvite, setNewInvite] = useState<{ link: string; token: string } | null>(null);
+  const [creating, setCreating] = useState(false);
   const channelKey = useRef(newRequestKey());
   const refresh = useCallback(async () => {
     if (!supabase) return;
+    const inviteResult = await supabase.from('driver_invites').select('id,expires_at,redeemed_at,revoked_at,created_at').order('created_at', { ascending: false }).limit(30);
+    if (!inviteResult.error) setInvites(inviteResult.data ?? []);
     const [driverResult, orderResult, nameMap] = await Promise.all([
       supabase.from('driver_profiles').select('user_id,review_status,vehicle_description,created_at,is_online').order('created_at', { ascending: false }),
       supabase.from('orders').select('driver_id').in('status', ['accepted', 'assigned', 'shopping', 'awaiting_approval', 'purchased', 'delivering']),
@@ -1674,10 +1685,36 @@ function AdminDriversTab({ active, onBadge }: { active: boolean; onBadge: AdminB
     if (error) { setMessage('ما قدرنا نحفظ قرار المراجعة.'); return; }
     setMessage(approved ? 'تم اعتماد السائق.' : 'تم رفض الطلب.'); await refresh();
   };
+  const activeInvites = invites.filter((invite) => !invite.redeemed_at && !invite.revoked_at && Date.parse(invite.expires_at) > Date.now());
+  const createInvite = async () => {
+    if (!supabase || creating) return;
+    setCreating(true);
+    const { data, error } = await supabase.rpc('admin_create_driver_invite');
+    setCreating(false);
+    if (error || !data) { setMessage('ما قدرنا ننشئ الدعوة. جرّب مرة ثانية.'); return; }
+    const base = process.env.EXPO_PUBLIC_APP_URL?.trim();
+    setNewInvite({ token: data, link: base ? `${base.replace(/\/+$/, '')}/?invite=${data}` : `labbayk:///?invite=${data}` });
+    await refresh();
+  };
+  const shareInvite = async () => {
+    if (!newInvite) return;
+    try { await Share.share({ message: `دعوة للانضمام لفريق سائقي لَبّيك:\n${newInvite.link}\n\nأو الصق هالرمز بالتطبيق:\n${newInvite.token}` }); } catch { setMessage('ما قدرنا نفتح المشاركة. انسخ الرابط يدوياً.'); }
+  };
+  const revokeInvite = async (id: string) => {
+    if (!supabase) return;
+    if (!(await confirmAction('إلغاء الدعوة؟', 'الرابط ما رح يشتغل بعد هلأ.', 'إلغاء الدعوة'))) return;
+    const { error } = await supabase.from('driver_invites').update({ revoked_at: new Date().toISOString() }).eq('id', id);
+    if (error) { setMessage('ما قدرنا نلغي الدعوة.'); return; }
+    setMessage('تم إلغاء رابط الدعوة.'); await refresh();
+  };
   const statusOf = (row: AdminDriverRow): { label: string; tone: keyof typeof adminTone | 'mute' } => row.review_status === 'suspended' ? { label: 'موقوف مؤقتاً', tone: 'bad' } : row.review_status === 'rejected' ? { label: 'مرفوض', tone: 'mute' } : !row.is_online ? { label: 'غير متصل', tone: 'mute' } : busyDrivers[row.user_id] ? { label: 'عنده طلب', tone: 'warn' } : { label: 'متاح', tone: 'ok' };
   const avatar = (id: string) => <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: color.raised, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 16, fontWeight: '900' }}>{nameOf(id).slice(0, 1)}</Text></View>;
   return <AdminTabShell title="السائقون" subtitle={`${onlineCount} متصل الآن من ${rows.filter((row) => row.review_status === 'approved').length}`} onRefresh={() => void manualRefresh()} refreshing={refreshing}>
-    <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12 }}><Text style={{ color: color.muted, fontSize: 12.5, lineHeight: 20, textAlign: 'right' }}>إنشاء روابط دعوة السائقين متاح حالياً من لوحة الويب. طلبات الانضمام اللي توصل بتظهر هون للاعتماد.</Text></View>
+    <Pressable disabled={creating || !online} onPress={() => void createInvite()} accessibilityRole="button" style={{ minHeight: 52, borderRadius: 16, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', opacity: creating || !online ? 0.55 : 1 }}><Text style={{ color: color.background, fontSize: 15.5, fontWeight: '900' }}>{creating ? 'لحظة…' : '＋ دعوة سائق جديد'}</Text></Pressable>
+    {activeInvites.length ? <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12, gap: 8 }}>
+      <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>دعوات فعّالة · {activeInvites.length}</Text>
+      {activeInvites.map((invite) => <View key={invite.id} style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}><Text style={{ color: color.text, fontSize: 13.5, textAlign: 'right', flex: 1 }}>أُنشئت {timeAgo(invite.created_at)} · بتنتهي بعد {Math.max(1, Math.ceil((Date.parse(invite.expires_at) - Date.now()) / 86400000))} يوم</Text><Pressable onPress={() => void revokeInvite(invite.id)} accessibilityRole="button" accessibilityLabel="إلغاء الدعوة" style={{ minHeight: 36, paddingHorizontal: 12, borderRadius: 11, borderWidth: 1, borderColor: adminTone.bad.fg, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: adminTone.bad.fg, fontSize: 12.5, fontWeight: '900' }}>إلغاء</Text></Pressable></View>)}
+    </View> : null}
     {loading ? <ActivityIndicator color={color.primary} style={{ margin: 24 }} /> : <>
       {pending.length ? <>
         <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>طلبات الانضمام · {pending.length}</Text>
@@ -1695,6 +1732,19 @@ function AdminDriversTab({ active, onBadge }: { active: boolean; onBadge: AdminB
         {team.map((row, index) => { const status = statusOf(row); return <View key={row.user_id} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11, padding: 12, borderTopWidth: index ? 1 : 0, borderTopColor: color.border }}>{avatar(row.user_id)}<View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 15, fontWeight: '800', textAlign: 'right' }}>{nameOf(row.user_id)}</Text><Text numberOfLines={1} style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>{row.vehicle_description || 'بدون وصف للمركبة'}</Text></View><AdminPill label={status.label} tone={status.tone} /></View>; })}
       </View> : <AdminEmpty title="ما في سائقين هون" hint={segment === 'on' ? 'ما في سائق متصل حالياً.' : 'السائقين المسجلين بيظهروا هون.'} />}
     </>}
+    <Modal visible={!!newInvite} transparent animationType="slide" onRequestClose={() => setNewInvite(null)}>
+      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' }} onPress={() => setNewInvite(null)} accessibilityRole="button" accessibilityLabel="إغلاق" />
+        <View style={{ backgroundColor: color.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderTopWidth: 1, borderColor: color.border, padding: 16, paddingBottom: 26, gap: 10 }}>
+          <View style={{ alignSelf: 'center', width: 42, height: 4, borderRadius: 2, backgroundColor: color.border }} />
+          <Text style={{ color: color.text, fontSize: 19, fontWeight: '900', textAlign: 'right' }}>دعوة سائق جاهزة</Text>
+          <Text style={{ color: color.muted, fontSize: 13.5, lineHeight: 22, textAlign: 'right' }}>أرسل الرابط للسائق. بيفتحه وبيسجّل دخوله وبيصير سائق مباشرة بدون مراجعة. الرابط لمرة وحدة وبينتهي بعد 7 أيام. ما رح تقدر تشوفه مرة ثانية بعد ما تسكّر هالشاشة.</Text>
+          <View style={{ backgroundColor: color.background, borderColor: color.border, borderWidth: 1, borderRadius: 14, padding: 12 }}><Text selectable style={{ color: color.text, fontSize: 12.5, lineHeight: 20, textAlign: 'left', writingDirection: 'ltr' }}>{newInvite?.link}</Text></View>
+          <Pressable onPress={() => void shareInvite()} accessibilityRole="button" style={{ minHeight: 52, borderRadius: 16, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 16, fontWeight: '900' }}>مشاركة الدعوة</Text></Pressable>
+          <Pressable onPress={() => setNewInvite(null)} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: color.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.text, fontSize: 14.5, fontWeight: '800' }}>تم</Text></Pressable>
+        </View>
+      </View>
+    </Modal>
   </AdminTabShell>;
 }
 
@@ -1871,7 +1921,7 @@ function AdminReportsTab({ active, onBadge, onOpenOrder }: { active: boolean; on
 
 function AdminMoreTab({ email, theme, onToggleTheme, onSignOut }: { email: string; theme: 'dark' | 'light'; onToggleTheme: () => void; onSignOut: () => void }) {
   const { colors: color } = useMobileTheme();
-  const webOnly = ['التسعير ونسبة العمولة', 'المستخدمون وإيقاف الحسابات', 'مناطق الخدمة', 'التنبيهات', 'روابط دعوة السائقين'];
+  const webOnly = ['التسعير ونسبة العمولة', 'المستخدمون وإيقاف الحسابات', 'مناطق الخدمة', 'التنبيهات'];
   const row = (title: string, hint: string | null, onPress: (() => void) | null, tint?: string) => <Pressable key={title} disabled={!onPress} onPress={onPress ?? undefined} accessibilityRole="button" accessibilityState={{ disabled: !onPress }} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 12, minHeight: 58, paddingHorizontal: 14, paddingVertical: 8, opacity: onPress ? 1 : 0.62 }}>
     <View style={{ flex: 1 }}><Text style={{ color: tint ?? color.text, fontSize: 15, fontWeight: '800', textAlign: 'right' }}>{title}</Text>{hint ? <Text style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>{hint}</Text> : null}</View>
     {!onPress ? <AdminPill label="بالويب" tone="mute" /> : null}
