@@ -1572,7 +1572,361 @@ function timeAgo(iso: string) {
   return hours < 24 ? `منذ ${hours} ساعة` : `منذ ${Math.floor(hours / 24)} يوم`;
 }
 
-function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { userId: string; email: string; onSignOut: () => void; theme: 'dark'|'light'; onToggleTheme: () => void }) {
+type AdminTabKey = 'orders' | 'drivers' | 'money' | 'reports' | 'more';
+type AdminBadgeSetter = (key: AdminTabKey, count: number) => void;
+const adminTone = { ok: { bg: 'rgba(82,213,160,0.16)', fg: '#52D5A0' }, warn: { bg: '#3A2D18', fg: '#F0CC83' }, bad: { bg: '#451E21', fg: '#FF8A8A' }, info: { bg: '#1C2F3A', fg: '#80CAFF' } } as const;
+
+async function loadAdminNames(): Promise<Record<string, string>> {
+  if (!supabase) return {};
+  const { data, error } = await supabase.rpc('admin_list_users');
+  if (error) return {};
+  return Object.fromEntries((data ?? []).map((user) => [user.user_id, user.display_name || user.email]));
+}
+
+function AdminTopBar({ right }: { right?: ReactNode }) {
+  const { colors: color } = useMobileTheme();
+  return <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6 }}>
+    <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10 }}>
+      <View style={{ width: 38, height: 38, borderRadius: 13, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><SymbolView name={{ ios: 'mappin.and.ellipse', android: 'location_on', web: 'location_on' }} tintColor={color.background} size={20} /></View>
+      <View><Text style={{ color: color.text, fontSize: 18, fontWeight: '900', textAlign: 'right' }}>لَبّيك</Text><Text style={{ color: color.muted, fontSize: 11.5, textAlign: 'right' }}>الإدارة</Text></View>
+    </View>
+    {right}
+  </View>;
+}
+
+function AdminSegment<T extends string>({ items, value, onChange }: { items: { key: T; label: string }[]; value: T; onChange: (key: T) => void }) {
+  const { colors: color } = useMobileTheme();
+  return <View style={{ flexDirection: 'row-reverse', gap: 4, padding: 4, borderRadius: 16, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface }}>
+    {items.map((item) => { const on = item.key === value; return <Pressable key={item.key} onPress={() => onChange(item.key)} accessibilityRole="button" accessibilityState={{ selected: on }} style={{ flex: 1, minHeight: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: on ? color.raised : 'transparent', borderWidth: on ? 1 : 0, borderColor: color.border }}><Text style={{ color: on ? color.text : color.muted, fontSize: 14, fontWeight: '800' }}>{item.label}</Text></Pressable>; })}
+  </View>;
+}
+
+function AdminPill({ label, tone }: { label: string; tone: keyof typeof adminTone | 'mute' }) {
+  const { colors: color } = useMobileTheme();
+  const palette = tone === 'mute' ? { bg: color.raised, fg: color.muted } : adminTone[tone];
+  return <View style={{ backgroundColor: palette.bg, borderRadius: 13, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: palette.fg, fontSize: 12, fontWeight: '900' }}>{label}</Text></View>;
+}
+
+function AdminTabShell({ title, subtitle, onRefresh, refreshing, children }: { title: string; subtitle: string; onRefresh?: () => void; refreshing?: boolean; children: ReactNode }) {
+  const { colors: color, styles: style } = useMobileTheme();
+  return <SafeAreaView edges={['top']} style={[style.safe, { flex: 1 }]}>
+    <AdminTopBar right={onRefresh ? <Pressable disabled={refreshing} onPress={onRefresh} accessibilityRole="button" accessibilityLabel="تحديث" style={{ width: 44, height: 44, borderRadius: 14, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface, alignItems: 'center', justifyContent: 'center', opacity: refreshing ? 0.6 : 1 }}><SymbolView name={{ ios: 'arrow.clockwise', android: 'refresh', web: 'refresh' }} tintColor={color.primary} size={18} /></Pressable> : undefined} />
+    <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 12 }} keyboardShouldPersistTaps="handled">
+      <View><Text style={{ color: color.text, fontSize: 26, fontWeight: '900', textAlign: 'right' }}>{title}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', marginTop: 2 }}>{subtitle}</Text></View>
+      {children}
+    </ScrollView>
+  </SafeAreaView>;
+}
+
+function AdminEmpty({ title, hint }: { title: string; hint: string }) {
+  const { colors: color } = useMobileTheme();
+  return <View style={{ alignItems: 'center', padding: 32, gap: 6 }}><Text style={{ color: color.text, fontSize: 17, fontWeight: '900' }}>{title}</Text><Text style={{ color: color.muted, fontSize: 13.5, textAlign: 'center' }}>{hint}</Text></View>;
+}
+
+type AdminDriverRow = Pick<Database['public']['Tables']['driver_profiles']['Row'], 'user_id' | 'review_status' | 'vehicle_description' | 'created_at' | 'is_online'>;
+function AdminDriversTab({ active, onBadge }: { active: boolean; onBadge: AdminBadgeSetter }) {
+  const { colors: color } = useMobileTheme();
+  const online = useInternetAvailable();
+  const [, setMessage] = useToastMessage();
+  const [rows, setRows] = useState<AdminDriverRow[]>([]);
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [busyDrivers, setBusyDrivers] = useState<Record<string, boolean>>({});
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [working, setWorking] = useState('');
+  const [segment, setSegment] = useState<'all' | 'on'>('all');
+  const channelKey = useRef(newRequestKey());
+  const refresh = useCallback(async () => {
+    if (!supabase) return;
+    const [driverResult, orderResult, nameMap] = await Promise.all([
+      supabase.from('driver_profiles').select('user_id,review_status,vehicle_description,created_at,is_online').order('created_at', { ascending: false }),
+      supabase.from('orders').select('driver_id').in('status', ['accepted', 'assigned', 'shopping', 'awaiting_approval', 'purchased', 'delivering']),
+      loadAdminNames(),
+    ]);
+    if (driverResult.error) setMessage('ما قدرنا نحمّل بيانات السائقين.');
+    else {
+      setRows(driverResult.data ?? []);
+      const busyMap: Record<string, boolean> = {};
+      for (const row of orderResult.data ?? []) if (row.driver_id) busyMap[row.driver_id] = true;
+      setBusyDrivers(busyMap);
+    }
+    setNames(nameMap); setLoading(false);
+  }, [setMessage]);
+  useEffect(() => { if (online) void refresh(); }, [online, refresh]);
+  useEffect(() => { if (active && online) void refresh(); }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!supabase) return;
+    const channel = supabase.channel(`admin-mobile-drivers-${channelKey.current}`).on('postgres_changes', { event: '*', schema: 'public', table: 'driver_profiles' }, () => void refresh()).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => void refresh()).subscribe();
+    return () => { void supabase?.removeChannel(channel); };
+  }, [refresh]);
+  const pending = rows.filter((row) => row.review_status === 'pending');
+  useEffect(() => { onBadge('drivers', pending.length); }, [pending.length, onBadge]);
+  const nameOf = (id: string) => names[id] ?? '#' + id.slice(0, 6);
+  const team = rows.filter((row) => row.review_status !== 'pending' && (segment === 'all' || (row.review_status === 'approved' && row.is_online)));
+  const onlineCount = rows.filter((row) => row.review_status === 'approved' && row.is_online).length;
+  const manualRefresh = async () => { if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setRefreshing(true); await refresh(); setRefreshing(false); };
+  const review = async (id: string, approved: boolean) => {
+    if (!supabase) return;
+    if (!approved && !(await confirmAction('رفض طلب الانضمام؟', `رح يتم رفض طلب ${nameOf(id)}.`, 'رفض الطلب'))) return;
+    setWorking(id);
+    const { error } = await supabase.rpc('review_driver_application', { p_user_id: id, p_approved: approved });
+    setWorking('');
+    if (error) { setMessage('ما قدرنا نحفظ قرار المراجعة.'); return; }
+    setMessage(approved ? 'تم اعتماد السائق.' : 'تم رفض الطلب.'); await refresh();
+  };
+  const statusOf = (row: AdminDriverRow): { label: string; tone: keyof typeof adminTone | 'mute' } => row.review_status === 'suspended' ? { label: 'موقوف مؤقتاً', tone: 'bad' } : row.review_status === 'rejected' ? { label: 'مرفوض', tone: 'mute' } : !row.is_online ? { label: 'غير متصل', tone: 'mute' } : busyDrivers[row.user_id] ? { label: 'عنده طلب', tone: 'warn' } : { label: 'متاح', tone: 'ok' };
+  const avatar = (id: string) => <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: color.raised, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 16, fontWeight: '900' }}>{nameOf(id).slice(0, 1)}</Text></View>;
+  return <AdminTabShell title="السائقون" subtitle={`${onlineCount} متصل الآن من ${rows.filter((row) => row.review_status === 'approved').length}`} onRefresh={() => void manualRefresh()} refreshing={refreshing}>
+    <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12 }}><Text style={{ color: color.muted, fontSize: 12.5, lineHeight: 20, textAlign: 'right' }}>إنشاء روابط دعوة السائقين متاح حالياً من لوحة الويب. طلبات الانضمام اللي توصل بتظهر هون للاعتماد.</Text></View>
+    {loading ? <ActivityIndicator color={color.primary} style={{ margin: 24 }} /> : <>
+      {pending.length ? <>
+        <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>طلبات الانضمام · {pending.length}</Text>
+        {pending.map((row) => <View key={row.user_id} style={{ backgroundColor: color.surface, borderColor: '#C98A2B', borderWidth: 1, borderRadius: 20, padding: 14, gap: 12 }}>
+          <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11 }}>{avatar(row.user_id)}<View style={{ flex: 1 }}><Text style={{ color: color.text, fontSize: 16, fontWeight: '900', textAlign: 'right' }}>{nameOf(row.user_id)}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>{row.vehicle_description || 'بدون وصف للمركبة'} · {timeAgo(row.created_at)}</Text></View></View>
+          <View style={{ flexDirection: 'row-reverse', gap: 8 }}>
+            <Pressable disabled={!!working || !online} onPress={() => void review(row.user_id, true)} accessibilityRole="button" style={{ flex: 1, minHeight: 44, borderRadius: 13, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', opacity: working || !online ? 0.55 : 1 }}><Text style={{ color: color.background, fontSize: 14, fontWeight: '900' }}>{working === row.user_id ? 'لحظة…' : 'اعتماد'}</Text></Pressable>
+            <Pressable disabled={!!working || !online} onPress={() => void review(row.user_id, false)} accessibilityRole="button" style={{ flex: 1, minHeight: 44, borderRadius: 13, borderWidth: 1, borderColor: adminTone.bad.fg, alignItems: 'center', justifyContent: 'center', opacity: working || !online ? 0.55 : 1 }}><Text style={{ color: adminTone.bad.fg, fontSize: 14, fontWeight: '900' }}>رفض</Text></Pressable>
+          </View>
+        </View>)}
+      </> : null}
+      <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>الفريق</Text>
+      <AdminSegment items={[{ key: 'all', label: 'الكل' }, { key: 'on', label: 'متصل' }]} value={segment} onChange={setSegment} />
+      {team.length ? <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 20, overflow: 'hidden' }}>
+        {team.map((row, index) => { const status = statusOf(row); return <View key={row.user_id} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11, padding: 12, borderTopWidth: index ? 1 : 0, borderTopColor: color.border }}>{avatar(row.user_id)}<View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 15, fontWeight: '800', textAlign: 'right' }}>{nameOf(row.user_id)}</Text><Text numberOfLines={1} style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>{row.vehicle_description || 'بدون وصف للمركبة'}</Text></View><AdminPill label={status.label} tone={status.tone} /></View>; })}
+      </View> : <AdminEmpty title="ما في سائقين هون" hint={segment === 'on' ? 'ما في سائق متصل حالياً.' : 'السائقين المسجلين بيظهروا هون.'} />}
+    </>}
+  </AdminTabShell>;
+}
+
+type AdminCashOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id' | 'driver_id' | 'category' | 'purchase_amount_minor' | 'delivery_fee_minor' | 'cash_collected_minor' | 'created_at'>;
+function AdminMoneyTab({ active, onBadge }: { active: boolean; onBadge: AdminBadgeSetter }) {
+  const { colors: color } = useMobileTheme();
+  const online = useInternetAvailable();
+  const [, setMessage] = useToastMessage();
+  const [orders, setOrders] = useState<AdminCashOrder[]>([]);
+  const [balances, setBalances] = useState<Record<string, number>>({});
+  const [drivers, setDrivers] = useState<string[]>([]);
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [segment, setSegment] = useState<'ready' | 'wallets'>('ready');
+  const [working, setWorking] = useState('');
+  const [topUp, setTopUp] = useState<{ id: string } | null>(null);
+  const [amount, setAmount] = useState('');
+  const [reason, setReason] = useState('');
+  const keys = useRef<Record<string, string>>({});
+  const channelKey = useRef(newRequestKey());
+  const refresh = useCallback(async () => {
+    if (!supabase) return;
+    const [orderResult, balanceResult, driverResult, nameMap] = await Promise.all([
+      supabase.from('orders').select('id,driver_id,category,purchase_amount_minor,delivery_fee_minor,cash_collected_minor,created_at').eq('status', 'delivered').order('delivered_at', { ascending: false }).limit(100),
+      supabase.rpc('get_driver_wallet_balances'),
+      supabase.from('driver_profiles').select('user_id').eq('review_status', 'approved').order('created_at'),
+      loadAdminNames(),
+    ]);
+    if (orderResult.error || balanceResult.error || driverResult.error) setMessage('ما قدرنا نحمّل بيانات المال. جرّب التحديث.');
+    else {
+      setOrders(orderResult.data ?? []);
+      const map: Record<string, number> = {};
+      for (const row of balanceResult.data ?? []) map[row.driver_id] = row.balance_minor;
+      setBalances(map); setDrivers((driverResult.data ?? []).map((row) => row.user_id));
+    }
+    setNames(nameMap); setLoading(false);
+  }, [setMessage]);
+  useEffect(() => { if (online) void refresh(); }, [online, refresh]);
+  useEffect(() => { if (active && online) void refresh(); }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!supabase) return;
+    const channel = supabase.channel(`admin-mobile-money-${channelKey.current}`).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => void refresh()).on('postgres_changes', { event: '*', schema: 'public', table: 'driver_wallet_ledger' }, () => void refresh()).subscribe();
+    return () => { void supabase?.removeChannel(channel); };
+  }, [refresh]);
+  useEffect(() => { onBadge('money', orders.length); }, [orders.length, onBadge]);
+  const nameOf = (id: string | null) => id ? (names[id] ?? '#' + id.slice(0, 6)) : '—';
+  const walletIds = useMemo(() => [...new Set([...drivers, ...Object.keys(balances)])], [drivers, balances]);
+  const dueTotal = walletIds.reduce((sum, id) => sum + Math.max(0, -(balances[id] ?? 0)), 0);
+  const manualRefresh = async () => { if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setRefreshing(true); await refresh(); setRefreshing(false); };
+  const settle = async (order: AdminCashOrder) => {
+    if (!supabase) return;
+    const expected = (order.purchase_amount_minor ?? 0) + order.delivery_fee_minor;
+    if (!(await confirmAction('تأكيد التحصيل؟', `تأكدت أن السائق سلّم الطلب وحصّل من الزبون ${numberFormatter.format(expected)} ل.س؟`, 'تأكيد'))) return;
+    keys.current[order.id] ??= newRequestKey();
+    setWorking(order.id);
+    const { error } = await supabase.rpc('settle_cash_order', { p_order_id: order.id, p_idempotency_key: keys.current[order.id] });
+    setWorking('');
+    if (error) { setMessage('ما تمت التسوية. تحقق من اكتمال التوصيل وقيمة المشتريات.'); return; }
+    delete keys.current[order.id]; setMessage('تمت التسوية وتوثيق النقد والعمولة وأرباح السائق.'); await refresh();
+  };
+  const submitTopUp = async () => {
+    if (!supabase || !topUp) return;
+    const value = Number(amount);
+    if (!Number.isSafeInteger(value) || value < 1 || reason.trim().length < 5) { setMessage('أدخل مبلغاً صحيحاً وسبباً من 5 أحرف على الأقل.'); return; }
+    if (!(await confirmAction('تأكيد الدفعة؟', 'أكدت استلام دفعة العمولة نقداً من السائق؟ رح تتسجل لتخفيض المبلغ المستحق عليه.', 'تأكيد'))) return;
+    const fingerprint = `${topUp.id}|${value}|${reason.trim()}`;
+    if (keys.current['topup-fp'] !== fingerprint) { keys.current['topup-fp'] = fingerprint; keys.current['topup'] = newRequestKey(); }
+    setWorking('topup');
+    const { error } = await supabase.rpc('top_up_driver_wallet', { p_driver_id: topUp.id, p_amount_minor: value, p_reason: reason.trim(), p_idempotency_key: keys.current['topup'] });
+    setWorking('');
+    if (error) { setMessage('ما انضاف المبلغ. أعد المحاولة بنفس البيانات حتى ما تتكرر الدفعة.'); return; }
+    delete keys.current['topup-fp']; delete keys.current['topup'];
+    setTopUp(null); setAmount(''); setReason(''); setMessage('تم تسجيل دفعة العمولة وتحديث المستحقات.'); await refresh();
+  };
+  const line = (label: string, value: string, tint?: string) => <View key={label} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5 }}>{label}</Text><Text style={{ color: tint ?? color.text, fontSize: 13.5, fontWeight: '900' }}>{value}</Text></View>;
+  const input = { minHeight: 50, paddingHorizontal: 14, borderRadius: 14, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, color: color.text, textAlign: 'right', fontSize: 15 } as const;
+  return <AdminTabShell title="المال" subtitle="تسويات التوصيل وحسابات العمولة" onRefresh={() => void manualRefresh()} refreshing={refreshing}>
+    <View style={{ flexDirection: 'row-reverse', gap: 10 }}>
+      <View style={{ flex: 1, backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12 }}><Text style={{ color: color.text, fontSize: 24, fontWeight: '900', textAlign: 'right' }}>{numberFormatter.format(orders.length)}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>بانتظار التأكيد</Text></View>
+      <View style={{ flex: 1, backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12 }}><Text style={{ color: adminTone.bad.fg, fontSize: 24, fontWeight: '900', textAlign: 'right' }}>{numberFormatter.format(dueTotal)}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>مستحق على السائقين · ل.س</Text></View>
+    </View>
+    <AdminSegment items={[{ key: 'ready', label: 'للتسوية' }, { key: 'wallets', label: 'محافظ العمولة' }]} value={segment} onChange={setSegment} />
+    {loading ? <ActivityIndicator color={color.primary} style={{ margin: 24 }} /> : segment === 'ready' ? (orders.length ? orders.map((order) => {
+      const expected = (order.purchase_amount_minor ?? 0) + order.delivery_fee_minor; const collected = order.cash_collected_minor; const diff = collected === null ? null : collected - expected;
+      return <View key={order.id} style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 20, padding: 14, gap: 10 }}>
+        <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center' }}><Text style={{ color: color.text, fontSize: 15, fontWeight: '900' }}>طلب {order.category} · #{order.id.slice(0, 4)}</Text><Text style={{ color: color.muted, fontSize: 12.5 }}>{nameOf(order.driver_id)}</Text></View>
+        <View style={{ backgroundColor: color.background, borderColor: color.border, borderWidth: 1, borderRadius: 14, padding: 10, gap: 6 }}>
+          {line('مشتريات دفعها السائق', order.purchase_amount_minor === null ? '—' : numberFormatter.format(order.purchase_amount_minor) + ' ل.س')}
+          {line('أجرة التوصيل', numberFormatter.format(order.delivery_fee_minor) + ' ل.س')}
+          {line('المطلوب من الزبون', numberFormatter.format(expected) + ' ل.س')}
+          {line('المبلغ المستلم', collected === null ? 'لم يُسجَّل' : numberFormatter.format(collected) + ' ل.س', color.primary)}
+          {diff !== null && diff !== 0 ? line(diff > 0 ? 'زيادة (إكرامية)' : 'نقص عن المطلوب', numberFormatter.format(Math.abs(diff)) + ' ل.س', diff > 0 ? adminTone.ok.fg : adminTone.bad.fg) : null}
+        </View>
+        <Pressable disabled={!!working || !online} onPress={() => void settle(order)} accessibilityRole="button" style={{ minHeight: 48, borderRadius: 14, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', opacity: working || !online ? 0.55 : 1 }}><Text style={{ color: color.background, fontSize: 15, fontWeight: '900' }}>{working === order.id ? 'لحظة…' : 'تأكيد التحصيل وحساب العمولة'}</Text></Pressable>
+      </View>;
+    }) : <AdminEmpty title="كل التسويات مأكدة" hint="التوصيلات المكتملة بتظهر هون لمراجعة التحصيل." />) : <>
+      <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>السالب مبلغ مستحق على السائق</Text>
+      {walletIds.length ? <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 20, overflow: 'hidden' }}>
+        {walletIds.map((id, index) => { const balance = balances[id] ?? 0; return <View key={id} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10, padding: 12, borderTopWidth: index ? 1 : 0, borderTopColor: color.border }}>
+          <View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 15, fontWeight: '800', textAlign: 'right' }}>{nameOf(id)}</Text><Text style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>{balance < 0 ? 'مستحق للشركة' : 'رصيد عمولة'}</Text></View>
+          <Text style={{ color: balance < 0 ? adminTone.bad.fg : adminTone.ok.fg, fontSize: 15, fontWeight: '900' }}>{balance < 0 ? '−' : ''}{numberFormatter.format(Math.abs(balance))}</Text>
+          <Pressable onPress={() => { setTopUp({ id }); setAmount(''); setReason(''); }} accessibilityRole="button" accessibilityLabel={`تسجيل دفعة من ${nameOf(id)}`} style={{ minHeight: 40, paddingHorizontal: 14, borderRadius: 12, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 13, fontWeight: '900' }}>دفعة</Text></Pressable>
+        </View>; })}
+      </View> : <AdminEmpty title="ما في محافظ" hint="محافظ السائقين المعتمدين بتظهر هون." />}
+    </>}
+    <Modal visible={!!topUp} transparent animationType="slide" onRequestClose={() => setTopUp(null)}>
+      <KeyboardAvoidingView style={{ flex: 1, justifyContent: 'flex-end' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' }} onPress={() => setTopUp(null)} accessibilityRole="button" accessibilityLabel="إغلاق" />
+        <View style={{ backgroundColor: color.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderTopWidth: 1, borderColor: color.border, padding: 16, paddingBottom: 24, gap: 10 }}>
+          <View style={{ alignSelf: 'center', width: 42, height: 4, borderRadius: 2, backgroundColor: color.border }} />
+          <Text style={{ color: color.text, fontSize: 19, fontWeight: '900', textAlign: 'right' }}>تسجيل دفعة عمولة</Text>
+          <Text style={{ color: color.muted, fontSize: 13, textAlign: 'right' }}>{topUp ? nameOf(topUp.id) : ''} · الرصيد الحالي {topUp ? numberFormatter.format(balances[topUp.id] ?? 0) : ''} ل.س</Text>
+          <TextInput value={amount} onChangeText={(value) => setAmount(value.replace(/\D/g, '').slice(0, 9))} keyboardType="number-pad" placeholder="المبلغ المسدّد · ل.س" placeholderTextColor={color.muted} style={[input, { fontSize: 20, fontWeight: '900', color: color.primary }]} accessibilityLabel="المبلغ المسدد" />
+          <TextInput value={reason} onChangeText={setReason} placeholder="سبب الدفعة (5 أحرف على الأقل)" placeholderTextColor={color.muted} style={input} accessibilityLabel="سبب الدفعة" />
+          <Pressable disabled={working === 'topup' || !online || !amount || reason.trim().length < 5} onPress={() => void submitTopUp()} accessibilityRole="button" style={{ minHeight: 52, borderRadius: 16, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', opacity: working === 'topup' || !online || !amount || reason.trim().length < 5 ? 0.5 : 1 }}><Text style={{ color: color.background, fontSize: 16, fontWeight: '900' }}>{working === 'topup' ? 'لحظة…' : 'تسجيل الدفعة'}</Text></Pressable>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  </AdminTabShell>;
+}
+
+type AdminReport = Database['public']['Tables']['order_disputes']['Row'];
+type AdminReportOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id' | 'category' | 'customer_id' | 'driver_id'>;
+function AdminReportsTab({ active, onBadge, onOpenOrder }: { active: boolean; onBadge: AdminBadgeSetter; onOpenOrder: (id: string) => void }) {
+  const { colors: color } = useMobileTheme();
+  const online = useInternetAvailable();
+  const [, setMessage] = useToastMessage();
+  const [reports, setReports] = useState<AdminReport[]>([]);
+  const [orderMap, setOrderMap] = useState<Record<string, AdminReportOrder>>({});
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [segment, setSegment] = useState<'open' | 'done'>('open');
+  const channelKey = useRef(newRequestKey());
+  const refresh = useCallback(async () => {
+    if (!supabase) return;
+    const [reportResult, nameMap] = await Promise.all([supabase.from('order_disputes').select('*').order('created_at', { ascending: false }).limit(100), loadAdminNames()]);
+    if (reportResult.error) setMessage('ما قدرنا نحمّل البلاغات.');
+    else {
+      const rows = reportResult.data ?? []; setReports(rows);
+      const ids = [...new Set(rows.map((row) => row.order_id))];
+      if (ids.length) { const { data } = await supabase.from('orders').select('id,category,customer_id,driver_id').in('id', ids); setOrderMap(Object.fromEntries((data ?? []).map((order) => [order.id, order]))); }
+    }
+    setNames(nameMap); setLoading(false);
+  }, [setMessage]);
+  useEffect(() => { if (online) void refresh(); }, [online, refresh]);
+  useEffect(() => { if (active && online) void refresh(); }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!supabase) return;
+    const channel = supabase.channel(`admin-mobile-reports-${channelKey.current}`).on('postgres_changes', { event: '*', schema: 'public', table: 'order_disputes' }, () => void refresh()).subscribe();
+    return () => { void supabase?.removeChannel(channel); };
+  }, [refresh]);
+  const openCount = reports.filter((row) => !row.resolved_at).length;
+  useEffect(() => { onBadge('reports', openCount); }, [openCount, onBadge]);
+  const list = reports.filter((row) => segment === 'open' ? !row.resolved_at : !!row.resolved_at);
+  const nameOf = (id: string | null) => id ? (names[id] ?? '#' + id.slice(0, 6)) : '—';
+  const manualRefresh = async () => { if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setRefreshing(true); await refresh(); setRefreshing(false); };
+  return <AdminTabShell title="البلاغات" subtitle="مشاكل العملاء والسائقين على الطلبات" onRefresh={() => void manualRefresh()} refreshing={refreshing}>
+    <AdminSegment items={[{ key: 'open', label: `مفتوحة · ${openCount}` }, { key: 'done', label: `محلولة · ${reports.length - openCount}` }]} value={segment} onChange={setSegment} />
+    {loading ? <ActivityIndicator color={color.primary} style={{ margin: 24 }} /> : list.length ? list.map((report) => {
+      const order = orderMap[report.order_id]; const resolved = !!report.resolved_at;
+      const fromCustomer = order ? report.opened_by === order.customer_id : false;
+      return <View key={report.id} style={{ backgroundColor: color.surface, borderColor: resolved ? color.border : '#C98A2B', borderWidth: 1, borderRadius: 20, padding: 14, gap: 10 }}>
+        <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center' }}><AdminPill label={resolved ? 'تم الحل' : 'بحاجة لقرارك'} tone={resolved ? 'ok' : 'warn'} /><Text style={{ color: color.muted, fontSize: 12 }}>{timeAgo(report.created_at)} · #{report.order_id.slice(0, 4)}</Text></View>
+        <View><Text style={{ color: color.text, fontSize: 15.5, fontWeight: '900', textAlign: 'right' }}>{report.reason}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>من {fromCustomer ? 'العميل' : 'السائق'} {nameOf(report.opened_by)}{order ? ` · طلب ${order.category}` : ''}</Text></View>
+        <Text selectable style={{ color: color.text, fontSize: 14, lineHeight: 22, textAlign: 'right' }}>{report.details}</Text>
+        {resolved ? <View style={{ backgroundColor: adminTone.ok.bg, borderRadius: 12, padding: 10 }}><Text style={{ color: adminTone.ok.fg, fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>✓ {report.resolution}</Text></View>
+          : <Pressable onPress={() => onOpenOrder(report.order_id)} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 14, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 14.5, fontWeight: '900' }}>افتح الطلب وسجّل الحل</Text></Pressable>}
+      </View>;
+    }) : <AdminEmpty title={segment === 'open' ? 'ما في بلاغات مفتوحة' : 'ما في بلاغات محلولة'} hint="البلاغات بتظهر هون لما يفتحها عميل أو سائق." />}
+  </AdminTabShell>;
+}
+
+function AdminMoreTab({ email, theme, onToggleTheme, onSignOut }: { email: string; theme: 'dark' | 'light'; onToggleTheme: () => void; onSignOut: () => void }) {
+  const { colors: color } = useMobileTheme();
+  const webOnly = ['التسعير ونسبة العمولة', 'المستخدمون وإيقاف الحسابات', 'مناطق الخدمة', 'التنبيهات', 'روابط دعوة السائقين'];
+  const row = (title: string, hint: string | null, onPress: (() => void) | null, tint?: string) => <Pressable key={title} disabled={!onPress} onPress={onPress ?? undefined} accessibilityRole="button" accessibilityState={{ disabled: !onPress }} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 12, minHeight: 58, paddingHorizontal: 14, paddingVertical: 8, opacity: onPress ? 1 : 0.62 }}>
+    <View style={{ flex: 1 }}><Text style={{ color: tint ?? color.text, fontSize: 15, fontWeight: '800', textAlign: 'right' }}>{title}</Text>{hint ? <Text style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>{hint}</Text> : null}</View>
+    {!onPress ? <AdminPill label="بالويب" tone="mute" /> : null}
+  </Pressable>;
+  const box = { backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 20, overflow: 'hidden' } as const;
+  return <AdminTabShell title="المزيد" subtitle="الحساب والمظهر وباقي الأقسام">
+    <View style={[box, { padding: 14, flexDirection: 'row-reverse', alignItems: 'center', gap: 12 }]}><View style={{ width: 46, height: 46, borderRadius: 23, backgroundColor: color.raised, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 18, fontWeight: '900' }}>م</Text></View><View style={{ flex: 1 }}><Text style={{ color: color.text, fontSize: 16, fontWeight: '900', textAlign: 'right' }}>مدير لَبّيك</Text><Text selectable style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>{email}</Text></View></View>
+    <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>التطبيق</Text>
+    <View style={box}>
+      {row('المظهر', theme === 'dark' ? 'داكن · اضغط للتبديل' : 'فاتح · اضغط للتبديل', onToggleTheme)}
+      <View style={{ height: 1, backgroundColor: color.border }} />
+      {row('تسجيل الخروج', null, () => { void confirmAction('تسجيل الخروج؟', 'رح تحتاج تدخل ببريد الإدارة وكلمة السر مرة ثانية.', 'خروج').then((ok) => { if (ok) onSignOut(); }); }, adminTone.bad.fg)}
+    </View>
+    <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>أقسام بلوحة الويب فقط حالياً</Text>
+    <View style={box}>{webOnly.map((title, index) => <View key={title}>{index ? <View style={{ height: 1, backgroundColor: color.border }} /> : null}{row(title, 'متاح على لوحة الويب، مو بالتطبيق بعد', null)}</View>)}</View>
+  </AdminTabShell>;
+}
+
+function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { userId: string; email: string; onSignOut: () => void; theme: 'dark' | 'light'; onToggleTheme: () => void }) {
+  const { colors: color } = useMobileTheme();
+  const [tab, setTab] = useState<AdminTabKey>('orders');
+  const [inDetail, setInDetail] = useState(false);
+  const [badges, setBadges] = useState<Record<string, number>>({});
+  const [focusOrderId, setFocusOrderId] = useState<string | null>(null);
+  const setBadge = useCallback<AdminBadgeSetter>((key, count) => setBadges((current) => current[key] === count ? current : { ...current, [key]: count }), []);
+  const clearFocus = useCallback(() => setFocusOrderId(null), []);
+  const tabs: { key: AdminTabKey; label: string; symbol: { ios: SFSymbol; android: AndroidSymbol; web: AndroidSymbol } }[] = [
+    { key: 'orders', label: 'الطلبات', symbol: { ios: 'list.bullet', android: 'list', web: 'list' } },
+    { key: 'drivers', label: 'السائقون', symbol: { ios: 'person.2', android: 'group', web: 'group' } },
+    { key: 'money', label: 'المال', symbol: { ios: 'creditcard', android: 'payments', web: 'payments' } },
+    { key: 'reports', label: 'البلاغات', symbol: { ios: 'exclamationmark.triangle', android: 'warning', web: 'warning' } },
+    { key: 'more', label: 'المزيد', symbol: { ios: 'ellipsis', android: 'more_horiz', web: 'more_horiz' } },
+  ];
+  const pane = (key: AdminTabKey) => ({ flex: 1, display: tab === key ? 'flex' : 'none' } as const);
+  return <View style={{ flex: 1, backgroundColor: color.background }}>
+    <View style={pane('orders')}><AdminOrdersTab userId={userId} onBadge={setBadge} onDetail={setInDetail} focusOrderId={focusOrderId} onFocusHandled={clearFocus} /></View>
+    <View style={pane('drivers')}><AdminDriversTab active={tab === 'drivers'} onBadge={setBadge} /></View>
+    <View style={pane('money')}><AdminMoneyTab active={tab === 'money'} onBadge={setBadge} /></View>
+    <View style={pane('reports')}><AdminReportsTab active={tab === 'reports'} onBadge={setBadge} onOpenOrder={(id) => { setFocusOrderId(id); setTab('orders'); }} /></View>
+    <View style={pane('more')}><AdminMoreTab email={email} theme={theme} onToggleTheme={onToggleTheme} onSignOut={onSignOut} /></View>
+    {!(tab === 'orders' && inDetail) ? <SafeAreaView edges={['bottom']} style={{ backgroundColor: color.surface, borderTopWidth: 1, borderTopColor: color.border }}>
+      <View style={{ flexDirection: 'row-reverse', paddingHorizontal: 6, paddingTop: 6, paddingBottom: 4 }}>
+        {tabs.map((item) => { const on = tab === item.key; const count = badges[item.key] ?? 0; return <Pressable key={item.key} onPress={() => setTab(item.key)} accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={count ? `${item.label}، ${count}` : item.label} style={{ flex: 1, minHeight: 56, alignItems: 'center', justifyContent: 'center', gap: 3 }}>
+          <View style={{ width: 52, height: 30, borderRadius: 15, backgroundColor: on ? color.primary : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
+            <SymbolView name={item.symbol} tintColor={on ? color.background : color.muted} size={22} />
+            {count ? <View style={{ position: 'absolute', top: -5, right: -2, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: '#F0CC83', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 }}><Text style={{ color: '#0B1411', fontSize: 11, fontWeight: '900' }}>{count}</Text></View> : null}
+          </View>
+          <Text style={{ color: on ? color.text : color.muted, fontSize: 11.5, fontWeight: '700' }}>{item.label}</Text>
+        </Pressable>; })}
+      </View>
+    </SafeAreaView> : null}
+  </View>;
+}
+
+function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandled }: { userId: string; onBadge: AdminBadgeSetter; onDetail: (open: boolean) => void; focusOrderId: string | null; onFocusHandled: () => void }) {
   const { colors: color, styles: style } = useMobileTheme();
   const online = useInternetAvailable();
   const [, setMessage] = useToastMessage();
@@ -1686,6 +2040,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
     return orders.filter((order) => (filter === 'all' || groupOf(order) === filter) && (!term || order.id.toLowerCase().includes(term) || order.request_text.toLowerCase().includes(term) || order.category.toLowerCase().includes(term) || (names[order.customer_id ?? ''] ?? '').toLowerCase().includes(term)));
   }, [orders, filter, search, names, declines, pending]);
 
+  useEffect(() => { onBadge('orders', counts.action); }, [counts.action, onBadge]);
   const toneFor = (status: string) => {
     const group = adminStatusGroup(status);
     if (status === 'cancelled') return { bg: '#451E21', fg: '#FF8A8A' };
@@ -1697,6 +2052,12 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
   const openSheet = (order: AdminMobileOrder) => {
     setFee(order.delivery_quote_set_at ? String(order.delivery_fee_minor) : ''); setReason(''); setMode('all'); setDriverId(''); setPricingOpen(false); setSheet(order);
   };
+  useEffect(() => { onDetail(!!sheet); }, [sheet, onDetail]);
+  useEffect(() => {
+    if (!focusOrderId) return;
+    const target = orders.find((order) => order.id === focusOrderId);
+    if (target) { openSheet(target); onFocusHandled(); }
+  }, [focusOrderId, orders]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     setDispute(null); setResolution('');
     if (!sheet || !(sheet.status === 'disputed' || openDisputes[sheet.id]) || !supabase) return;
@@ -1756,13 +2117,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
 
   const pill = (on: boolean) => ({ minHeight: 38, paddingHorizontal: 14, borderRadius: 19, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.primary : color.surface, flexDirection: 'row-reverse' as const, alignItems: 'center' as const, gap: 7 });
   const input = { minHeight: 50, paddingHorizontal: 14, borderRadius: 14, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, color: color.text, textAlign: 'right' as const, fontSize: 15 } as const;
-  const header = <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: color.border }}>
-    <View><Text style={{ color: color.text, fontSize: 20, fontWeight: '900', textAlign: 'right' }}>لَبّيك · الإدارة</Text><Text style={{ color: color.muted, fontSize: 11, textAlign: 'right', marginTop: 3 }}>{email}</Text></View>
-    <View style={{ flexDirection: 'row', gap: 8 }}>
-      <Pressable onPress={onToggleTheme} accessibilityRole="button" style={pill(false)}><Text style={{ color: color.text, fontSize: 12 }}>الوضع</Text></Pressable>
-      <Pressable onPress={onSignOut} accessibilityRole="button" style={pill(false)}><Text style={{ color: color.text, fontSize: 12 }}>خروج</Text></Pressable>
-    </View>
-  </View>;
+  const header = <AdminTopBar />;
 
   if (sheet) {
     const address = sheet.address_id ? addresses[sheet.address_id] : undefined;
@@ -1884,7 +2239,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
       </KeyboardAvoidingView>
     </SafeAreaView>;
   }
-  return <SafeAreaView style={[style.safe, { flex: 1 }]}>
+  return <SafeAreaView edges={['top']} style={[style.safe, { flex: 1 }]}>
     {header}
     <KeyboardScroll contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 12 }}>
       <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
