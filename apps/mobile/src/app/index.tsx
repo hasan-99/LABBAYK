@@ -1561,6 +1561,8 @@ const eventLabels: Record<string, string> = { order_requested: 'أُرسل ال�
 const adminStatusGroup = (status: string) => ['requested', 'quoted', 'disputed'].includes(status) ? 'action' : status === 'searching' ? 'searching' : ['accepted', 'assigned', 'shopping', 'awaiting_approval', 'purchased', 'delivering'].includes(status) ? 'active' : ['delivered', 'settled'].includes(status) ? 'done' : 'other';
 const adminFilters = [{ key: 'action', label: 'تحتاج إجراء' }, { key: 'searching', label: 'عند السائقين' }, { key: 'active', label: 'جارية' }, { key: 'done', label: 'منتهية' }, { key: 'all', label: 'الكل' }] as const;
 type AdminFilter = typeof adminFilters[number]['key'];
+const adminStages = ['تسعير', 'إسناد', 'شراء', 'توصيل', 'تسليم'];
+const adminDoneSteps: Record<string, number> = { requested: 0, quoted: 1, searching: 1, accepted: 2, assigned: 2, shopping: 2, awaiting_approval: 2, purchased: 3, delivering: 3, delivered: 5, settled: 5, disputed: 3 };
 function minutesLeft(iso: string) { return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 60000)); }
 function timeAgo(iso: string) {
   const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
@@ -1605,6 +1607,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
   const [mode, setMode] = useState<'all' | 'driver'>('all');
   const [driverId, setDriverId] = useState('');
   const [busy, setBusy] = useState(false);
+  const [pricingOpen, setPricingOpen] = useState(false);
   const initialised = useRef(false);
 
   const refresh = useCallback(async () => {
@@ -1692,7 +1695,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
     return { bg: color.raised, fg: color.muted };
   };
   const openSheet = (order: AdminMobileOrder) => {
-    setFee(order.delivery_quote_set_at ? String(order.delivery_fee_minor) : ''); setReason(''); setMode('all'); setDriverId(''); setSheet(order);
+    setFee(order.delivery_quote_set_at ? String(order.delivery_fee_minor) : ''); setReason(''); setMode('all'); setDriverId(''); setPricingOpen(false); setSheet(order);
   };
   useEffect(() => {
     setDispute(null); setResolution('');
@@ -1747,7 +1750,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
     const { data, error } = await supabase.rpc('admin_price_and_dispatch_order', { p_order_id: sheet.id, p_fee_minor: amount, p_driver_id: mode === 'driver' ? driverId : null, p_reason: reason.trim() });
     setBusy(false);
     if (error) { setMessage('ما قدرنا نحفظ الأجرة أو نرسل الطلب. تأكد من توفر السائق وحاول مرة ثانية.'); return; }
-    setSheet(null); await refresh();
+    setSheet(null); setPricingOpen(false); await refresh();
     setMessage(mode === 'driver' ? 'تم تحديد الأجرة وإرسال الطلب للسائق المحدد، بانتظار رده.' : data ? `تم إرسال العرض إلى ${data} سائق متاح؛ أول من يقبل يحصل على الطلب.` : 'تم حفظ الأجرة، ولا يوجد سائق متاح حالياً. أعد الإرسال عند توفر سائق.');
   };
 
@@ -1844,11 +1847,19 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
             {sheet.purchase_amount_minor !== null || ['purchased', 'delivering'].includes(sheet.status) ? <Text style={{ color: color.muted, fontSize: 12, lineHeight: 19, textAlign: 'right' }}>السائق اشترى الأغراض: الإلغاء بعد الشراء بيحتاج بلاغاً مفتوحاً على الطلب، وبتضل المبالغ مسجلة للتسوية اليدوية.</Text> : null}
           </View>}
           {!delivered && !actionable && <View style={card}><Text style={{ color: color.muted, fontSize: 13.5, textAlign: 'center', lineHeight: 22 }}>{sheet.driver_id ? `الطلب مع السائق ${nameOf(sheet.driver_id)} ولا يحتاج إجراء منك.` : 'ما في إجراءات متاحة لهالطلب حالياً.'}</Text></View>}
-          {actionable && <View style={[card, { borderColor: color.primary, gap: 8 }]}>
+          <Modal visible={actionable && pricingOpen} transparent animationType="slide" onRequestClose={() => setPricingOpen(false)}>
+          <KeyboardAvoidingView style={{ flex: 1, justifyContent: 'flex-end' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' }} onPress={() => setPricingOpen(false)} accessibilityRole="button" accessibilityLabel="إغلاق" />
+          <View style={{ backgroundColor: color.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderTopWidth: 1, borderColor: color.border, maxHeight: '88%' }}>
+          <View style={{ alignSelf: 'center', width: 42, height: 4, borderRadius: 2, backgroundColor: color.border, marginTop: 10 }} />
+          <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 8, paddingBottom: 6 }}><Text style={{ color: color.text, fontSize: 19, fontWeight: '900' }}>تسعير وإرسال</Text><Pressable onPress={() => setPricingOpen(false)} accessibilityRole="button" accessibilityLabel="إغلاق" style={{ width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: color.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.text, fontSize: 18 }}>✕</Text></Pressable></View>
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 16, gap: 10 }}>
             <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>أجرة التوصيل</Text>
-            <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, borderRadius: 13, paddingHorizontal: 13 }}>
+            <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, borderRadius: 13, paddingHorizontal: 8 }}>
+              <Pressable onPress={() => setFee(String(Math.max(0, (Number(fee) || 0) - 1000)))} accessibilityRole="button" accessibilityLabel="نقّص ألف" style={{ width: 44, height: 44, borderRadius: 12, borderWidth: 1, borderColor: color.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.text, fontSize: 22, fontWeight: '900' }}>−</Text></Pressable>
               <TextInput value={fee} onChangeText={(value) => setFee(value.replace(/\D/g, '').slice(0, 9))} keyboardType="number-pad" placeholder="مثال: 15000" placeholderTextColor={color.muted} style={{ flex: 1, minHeight: 50, color: color.primary, fontSize: 20, fontWeight: '900', textAlign: 'right' }} accessibilityLabel="أجرة التوصيل" />
               <Text style={{ color: color.muted, fontSize: 13, fontWeight: '700' }}>ل.س</Text>
+              <Pressable onPress={() => setFee(String(Math.min(100000000, (Number(fee) || 0) + 1000)))} accessibilityRole="button" accessibilityLabel="زِد ألف" style={{ width: 44, height: 44, borderRadius: 12, borderWidth: 1, borderColor: color.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.text, fontSize: 22, fontWeight: '900' }}>+</Text></Pressable>
             </View>
             <View style={{ flexDirection: 'row-reverse', gap: 6 }}>{[10000, 15000, 20000, 25000].map((amount) => <Pressable key={amount} onPress={() => setFee(String(amount))} accessibilityRole="button" style={{ flex: 1, minHeight: 38, borderRadius: 10, borderWidth: 1, borderColor: fee === String(amount) ? color.primary : color.border, backgroundColor: fee === String(amount) ? color.raised : color.surface, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: fee === String(amount) ? color.primary : color.muted, fontSize: 12.5, fontWeight: '800' }}>{numberFormatter.format(amount)}</Text></Pressable>)}</View>
             <View style={{ height: 1, backgroundColor: color.border, marginVertical: 2 }} />
@@ -1858,10 +1869,17 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
               <Pressable onPress={() => setMode('driver')} accessibilityRole="radio" accessibilityState={{ selected: mode === 'driver' }} style={segment(mode === 'driver')}><Text style={{ color: mode === 'driver' ? color.background : color.text, fontSize: 13.5, fontWeight: '800' }}>سائق محدد</Text></Pressable>
             </View>
             {mode === 'driver' && (drivers.length ? <View style={{ gap: 6 }}>{drivers.map((driver) => { const on = driverId === driver.user_id; return <Pressable key={driver.user_id} onPress={() => setDriverId(driver.user_id)} accessibilityRole="radio" accessibilityState={{ selected: on }} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 9, minHeight: 46, paddingHorizontal: 11, borderRadius: 12, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.raised : color.surface }}><Text style={{ fontSize: 15 }}>{on ? '✅' : '🛵'}</Text><Text style={{ flex: 1, color: color.text, fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>{nameOf(driver.user_id)}</Text><Text style={{ color: color.muted, fontSize: 12 }}>{driver.vehicle_description || 'بدون وصف'}</Text></Pressable>; })}</View> : <Text style={{ color: '#F0CC83', fontSize: 13, textAlign: 'right' }}>ما في سائق متاح حالياً. فيك ترسل للجميع لما يتوفر سائق.</Text>)}
-          </View>}
+          <Text style={{ color: color.muted, fontSize: 12.5, lineHeight: 20, textAlign: 'right' }}>الزبون بيدفع ثمن المشتريات + أجرة التوصيل{Number(fee) > 0 ? ` (${numberFormatter.format(Number(fee))} ل.س)` : ''}. سقف المشتريات {numberFormatter.format(sheet.budget_ceiling_minor)}.</Text>
+          </ScrollView>
+          <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 18, borderTopWidth: 1, borderTopColor: color.border }}>
+            <Pressable disabled={busy || !online} onPress={() => void priceAndRoute()} accessibilityRole="button" style={{ minHeight: 54, borderRadius: 17, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', opacity: busy || !online ? 0.55 : 1 }}><Text style={{ color: color.background, fontSize: 16, fontWeight: '900' }}>{busy ? 'عم نحفظ ونرسل…' : mode === 'driver' ? (chosenDriver ? `تحديد الأجرة وإسناد ${nameOf(chosenDriver.user_id)}` : 'تحديد الأجرة وإسناد السائق') : 'تحديد الأجرة وإرسال للجميع'}</Text></Pressable>
+          </View>
+          </View>
+          </KeyboardAvoidingView>
+          </Modal>
         </ScrollView>
         {actionable && <View style={{ paddingHorizontal: 14, paddingTop: 8, paddingBottom: 12, borderTopWidth: 1, borderTopColor: color.border, backgroundColor: color.background }}>
-          <Pressable disabled={busy || !online} onPress={() => void priceAndRoute()} accessibilityRole="button" style={{ minHeight: 54, borderRadius: 17, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', opacity: busy || !online ? 0.55 : 1 }}><Text style={{ color: color.background, fontSize: 16, fontWeight: '900' }}>{busy ? 'عم نحفظ ونرسل…' : mode === 'driver' ? (chosenDriver ? `تحديد الأجرة وإسناد ${nameOf(chosenDriver.user_id)}` : 'تحديد الأجرة وإسناد السائق') : 'تحديد الأجرة وإرسال للجميع'}</Text></Pressable>
+          <Pressable onPress={() => setPricingOpen(true)} accessibilityRole="button" style={{ minHeight: 54, borderRadius: 17, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 16, fontWeight: '900' }}>{sheet.status === 'searching' ? 'إعادة الإرسال أو إسناد سائق ←' : sheet.delivery_quote_set_at ? 'إرسال الطلب للسائقين ←' : 'تحديد الأجرة والإرسال ←'}</Text></Pressable>
         </View>}
       </KeyboardAvoidingView>
     </SafeAreaView>;
@@ -1875,7 +1893,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
       </View>
       <TextInput value={search} onChangeText={(value) => { setSearch(value); setVisible(25); }} placeholder="ابحث برقم الطلب أو النص أو اسم العميل" placeholderTextColor={color.muted} style={input} accessibilityLabel="بحث في الطلبات" />
       <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8 }}>
-        {adminFilters.map((item) => { const on = filter === item.key; return <Pressable key={item.key} onPress={() => { setFilter(item.key); setVisible(25); }} accessibilityRole="button" accessibilityState={{ selected: on }} style={pill(on)}><Text style={{ color: on ? color.background : color.text, fontSize: 13, fontWeight: '800' }}>{item.label}</Text><Text style={{ color: on ? color.background : item.key === 'action' && counts.action ? '#F0CC83' : color.muted, fontSize: 13, fontWeight: '900' }}>{counts[item.key] ?? 0}</Text></Pressable>; })}
+        {adminFilters.map((item, index) => { const on = filter === item.key; const wide = index >= 3; const hot = item.key === 'action' && counts.action > 0 && !on; return <Pressable key={item.key} onPress={() => { setFilter(item.key); setVisible(25); }} accessibilityRole="button" accessibilityLabel={`${item.label} ${counts[item.key] ?? 0}`} accessibilityState={{ selected: on }} style={{ flexGrow: 1, flexBasis: wide ? '45%' : '28%', minHeight: wide ? 54 : 66, borderRadius: 18, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.primary : color.surface, alignItems: 'center', justifyContent: 'center', flexDirection: wide ? 'row-reverse' : 'column', gap: wide ? 10 : 2, paddingHorizontal: 6 }}><Text style={{ color: on ? color.background : hot ? '#F0CC83' : color.text, fontSize: wide ? 18 : 22, fontWeight: '900' }}>{counts[item.key] ?? 0}</Text><Text style={{ color: on ? color.background : color.muted, fontSize: 13, fontWeight: '700' }}>{item.label}</Text></Pressable>; })}
       </View>
       {loading ? [0, 1, 2].map((item) => <SkeletonCard key={item} style={{ gap: 12 }}><View style={[skRow, { justifyContent: 'space-between' }]}>{sk(90, 26, { borderRadius: 13 })}{sk(70, 12)}</View>{sk('90%', 12, { alignSelf: 'flex-end' })}{sk('60%', 12, { alignSelf: 'flex-end' })}<View style={[skRow, { justifyContent: 'space-between' }]}>{sk(110, 12)}{sk(80, 36, { borderRadius: 12 })}</View></SkeletonCard>)
         : list.length ? <>
@@ -1890,10 +1908,11 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
                 <AdminOrderThumb orderId={order.id} bucket={adminStatusGroup(order.status) === 'done' ? 'delivery-proofs' : 'order-images'} />
                 <Text numberOfLines={3} style={{ flex: 1, color: color.text, fontSize: 15, fontWeight: '800', lineHeight: 23, textAlign: 'right' }}>{splitPickup(order.request_text).body}</Text>
               </View>
-              <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
-                {splitPickup(order.request_text).pickup ? <><Text numberOfLines={1} style={{ flexShrink: 1, color: color.text, fontSize: 12.5, fontWeight: '800' }}>🛒 {splitPickup(order.request_text).pickup}</Text><View style={{ flex: 1, minWidth: 14, borderTopWidth: 2, borderStyle: 'dashed', borderColor: color.border }} /></> : null}
-                <Text numberOfLines={1} style={{ flexShrink: 1, color: color.muted, fontSize: 12.5 }}>📍 {order.address_id && addresses[order.address_id] ? `${addresses[order.address_id].neighborhood}، ${addresses[order.address_id].city}` : '—'}</Text>
+              <View style={{ gap: 6 }}>
+                <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}><View style={{ width: 10, height: 10, borderRadius: 5, borderWidth: 2, borderColor: color.primary }} /><Text numberOfLines={1} style={{ flex: 1, color: color.text, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>{splitPickup(order.request_text).pickup ? `من ${splitPickup(order.request_text).pickup}` : 'من أقرب محل للسائق'}</Text></View>
+                <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}><View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: color.primary }} /><Text numberOfLines={1} style={{ flex: 1, color: color.muted, fontSize: 12.5, textAlign: 'right' }}>إلى {order.address_id && addresses[order.address_id] ? `${addresses[order.address_id].neighborhood}، ${addresses[order.address_id].city}` : '—'}</Text></View>
               </View>
+              {order.status !== 'cancelled' ? <View style={{ flexDirection: 'row-reverse', gap: 4 }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{adminStages.map((stage, step) => { const doneSteps = adminDoneSteps[order.status] ?? 0; return <View key={stage} style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: step < doneSteps ? color.accent : step === doneSteps ? color.primary : color.raised }} />; })}</View> : null}
               <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <Text numberOfLines={1} style={{ color: color.muted, fontSize: 12.5, flex: 1, textAlign: 'right' }}>👤 {nameOf(order.customer_id)} · ميزانية {numberFormatter.format(order.budget_ceiling_minor)}</Text>
                 <Text style={{ color: color.primary, fontSize: 13, fontWeight: '900' }}>{order.delivery_quote_set_at ? numberFormatter.format(order.delivery_fee_minor) + ' ل.س' : 'بلا أجرة'}</Text>
