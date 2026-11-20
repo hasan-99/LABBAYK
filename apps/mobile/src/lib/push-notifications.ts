@@ -229,33 +229,3 @@ export async function checkPushStatus(userId: string, askPermission = false): Pr
   if (!askPermission && cached && Date.now() - cached.at < 5 * 60 * 1000) return cached.status;
   return (await enablePushNotifications(userId, askPermission)).status;
 }
-
-export type TestPushResult = { status: 'sent' | 'no-token' | 'unsupported' | 'rejected' | 'error'; detail?: string };
-/**
- * Sends a real push to this device through Expo's push service (the same path server notifications use),
- * so it tests the whole chain: device token, Expo, Firebase (FCM) credentials. Expo reports credential problems
- * in its answer, which is shown to the person instead of failing silently.
- */
-export async function sendTestPush(_userId: string, onStage?: (stage: string) => void): Promise<TestPushResult> {
-  if (Platform.OS === 'web') return { status: 'unsupported' };
-  try {
-    onStage?.('عم نبدأ اختبار الإشعار على السيرفر…');
-    if (!supabase) return { status: 'error', detail: 'Supabase غير مهيأ' };
-    onStage?.('عم نتحقق من رمز الجهاز المسجّل…');
-    const { data, error } = await supabase.functions.invoke('push-notification', {
-      body: { action: 'send-test' },
-    });
-    if (error) {
-      onStage?.(`فشل اتصال الاختبار: ${error.message}`);
-      return { status: 'error', detail: error.message };
-    }
-    onStage?.(data?.status === 'sent' ? 'Expo قبل الإرسال؛ عم ننتظر وصول الإشعار…' : `الاختبار وقف عند ${data?.stage ?? 'استجابة غير معروفة'}.`);
-    if (data?.status === 'sent') return { status: 'sent' };
-    if (data?.status === 'rejected') return { status: 'rejected', detail: data.detail };
-    return { status: 'error', detail: data?.stage ?? 'unknown' };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : 'unknown';
-    onStage?.(`تعطّل الاختبار: ${detail}`);
-    return { status: 'error', detail };
-  }
-}

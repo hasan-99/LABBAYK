@@ -18,7 +18,7 @@ import { readStoredSession, supabase, supabaseConfigured } from '@/lib/supabase'
 import { getBackendHealth, subscribeBackendHealth, type BackendHealth } from '@/lib/network-health';
 import { clearCustomerOrderDraft, clearCustomerOrdersSnapshot, loadCustomerOrderDraft, loadCustomerOrdersSnapshot, saveCustomerOrderDraft, saveCustomerOrdersSnapshot, type CustomerOrderImageDraft, type CustomerOrderSnapshot } from '@/lib/customer-order-draft';
 import { clearDriverOrdersSnapshot, loadDriverOrdersSnapshot, saveDriverOrdersSnapshot } from '@/lib/driver-orders-cache';
-import { checkPushStatus, enablePushNotifications, hasRegisteredPushToken, peekPushFailureStage, peekPushStatus, sendTestPush, subscribePushStatus, unregisterPushNotifications, type PushFailureStage, type PushRegistrationResult, type TestPushResult } from '@/lib/push-notifications';
+import { checkPushStatus, enablePushNotifications, hasRegisteredPushToken, peekPushFailureStage, peekPushStatus, subscribePushStatus, unregisterPushNotifications, type PushFailureStage, type PushRegistrationResult } from '@/lib/push-notifications';
 import { AuthScreen, PasswordRecoveryScreen } from '@/components/AuthScreen';
 import { LegalLinksSection } from '@/components/LegalLinksSection';
 import { SUPPORT_EMAIL } from '@/lib/legal-contact';
@@ -417,19 +417,7 @@ const pushFailureText: Record<PushFailureStage, string> = {
   'supabase-registration': 'تم إنشاء رمز الهاتف، لكن ما قدرنا نسجّله بالخادم.',
   'local-storage': 'التسجيل بالخادم نجح، لكن تعذّر حفظ رمز الهاتف محليًا.',
 };
-const testPushText = (result: TestPushResult) => {
-  if (result.status === 'sent') return 'انبعت إشعار تجريبي. سكّر التطبيق وانتظر ثواني. إذا ما وصل، قلّي للإدارة تتأكد من إعداد Firebase.';
-  if (result.status === 'no-token') return 'هالموبايل مو مسجّل للإشعارات. اضغط «إعادة المحاولة» وبعدين جرّب.';
-  if (result.status === 'unsupported') return 'اختبار الإشعارات متاح على الموبايل فقط.';
-  if (result.status === 'rejected') {
-    if (result.detail === 'InvalidCredentials') return 'خدمة الإشعارات ما عندها مفتاح Firebase. على المسؤول يرفع المفتاح السري على Expo (eas credentials).';
-    if (result.detail === 'DeviceNotRegistered') return 'الموبايل مو مسجّل عند خدمة الإشعارات. اضغط «إعادة المحاولة» أو سجّل خروج ودخول.';
-    return `خدمة الإشعارات رفضت الطلب${result.detail ? ' (' + result.detail + ')' : ''}.`;
-  }
-  if (result.detail) return `توقف اختبار الإشعارات عند خطوة (${result.detail}). سجلناها لنشوف السبب.`;
-  return 'ما قدرنا نوصل لخدمة الإشعارات. تأكد من النت وجرّب مرة ثانية.';
-};
-/** Shows whether notifications work on this phone, explains the problem in plain words, and can send a test push. */
+/** Shows whether notifications work on this phone and explains how to fix a problem. */
 function usePushStatus(userId: string) {
   const [status, setStatus] = useState<PushRegistrationResult['status'] | 'checking'>(() => peekPushStatus(userId) ?? 'checking');
   const [failureStage, setFailureStage] = useState<PushFailureStage | null>(() => peekPushFailureStage(userId));
@@ -449,23 +437,9 @@ function usePushStatus(userId: string) {
 function PushStatusCard({ userId }: { userId: string }) {
   const { colors: c } = useMobileTheme();
   const { status, failureStage, retry } = usePushStatus(userId);
-  const [testing, setTesting] = useState(false);
-  const [answer, setAnswer] = useState('');
   if (Platform.OS === 'web') return null;
   const ok = status === 'enabled';
   const btn = { minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: c.border, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 } as const;
-  const runTest = async () => {
-    setTesting(true);
-    setAnswer('بدء اختبار الإشعارات…');
-    try {
-      const result = await sendTestPush(userId, setAnswer);
-      setAnswer(testPushText(result));
-    } catch (error) {
-      setAnswer(`فشل الاختبار: ${error instanceof Error ? error.message : 'خطأ غير معروف'}`);
-    } finally {
-      setTesting(false);
-    }
-  };
   return <View style={{ backgroundColor: c.surface, borderColor: ok ? c.border : '#C98A2B', borderWidth: 1, borderRadius: 18, padding: 14, gap: 10 }}>
     <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
       <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: status === 'checking' ? c.muted : ok ? '#52D5A0' : '#F0CC83' }} />
@@ -475,8 +449,6 @@ function PushStatusCard({ userId }: { userId: string }) {
     {status === 'error' && failureStage ? <Text style={{ color: c.muted, fontSize: 12, lineHeight: 19, textAlign: 'right' }}>{pushFailureText[failureStage]}</Text> : null}
     {status === 'permission-denied' ? <Pressable onPress={() => void Linking.openSettings()} accessibilityRole="button" style={btn}><Text style={{ color: c.primary, fontSize: 14, fontWeight: '800' }}>فتح إعدادات الموبايل</Text></Pressable> : null}
     {!ok && status !== 'checking' ? <Pressable onPress={() => void retry()} accessibilityRole="button" style={btn}><Text style={{ color: c.text, fontSize: 14, fontWeight: '800' }}>إعادة المحاولة</Text></Pressable> : null}
-    {ok ? <Pressable disabled={testing} onPress={() => void runTest()} accessibilityRole="button" style={[btn, { borderColor: c.primary, opacity: testing ? 0.6 : 1 }]}><Text style={{ color: c.primary, fontSize: 14, fontWeight: '800' }}>{testing ? 'عم نبعت…' : 'اختبار الإشعارات'}</Text></Pressable> : null}
-    {answer ? <Text accessibilityRole="status" style={{ color: c.muted, fontSize: 12.5, lineHeight: 20, textAlign: 'right' }}>{answer}</Text> : null}
   </View>;
 }
 /** A short warning on the driver's home screen only when notifications are not working. */

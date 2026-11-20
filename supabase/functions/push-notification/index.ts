@@ -21,11 +21,6 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
     "X-Frame-Options": "DENY",
   },
 });
-const tokenFingerprint = async (token: string) => {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
-  return Array.from(new Uint8Array(digest).slice(0, 5), (byte) => byte.toString(16).padStart(2, "0")).join("");
-};
-
 async function readJsonLimited(request: Request, maxBytes: number): Promise<unknown> {
   const reader = request.body?.getReader();
   if (!reader) throw new SyntaxError("Request body is required");
@@ -84,73 +79,6 @@ Deno.serve(async (request) => {
     if (userError || !userData.user) return json({ error: "Authentication required" }, 401);
     if (!config.labbayk_vapid_public_key) return json({ error: "Web push is not configured" }, 503);
     return json({ publicKey: config.labbayk_vapid_public_key });
-  }
-
-  if (payload.action === "send-test") {
-    const authorization = request.headers.get("Authorization");
-    if (!authorization) {
-      return json({ status: "error", stage: "request-validation" }, 400);
-    }
-    const userClient = createClient(url, publishableKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-      global: { headers: { Authorization: authorization } },
-    });
-    const { data: userData, error: userError } = await userClient.auth.getUser();
-    if (userError || !userData.user) {
-      console.log(JSON.stringify({ event: "push_test", stage: "auth-failed" }));
-      return json({ status: "error", stage: "authentication" }, 401);
-    }
-
-    const userId = userData.user.id;
-    console.log(JSON.stringify({ event: "push_test", stage: "authenticated", user_id: userId }));
-    // Read through the authenticated user's client so the existing own-token RLS policy applies.
-    // The service role intentionally has no SELECT grant on push_tokens.
-    const { data: tokenRow, error: tokenError } = await userClient.from("push_tokens")
-      .select("expo_push_token,platform")
-      .eq("user_id", userId)
-      .eq("platform", "android")
-      .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (tokenError || !tokenRow) {
-      console.log(JSON.stringify({
-        event: "push_test",
-        stage: tokenError ? "token-query-failed" : "no-android-token",
-        user_id: userId,
-        lookup_error: tokenError?.code ?? null,
-      }));
-      // Return diagnostics as a normal response so the mobile client can render the failed
-      // stage instead of treating it as an opaque transport error.
-      return json({ status: "error", stage: "token-lookup" });
-    }
-
-    console.log(JSON.stringify({ event: "push_test", stage: "token-selected", user_id: userId, platform: tokenRow.platform, token_fingerprint: await tokenFingerprint(tokenRow.expo_push_token) }));
-    console.log(JSON.stringify({ event: "push_test", stage: "waiting-for-app-background", user_id: userId, delay_ms: 5000 }));
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-    console.log(JSON.stringify({ event: "push_test", stage: "expo-request-started", user_id: userId }));
-    try {
-      const expoResponse = await fetch("https://exp.host/--/api/v2/push/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({
-          to: tokenRow.expo_push_token,
-          title: "اختبار الإشعارات",
-          body: "وصلك هالإشعار، يعني الإشعارات شغّالة على موبايلك.",
-          data: { testNotification: true },
-          sound: "default",
-          priority: "high",
-        }),
-      });
-      const result = await expoResponse.json() as { data?: { status?: string; message?: string; details?: { error?: string } }; errors?: { message?: string }[] };
-      const ticket = result.data;
-      const detail = ticket?.details?.error ?? ticket?.message ?? result.errors?.[0]?.message;
-      console.log(JSON.stringify({ event: "push_test", stage: "expo-response", user_id: userId, http_status: expoResponse.status, ticket_status: ticket?.status ?? "missing", detail: detail ?? null }));
-      if (ticket?.status === "ok") return json({ status: "sent" });
-      return json({ status: "rejected", detail, stage: "expo-rejected" });
-    } catch (error) {
-      console.error(JSON.stringify({ event: "push_test", stage: "expo-request-failed", user_id: userId, error: error instanceof Error ? error.message.slice(0, 200) : "unknown" }));
-      return json({ status: "error", stage: "expo-request" }, 502);
-    }
   }
 
   if (request.headers.get("x-labbayk-push-secret") !== config.labbayk_push_dispatch_secret) {
