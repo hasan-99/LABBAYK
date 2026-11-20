@@ -1728,6 +1728,7 @@ type AdminDriverRow = Pick<Database['public']['Tables']['driver_profiles']['Row'
 type AdminInviteRow = { id: string; expires_at: string; redeemed_at: string | null; revoked_at: string | null; created_at: string };
 type AdminDriversData = { rows: AdminDriverRow[]; names: Record<string, string>; busyDrivers: Record<string, boolean>; invites: AdminInviteRow[] };
 function AdminDriversTab({ userId, active, onBadge }: { userId: string; active: boolean; onBadge: AdminBadgeSetter }) {
+  const insets = useSafeAreaInsets();
   const { colors: color } = useMobileTheme();
   const online = useInternetAvailable();
   const [, setMessage] = useToastMessage();
@@ -1834,10 +1835,10 @@ function AdminDriversTab({ userId, active, onBadge }: { userId: string; active: 
         {team.map((row, index) => { const status = statusOf(row); return <View key={row.user_id} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11, padding: 12, borderTopWidth: index ? 1 : 0, borderTopColor: color.border }}>{avatar(row.user_id)}<View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 15, fontWeight: '800', textAlign: 'right' }}>{nameOf(row.user_id)}</Text><Text numberOfLines={1} style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>{row.vehicle_description || 'بدون وصف للمركبة'}</Text></View><AdminPill label={status.label} tone={status.tone} /></View>; })}
       </View> : <AdminEmpty title="ما في سائقين هون" hint={segment === 'on' ? 'ما في سائق متصل حالياً.' : 'السائقين المسجلين بيظهروا هون.'} />}
     </>}
-    <Modal visible={!!newInvite} transparent animationType="slide" onRequestClose={() => setNewInvite(null)}>
+    <Modal visible={!!newInvite} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => setNewInvite(null)}>
       <View style={{ flex: 1, justifyContent: 'flex-end' }}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' }} onPress={() => setNewInvite(null)} accessibilityRole="button" accessibilityLabel="إغلاق" />
-        <View style={{ backgroundColor: color.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderTopWidth: 1, borderColor: color.border, padding: 16, paddingBottom: 26, gap: 10 }}>
+        <View style={{ backgroundColor: color.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderTopWidth: 1, borderColor: color.border, padding: 16, paddingBottom: 26 + insets.bottom, gap: 10 }}>
           <View style={{ alignSelf: 'center', width: 42, height: 4, borderRadius: 2, backgroundColor: color.border }} />
           <Text style={{ color: color.text, fontSize: 19, fontWeight: '900', textAlign: 'right' }}>دعوة سائق جاهزة</Text>
           <Text style={{ color: color.muted, fontSize: 13.5, lineHeight: 22, textAlign: 'right' }}>أرسل الرابط للسائق. بيفتحه وبيسجّل دخوله وبيصير سائق مباشرة بدون مراجعة. الرابط لمرة وحدة وبينتهي بعد 7 أيام. ما رح تقدر تشوفه مرة ثانية بعد ما تسكّر هالشاشة.</Text>
@@ -1853,6 +1854,7 @@ function AdminDriversTab({ userId, active, onBadge }: { userId: string; active: 
 type AdminCashOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id' | 'driver_id' | 'category' | 'purchase_amount_minor' | 'delivery_fee_minor' | 'cash_collected_minor' | 'created_at'>;
 type AdminMoneyData = { orders: AdminCashOrder[]; balances: Record<string, number>; drivers: string[]; names: Record<string, string> };
 function AdminMoneyTab({ userId, active, onBadge }: { userId: string; active: boolean; onBadge: AdminBadgeSetter }) {
+  const insets = useSafeAreaInsets();
   const { colors: color } = useMobileTheme();
   const online = useInternetAvailable();
   const [, setMessage] = useToastMessage();
@@ -1956,10 +1958,10 @@ function AdminMoneyTab({ userId, active, onBadge }: { userId: string; active: bo
         </View>; })}
       </View> : <AdminEmpty title="ما في محافظ" hint="محافظ السائقين المعتمدين بتظهر هون." />}
     </>}
-    <Modal visible={!!topUp} transparent animationType="slide" onRequestClose={() => setTopUp(null)}>
+    <Modal visible={!!topUp} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => setTopUp(null)}>
       <KeyboardAvoidingView style={{ flex: 1, justifyContent: 'flex-end' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' }} onPress={() => setTopUp(null)} accessibilityRole="button" accessibilityLabel="إغلاق" />
-        <View style={{ backgroundColor: color.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderTopWidth: 1, borderColor: color.border, padding: 16, paddingBottom: 24, gap: 10 }}>
+        <View style={{ backgroundColor: color.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderTopWidth: 1, borderColor: color.border, padding: 16, paddingBottom: 24 + insets.bottom, gap: 10 }}>
           <View style={{ alignSelf: 'center', width: 42, height: 4, borderRadius: 2, backgroundColor: color.border }} />
           <Text style={{ color: color.text, fontSize: 19, fontWeight: '900', textAlign: 'right' }}>تسجيل دفعة عمولة</Text>
           <Text style={{ color: color.muted, fontSize: 13, textAlign: 'right' }}>{topUp ? nameOf(topUp.id) : ''} · الرصيد الحالي {topUp ? numberFormatter.format(balances[topUp.id] ?? 0) : ''} ل.س</Text>
@@ -2111,6 +2113,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
 }
 
 function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandled }: { userId: string; onBadge: AdminBadgeSetter; onDetail: (open: boolean) => void; focusOrderId: string | null; onFocusHandled: () => void }) {
+  const insets = useSafeAreaInsets();
   const { colors: color, styles: style } = useMobileTheme();
   const online = useInternetAvailable();
   const [, setMessage] = useToastMessage();
@@ -2258,6 +2261,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   const nameOf = (id: string | null) => id ? (names[id] ?? '#' + id.slice(0, 6)) : '—';
   // Customers who never set a name only have an email on file: show their phone number instead, which is
   // what the admin actually uses to reach them. The email stays as the last resort.
+  const customerTitle = (order: AdminMobileOrder) => { const name = nameOf(order.customer_id); return name.includes('@') ? 'عميل بدون اسم' : name; };
   const customerLabel = (order: AdminMobileOrder) => {
     const name = nameOf(order.customer_id);
     if (!name.includes('@')) return name;
@@ -2374,7 +2378,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
           <View style={card}>
             <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11 }}>
               <View style={{ width: 42, height: 42, borderRadius: 21, borderWidth: 2, borderColor: color.primary, backgroundColor: color.raised, alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontSize: 19 }}>👤</Text></View>
-              <View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 18, fontWeight: '900', textAlign: 'right' }}>{customerLabel(sheet)}</Text>{address?.contact_phone ? <Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', writingDirection: 'ltr' }}>{ltrPhone(address.contact_phone)}</Text> : null}</View>
+              <View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 18, fontWeight: '900', textAlign: 'right' }}>{customerTitle(sheet)}</Text>{address?.contact_phone ? <Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', writingDirection: 'ltr' }}>{ltrPhone(address.contact_phone)}</Text> : null}</View>
               {address?.contact_phone ? <Pressable onPress={() => void Linking.openURL(`tel:${address.contact_phone}`)} accessibilityRole="button" accessibilityLabel="اتصال بالعميل" style={{ minHeight: 44, borderRadius: 13, backgroundColor: color.primary, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 14, fontWeight: '900' }}>📞 اتصال</Text></Pressable> : null}
             </View>
             <View style={{ height: 1, backgroundColor: color.border, marginVertical: 10 }} />
@@ -2438,7 +2442,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
             {sheet.purchase_amount_minor !== null || ['purchased', 'delivering'].includes(sheet.status) ? <Text style={{ color: color.muted, fontSize: 12, lineHeight: 19, textAlign: 'right' }}>السائق اشترى الأغراض: الإلغاء بعد الشراء بيحتاج بلاغاً مفتوحاً على الطلب، وبتضل المبالغ مسجلة للتسوية اليدوية.</Text> : null}
           </View>}
           {!delivered && !actionable && <View style={card}><Text style={{ color: color.muted, fontSize: 13.5, textAlign: 'center', lineHeight: 22 }}>{sheet.driver_id ? `الطلب مع السائق ${nameOf(sheet.driver_id)} ولا يحتاج إجراء منك.` : 'ما في إجراءات متاحة لهالطلب حالياً.'}</Text></View>}
-          <Modal visible={actionable && pricingOpen} transparent animationType="slide" onRequestClose={() => setPricingOpen(false)}>
+          <Modal visible={actionable && pricingOpen} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => setPricingOpen(false)}>
           <KeyboardAvoidingView style={{ flex: 1, justifyContent: 'flex-end' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' }} onPress={() => setPricingOpen(false)} accessibilityRole="button" accessibilityLabel="إغلاق" />
           <View style={{ backgroundColor: color.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderTopWidth: 1, borderColor: color.border, maxHeight: '88%' }}>
@@ -2462,7 +2466,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
             {mode === 'driver' && (drivers.length ? <View style={{ gap: 6 }}>{drivers.map((driver) => { const on = driverId === driver.user_id; return <Pressable key={driver.user_id} onPress={() => setDriverId(driver.user_id)} accessibilityRole="radio" accessibilityState={{ selected: on }} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 9, minHeight: 46, paddingHorizontal: 11, borderRadius: 12, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.raised : color.surface }}><Text style={{ fontSize: 15 }}>{on ? '✅' : '🛵'}</Text><Text style={{ flex: 1, color: color.text, fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>{nameOf(driver.user_id)}</Text><Text style={{ color: color.muted, fontSize: 12 }}>{driver.vehicle_description || 'بدون وصف'}</Text></Pressable>; })}</View> : <Text style={{ color: '#F0CC83', fontSize: 13, textAlign: 'right' }}>ما في سائق متاح حالياً. فيك ترسل للجميع لما يتوفر سائق.</Text>)}
           <Text style={{ color: color.muted, fontSize: 12.5, lineHeight: 20, textAlign: 'right' }}>الزبون بيدفع ثمن المشتريات + أجرة التوصيل{Number(fee) > 0 ? ` (${numberFormatter.format(Number(fee))} ل.س)` : ''}. سقف المشتريات {numberFormatter.format(sheet.budget_ceiling_minor)}.</Text>
           </ScrollView>
-          <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 18, borderTopWidth: 1, borderTopColor: color.border }}>
+          <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 18 + insets.bottom, borderTopWidth: 1, borderTopColor: color.border }}>
             <Pressable disabled={busy || !online} onPress={() => void priceAndRoute()} accessibilityRole="button" style={{ minHeight: 54, borderRadius: 17, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', opacity: busy || !online ? 0.55 : 1 }}><Text style={{ color: color.background, fontSize: 16, fontWeight: '900' }}>{busy ? 'عم نحفظ ونرسل…' : mode === 'driver' ? (chosenDriver ? `تحديد الأجرة وإسناد ${nameOf(chosenDriver.user_id)}` : 'تحديد الأجرة وإسناد السائق') : 'تحديد الأجرة وإرسال للجميع'}</Text></Pressable>
           </View>
           </View>
