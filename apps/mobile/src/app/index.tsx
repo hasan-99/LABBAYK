@@ -171,8 +171,8 @@ export function generateMetadata(): Metadata {
 }
 type Address = Database['public']['Tables']['addresses']['Row'];
 type DriverOfferAddress = Pick<Address, 'id'|'label'|'street'|'city'|'neighborhood'|'building'|'landmark'>;
-type CustomerOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'budget_ceiling_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'> & { driver_id?: string | null; delivered_at?: string | null };
-type DriverOfferCard = { id: string; expires_at: string; order: Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'budget_ceiling_minor'|'address_id'> & { address: DriverOfferAddress | null } };
+type CustomerOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'budget_ceiling_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'> & { driver_id?: string | null; delivered_at?: string | null; is_urgent?: boolean };
+type DriverOfferCard = { id: string; expires_at: string; order: Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'budget_ceiling_minor'|'address_id'> & { is_urgent?: boolean; address: DriverOfferAddress | null } };
 type DriverActiveOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'budget_ceiling_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'address_id'> & { address: Pick<Address, 'id'|'label'|'street'|'city'|'neighborhood'|'contact_phone'|'building'|'landmark'> | null };
 const newRequestKey = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => { const value = Math.random() * 16 | 0; return (char === 'x' ? value : (value & 3 | 8)).toString(16); });
 type OrderImage = CustomerOrderImageDraft & { uri: string };
@@ -835,7 +835,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     const [driver, wallet, offerRows, assigned] = await Promise.all([
       supabase.from('driver_profiles').select('is_online').eq('user_id', userId).single(),
       supabase.rpc('get_driver_wallet_balances'),
-      supabase.from('order_offers').select('id,order_id,expires_at,order:orders(id,status,request_text,delivery_fee_minor,budget_ceiling_minor,address_id,address:addresses(id,label,street,city,neighborhood,building,landmark))').eq('driver_id', userId).eq('status', 'pending').gt('expires_at', new Date().toISOString()).order('expires_at'),
+      supabase.from('order_offers').select('id,order_id,expires_at,order:orders(id,is_urgent,status,request_text,delivery_fee_minor,budget_ceiling_minor,address_id,address:addresses(id,label,street,city,neighborhood,building,landmark))').eq('driver_id', userId).eq('status', 'pending').gt('expires_at', new Date().toISOString()).order('expires_at'),
       supabase.from('orders').select('id,status,request_text,delivery_fee_minor,budget_ceiling_minor,purchase_amount_minor,purchase_approved_at,created_at,address_id,address:addresses(id,label,street,city,neighborhood,contact_phone,building,landmark)').eq('driver_id', userId).neq('status', 'delivered').neq('status', 'settled').neq('status', 'cancelled').order('created_at', { ascending: false }),
     ]);
     const { data: walletRows, error: walletError } = wallet;
@@ -851,6 +851,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     }
     if (!offerRows.error) {
       const cards: DriverOfferCard[] = (offerRows.data ?? []).flatMap((offer) => offer.order ? [{ id: offer.id, expires_at: offer.expires_at, order: { ...offer.order, address: offer.order.address ?? null } }] : []);
+      cards.sort((a, b) => Number(!!b.order.is_urgent) - Number(!!a.order.is_urgent));
       setOffers(cards);
       setOffersCount(cards.length);
     }
@@ -1194,7 +1195,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       </View>
       
       <View style={orderSection === 'offers' ? undefined : s.hidden}>{!profile.is_online && <View style={s.driverOrdersHint}><SymbolView name={{ios:'pause.circle.fill',android:'pause_circle',web:'pause_circle'}} tintColor={c.accent} size={19}/><Text style={s.driverOrdersHintText}>الاستقبال متوقف. فعّله من الرئيسية حتى تقدر تقبل عرضاً.</Text></View>}
-    {offers.length ? offers.map((offer) => <View key={offer.id} style={s.driverIncomingCard}><View style={s.driverIncomingTop}><View style={s.driverFeeHighlight}><Text style={s.driverFeeLabel}>أجرة التوصيل</Text><Text style={s.driverFeeValue}>{numberFormatter.format(offer.order.delivery_fee_minor)} ل.س</Text></View></View><Text style={s.driverOfferRequest}>{offer.order.request_text}</Text><OrderImageGallery orderId={offer.order.id} defaultOpen/><View style={s.driverOfferDestination}><View style={s.driverOfferSectionTitle}><SymbolView name={{ios:'mappin.and.ellipse',android:'location_on',web:'location_on'}} tintColor={c.primary} size={17}/><Text style={s.dropoffTitle}>مكان التوصيل</Text></View>{offer.order.address?<><Text style={s.dropoffText}>{offer.order.address.street}{offer.order.address.building?'، بناء '+offer.order.address.building:''}</Text><Text style={s.dropoffText}>{offer.order.address.neighborhood}، {offer.order.address.city}{offer.order.address.landmark?' · '+offer.order.address.landmark:''}</Text></>:<Text style={s.dropoffText}>عم نحمل عنوان التوصيل…</Text>}</View><View style={s.driverOfferBudget}><Text style={s.driverOrderFactLabel}>الحد الأعلى لمشتريات العميل</Text><Text style={s.driverOrderFactValue}>حتى {numberFormatter.format(offer.order.budget_ceiling_minor)} ل.س</Text><Text style={s.dropoffText}>أي مبلغ أعلى يحتاج موافقة العميل.</Text></View><OfferCountdown expiresAt={offer.expires_at}/><View style={s.offerActions}><Pressable disabled={busy || !profile.is_online || !online || operationsAreStale || !offer.order.address} onPress={() => void accept(offer.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale || !offer.order.address)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>{pendingAction===`accept-${offer.id}`?'لحظة…':'قبول العرض'}</Text></Pressable><Pressable disabled={busy || !online || operationsAreStale} onPress={() => void decline(offer.id)} style={[s.declineOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.declineOfferText}>رفض</Text></Pressable></View></View>) : <View style={s.noOffers}><View style={s.emptyIconWrap}><SymbolView name={{ios:'sparkles',android:'new_releases',web:'new_releases'}} tintColor={c.primary} size={26}/></View><Text style={s.noOffersTitle}>ما في عروض حالياً</Text><Text style={s.noOffersCopy}>لما يوصلك عرض جديد بيظهر هون. فيك تحدّث القائمة بأي وقت.</Text></View>}
+    {offers.length ? offers.map((offer) => <View key={offer.id} style={s.driverIncomingCard}><View style={s.driverIncomingTop}>{offer.order.is_urgent ? <UrgentTag /> : null}<View style={s.driverFeeHighlight}><Text style={s.driverFeeLabel}>أجرة التوصيل</Text><Text style={s.driverFeeValue}>{numberFormatter.format(offer.order.delivery_fee_minor)} ل.س</Text></View></View><Text style={s.driverOfferRequest}>{offer.order.request_text}</Text><OrderImageGallery orderId={offer.order.id} defaultOpen/><View style={s.driverOfferDestination}><View style={s.driverOfferSectionTitle}><SymbolView name={{ios:'mappin.and.ellipse',android:'location_on',web:'location_on'}} tintColor={c.primary} size={17}/><Text style={s.dropoffTitle}>مكان التوصيل</Text></View>{offer.order.address?<><Text style={s.dropoffText}>{offer.order.address.street}{offer.order.address.building?'، بناء '+offer.order.address.building:''}</Text><Text style={s.dropoffText}>{offer.order.address.neighborhood}، {offer.order.address.city}{offer.order.address.landmark?' · '+offer.order.address.landmark:''}</Text></>:<Text style={s.dropoffText}>عم نحمل عنوان التوصيل…</Text>}</View><View style={s.driverOfferBudget}><Text style={s.driverOrderFactLabel}>الحد الأعلى لمشتريات العميل</Text><Text style={s.driverOrderFactValue}>حتى {numberFormatter.format(offer.order.budget_ceiling_minor)} ل.س</Text><Text style={s.dropoffText}>أي مبلغ أعلى يحتاج موافقة العميل.</Text></View><OfferCountdown expiresAt={offer.expires_at}/><View style={s.offerActions}><Pressable disabled={busy || !profile.is_online || !online || operationsAreStale || !offer.order.address} onPress={() => void accept(offer.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale || !offer.order.address)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>{pendingAction===`accept-${offer.id}`?'لحظة…':'قبول العرض'}</Text></Pressable><Pressable disabled={busy || !online || operationsAreStale} onPress={() => void decline(offer.id)} style={[s.declineOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.declineOfferText}>رفض</Text></Pressable></View></View>) : <View style={s.noOffers}><View style={s.emptyIconWrap}><SymbolView name={{ios:'sparkles',android:'new_releases',web:'new_releases'}} tintColor={c.primary} size={26}/></View><Text style={s.noOffersTitle}>ما في عروض حالياً</Text><Text style={s.noOffersCopy}>لما يوصلك عرض جديد بيظهر هون. فيك تحدّث القائمة بأي وقت.</Text></View>}
     </View><View style={orderSection === 'active' ? undefined : s.hidden}>{!!activeOrders.length && <>{activeOrders.map(renderActiveOrder)}</>}
     {!activeOrders.length && <View style={s.noOffers}><View style={s.emptyIconWrap}><SymbolView name={{ios:'shippingbox.fill',android:'local_shipping',web:'local_shipping'}} tintColor={c.primary} size={26}/></View><Text style={s.noOffersTitle}>ما عندك طلبات نشطة</Text><Text style={s.noOffersCopy}>بعد قبول عرض، تفاصيله وخطوات التوصيل بتظهر هون.</Text></View>}</View><View style={orderSection === 'history' ? undefined : s.hidden}>{renderHistory()}</View></>}
     </></StaggeredSections>}
@@ -1585,7 +1586,7 @@ function SignedInHome({ userId, email, inviteToken, openOrderId, onSignOut, them
   return <DriverWorkspace userId={userId} email={email} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
 }
 
-type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'customer_id'|'address_id'|'delivered_at'|'purchase_amount_minor'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'budget_ceiling_minor'|'created_at'|'cash_collected_minor'|'delivery_note'>;
+type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'customer_id'|'address_id'|'delivered_at'|'purchase_amount_minor'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'budget_ceiling_minor'|'created_at'|'cash_collected_minor'|'delivery_note'> & { is_urgent?: boolean };
 type AdminMobileDriver = Pick<Database['public']['Tables']['driver_profiles']['Row'], 'user_id'|'vehicle_description'>;
 
 const pickupPrefix = 'الشراء من: ';
@@ -1622,6 +1623,24 @@ function useOrderImages(bucket: 'order-images' | 'delivery-proofs', orderId: str
 
 type ReceiptData = { id: string; createdAt: string | null; deliveredAt: string | null; request: string; address: { neighborhood: string; city: string } | null; budget: number; purchase: number | null; fee: number; collected: number | null; note: string | null; driverName?: string; customerName?: string };
 // A paper-style receipt for a finished order. Commission is read here (admins from the settlement, drivers from their own wallet).
+function UrgentTag() {
+  return <View style={{ backgroundColor: '#F5A623', borderRadius: 10, paddingHorizontal: 8, minHeight: 22, justifyContent: 'center' }}><Text style={{ color: '#2B1A00', fontSize: 11.5, fontWeight: '900' }}>⚡ مستعجل</Text></View>;
+}
+
+function UrgentChip({ on, onPress, disabled }: { on: boolean; onPress: () => void; disabled?: boolean }) {
+  const [glow] = useState(() => new Animated.Value(0));
+  useEffect(() => {
+    if (on) { glow.setValue(0); return; }
+    const loop = Animated.loop(Animated.sequence([Animated.timing(glow, { toValue: 1, duration: 1300, useNativeDriver: true }), Animated.timing(glow, { toValue: 0, duration: 1300, useNativeDriver: true })]));
+    loop.start();
+    return () => loop.stop();
+  }, [on, glow]);
+  return <Pressable disabled={disabled} onPress={onPress} accessibilityRole="switch" accessibilityState={{ checked: on, disabled: !!disabled }} accessibilityLabel="طلب مستعجل" style={{ minHeight: 28, paddingHorizontal: 10, borderRadius: 12, borderWidth: 1, borderColor: on ? '#F5A623' : '#6B5A2A', backgroundColor: on ? 'rgba(245,166,35,0.18)' : 'transparent', flexDirection: 'row-reverse', alignItems: 'center', gap: 4, overflow: 'hidden', opacity: disabled ? 0.5 : 1 }}>
+    {!on && <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: '#F5A623', opacity: glow.interpolate({ inputRange: [0, 1], outputRange: [0, 0.22] }) }} />}
+    <Text style={{ color: on ? '#F5C268' : '#E9C98A', fontSize: 12, fontWeight: '800' }}>{on ? '✓' : '+'} ⚡ مستعجل</Text>
+  </Pressable>;
+}
+
 function OrderReceipt({ data, admin = false }: { data: ReceiptData; admin?: boolean }) {
   const [commission, setCommission] = useState<number | null>(null);
   useEffect(() => {
@@ -2408,13 +2427,13 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
       // the admin refreshes. It is idempotent and only flags orders that are already overdue.
       void supabase.rpc('flag_unanswered_orders').then(() => undefined, () => undefined);
       const [orderResult, driverResult, disputeResult, nameMap] = await Promise.all([
-        supabase.from('orders').select('id,customer_id,address_id,delivered_at,purchase_amount_minor,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,budget_ceiling_minor,created_at,cash_collected_minor,delivery_note').order('created_at', { ascending: false }).limit(150),
+        supabase.from('orders').select('id,is_urgent,customer_id,address_id,delivered_at,purchase_amount_minor,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,budget_ceiling_minor,created_at,cash_collected_minor,delivery_note').order('created_at', { ascending: false }).limit(150),
         supabase.from('driver_profiles').select('user_id,vehicle_description').eq('review_status', 'approved').eq('is_online', true).order('created_at'),
         supabase.from('order_disputes').select('order_id').is('resolved_at', null),
         loadAdminNames(),
       ]);
       if (orderResult.error || driverResult.error) { setMessage('تعذر تحميل الطلبات أو السائقين. حدّث الصفحة عند عودة الاتصال.'); return; }
-      const rows = orderResult.data ?? [];
+      const rows = [...(orderResult.data ?? [])].sort((a, b) => Number(!!b.is_urgent) - Number(!!a.is_urgent));
       const searchingIds = rows.filter((order) => order.status === 'searching').map((order) => order.id);
       const driverIds = [...new Set(rows.flatMap((order) => order.driver_id ? [order.driver_id] : []))];
       const addressIds = [...new Set(rows.flatMap((order) => order.address_id ? [order.address_id] : []))];
@@ -2716,6 +2735,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
             return <Pressable key={order.id} onPress={() => openSheet(order)} accessibilityRole="button" accessibilityLabel={`طلب #${order.id.slice(0, 6)}، ${orderStatus[order.status] ?? order.status}`} style={{ backgroundColor: color.surface, borderColor: needs || hasReport ? '#C98A2B' : color.border, borderWidth: 1, borderRadius: 20, padding: 14, gap: 9 }}>
               <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <View style={{ backgroundColor: tone.bg, borderRadius: 12, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: tone.fg, fontSize: 12, fontWeight: '900' }}>{statusLabel(order)}</Text></View>
+                {order.is_urgent ? <UrgentTag /> : null}
                 <Text style={{ color: color.muted, fontSize: 11.5 }}>{timeAgo(order.created_at)} · #{order.id.slice(0, 6)}</Text>
                 {finished ? <Pressable onPress={() => setOpenFinished(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel="طيّ الطلب"><Text style={{ color: color.muted, fontSize: 14 }}>⌃</Text></Pressable> : null}
               </View>
@@ -2750,6 +2770,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   const { colors: c, styles: s } = useMobileTheme();
   const online = useInternetAvailable();
   const [request, setRequest] = useState('');
+  const [urgent, setUrgent] = useState(false);
   const [pickup, setPickup] = useState('');
   const [budgetCeiling, setBudgetCeiling] = useState('');
   const [tab, setTab] = useState(() => inviteToken ? 'profile' : 'home');
@@ -2935,7 +2956,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     if (!supabase || !online) return null;
     // A customer with an order that has waited 15+ minutes also triggers the server-side check (fallback when
     // pg_cron isn't available); at most once a minute.
-    const { data, error } = await supabase.from('orders').select('id,status,request_text,delivery_fee_minor,delivery_quote_set_at,delivery_quote_approved_at,budget_ceiling_minor,purchase_amount_minor,purchase_approved_at,created_at,driver_id,delivered_at').order('created_at', { ascending: false }).limit(30);
+    const { data, error } = await supabase.from('orders').select('id,is_urgent,status,request_text,delivery_fee_minor,delivery_quote_set_at,delivery_quote_approved_at,budget_ceiling_minor,purchase_amount_minor,purchase_approved_at,created_at,driver_id,delivered_at').order('created_at', { ascending: false }).limit(30);
     if (error) return null;
     const rows = data ?? [];
     const overdue = rows.some((order) => order.status === 'searching' && !!order.delivery_quote_set_at && Date.now() - Date.parse(order.delivery_quote_set_at) >= 15 * 60 * 1000);
@@ -3001,7 +3022,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     await saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, budgetCeiling, addressId, idempotencyKey: requestKey.current, pendingOrderId: pendingOrderId || undefined, images: orderImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) }).catch(() => setDraftSaveError(true));
     let orderId = pendingOrderId;
     if (!orderId) {
-      const { data, error } = await supabase.rpc('create_customer_order', { p_idempotency_key: requestKey.current, p_address_id: addressId, p_request_text: composeRequest(pickup, request), p_budget_ceiling_minor: budget });
+      const { data, error } = await supabase.rpc('create_customer_order', { p_idempotency_key: requestKey.current, p_address_id: addressId, p_request_text: composeRequest(pickup, request), p_budget_ceiling_minor: budget, ...(urgent ? { p_is_urgent: true } : {}) });
       if (error || !data) {
         setSending(false);
         setRequestMessage(error?.message.includes('Damascus and Rif Dimashq') ? 'التوصيل متاح حالياً بدمشق وريف دمشق فقط. عدّل عنوان التسليم.' : 'ما قدرنا نرسل الطلب. تأكد من العنوان والاتصال وحاول مرة ثانية.');
@@ -3053,7 +3074,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     await clearCustomerOrderDraft(userId);
     forgetOrderImages('order-images', orderId);
     refreshOrdersRef.current?.();
-    requestKey.current = newRequestKey(); setRequest(''); setPickup(''); setBudgetCeiling(''); setOrderImages([]); setPendingOrderId(''); setRequestMessage('وصلنا طلبك! الإدارة رح تحدد أجرة التوصيل وتتابع إسناده لسائق.'); navigate('orders');
+    requestKey.current = newRequestKey(); setRequest(''); setUrgent(false); setPickup(''); setBudgetCeiling(''); setOrderImages([]); setPendingOrderId(''); setRequestMessage('وصلنا طلبك! الإدارة رح تحدد أجرة التوصيل وتتابع إسناده لسائق.'); navigate('orders');
   };
   const pickOrderImages = async () => {
     if (sending) return;
@@ -3155,7 +3176,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
         <View style={s.heroFoot}><View style={s.heroDash}/><Text style={s.heroFootText}>من حارتك لباب بيتك</Text></View>
       </View>
       <View style={s.formCard}><View style={s.formHeader}><View style={s.formStep}><Text style={s.formStepText}>01</Text></View><View style={s.formHeaderCopy}><Text style={s.formTitle}>شو بدك نجيبلك؟</Text><Text style={s.formSubtitle}>اكتب طلبك بالتفصيل، والصورة بتساعدنا نفهمك أسرع.</Text></View><View style={s.cashBadge}><Text style={s.cashBadgeText}>دفع كاش</Text></View></View>{draftSaveError ? <Text style={s.formMessage}>تعذّر حفظ المسودة على هذا الجهاز.</Text> : null}
-        <View style={s.formSection}><Text style={s.label}>تفاصيل الطلب</Text><TextInput editable={draftReady && !pendingOrderId} value={request} onChangeText={(value) => { draftDirty.current = true; setRequest(value); }} maxLength={4000} multiline textAlignVertical="top" placeholder="مثال: جرة غاز ممتلئة مع توصيلها للبيت..." placeholderTextColor="#809087" style={[s.input,s.orderRequestInput]} accessibilityLabel="اكتب تفاصيل طلبك" /></View>
+        <View style={s.formSection}><View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}><Text style={s.label}>تفاصيل الطلب</Text><UrgentChip on={urgent} disabled={!!pendingOrderId || sending} onPress={() => setUrgent((value) => !value)} /></View><TextInput editable={draftReady && !pendingOrderId} value={request} onChangeText={(value) => { draftDirty.current = true; setRequest(value); }} maxLength={4000} multiline textAlignVertical="top" placeholder="مثال: جرة غاز ممتلئة مع توصيلها للبيت..." placeholderTextColor="#809087" style={[s.input,s.orderRequestInput,urgent&&{borderColor:'#F5A623'}]} accessibilityLabel="اكتب تفاصيل طلبك" /></View>
         <View style={s.formSection}><View style={s.sectionHead}><Text style={s.label}>من وين نشتري؟</Text><Text style={s.sectionHint}>اختياري · بيساعد السائق والإدارة</Text></View><TextInput editable={draftReady && !pendingOrderId} value={pickup} onChangeText={(value) => setPickup(value.slice(0, 120))} maxLength={120} placeholder="مثال: محل الغاز بشارع الجلاء" placeholderTextColor="#809087" style={s.input} accessibilityLabel="مكان الشراء"/></View>
         <View style={s.formSection}><View style={s.sectionHead}><Text style={s.label}>أعلى ميزانية للمشتريات</Text><Text style={s.sectionHint}>حتى يضلّ السعر بإيدك</Text></View><View style={s.moneyField}><TextInput editable={draftReady && !pendingOrderId} value={budgetCeiling ? numberFormatter.format(Number(budgetCeiling)) : ''} onChangeText={(value) => { draftDirty.current = true; setBudgetCeiling(normalizeDigits(value)); }} keyboardType="number-pad" textAlign="left" placeholder="100,000" placeholderTextColor="#809087" style={s.moneyInput} accessibilityLabel="سقف الميزانية بالليرة السورية"/><View style={s.currencyBadge}><Text style={s.currencyBadgeText}>ل.س</Text></View></View><Text style={s.budgetHint}>مثال: 100,000 ليرة سورية</Text></View>
         <View style={s.photoSection}><View style={s.photoHead}><View><Text style={s.label}>صور تساعدنا نفهم طلبك</Text><Text style={s.sectionHint}>اختياري · حتى 3 صور</Text></View><Text style={s.photoCount}>{orderImages.length}/3</Text></View>
@@ -3205,7 +3226,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
             {openFinished === order.id ? <Pressable onPress={() => setOpenFinished(null)} accessibilityRole="button" accessibilityLabel="إخفاء التفاصيل" style={{ minHeight: 30, paddingHorizontal: 11, borderRadius: 15, borderWidth: 1, borderColor: '#3D5A45', backgroundColor: '#1F2E24', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#B7FF30', fontSize: 12, fontWeight: '800' }}>إخفاء ⌃</Text></Pressable> : null}
           </View>}
           {!finished && <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
-            <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 6, backgroundColor: cancelled ? '#451E21' : done ? c.raised : '#26391C', borderRadius: 12, paddingHorizontal: 11, minHeight: 28 }}><Text style={{ color: cancelled ? '#FF8A8A' : done ? c.accent : '#B7FF30', fontSize: 12.5, fontWeight: '900' }}>{done ? '✅ ' : ''}{orderStatus[order.status] ?? order.status}</Text></View>
+            <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 6, backgroundColor: cancelled ? '#451E21' : done ? c.raised : '#26391C', borderRadius: 12, paddingHorizontal: 11, minHeight: 28 }}><Text style={{ color: cancelled ? '#FF8A8A' : done ? c.accent : '#B7FF30', fontSize: 12.5, fontWeight: '900' }}>{done ? '✅ ' : ''}{orderStatus[order.status] ?? order.status}</Text></View>{order.is_urgent ? <UrgentTag /> : null}
             <Text style={{ color: c.muted, fontSize: 11.5 }}>{shortDateTimeFormatter.format(new Date(order.created_at))} · #{order.id.slice(0, 6)}</Text>
           </View>}
           {!finished && <View style={{ flexDirection: 'row-reverse', gap: 11, alignItems: 'flex-start' }}>
