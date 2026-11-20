@@ -393,6 +393,22 @@ function AddressBook({ userId, onBack, backLabel, onAddressSaved }: { userId: st
   </View>;
 }
 
+// Last line of defence: if any screen throws while rendering, a release build used to drop the whole app to a
+// blank dark screen. Now the person sees what happened (and can send a photo of it) and can retry.
+class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return <View style={{ flex: 1, backgroundColor: '#0B1411', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 12 }} accessibilityRole="alert">
+      <Text style={{ color: '#FFFFFF', fontSize: 20, fontWeight: '900', textAlign: 'center' }}>صار خطأ غير متوقع</Text>
+      <Text style={{ color: '#A9B9B0', fontSize: 14, lineHeight: 22, textAlign: 'center' }}>بياناتك محفوظة. اضغط «إعادة المحاولة» ليرجع التطبيق. إذا تكرر الخطأ، صوّر هالشاشة وابعتها للدعم.</Text>
+      <Text selectable style={{ color: '#80CAFF', fontSize: 11.5, lineHeight: 18, textAlign: 'left', writingDirection: 'ltr', maxWidth: '100%' }}>{String(this.state.error.message).slice(0, 300)}</Text>
+      <Pressable onPress={() => this.setState({ error: null })} accessibilityRole="button" style={{ minHeight: 50, paddingHorizontal: 28, borderRadius: 16, backgroundColor: '#B7FF30', alignItems: 'center', justifyContent: 'center', marginTop: 6 }}><Text style={{ color: '#0B1411', fontSize: 16, fontWeight: '900' }}>إعادة المحاولة</Text></Pressable>
+    </View>;
+  }
+}
+
 class NotificationBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
@@ -707,6 +723,7 @@ function DriverOperationsSkeleton({ screen }: { screen: 'home' | 'orders' }) {
 // Last successful driver sync per account (kept outside React so the refresh callback stays pure).
 const driverLastSync = new Map<string, number>();
 function DriverOperations({ userId, screen = 'orders', isActive = true, profileComplete = true, onCompleteProfile = () => {}, onOpenOrders = () => {}, onRegisterRefresh }: { onRegisterRefresh?: (refresh: () => Promise<void>) => void; isActive?: boolean; userId: string; screen?: 'home' | 'orders'; profileComplete?: boolean; onCompleteProfile?: () => void; onOpenOrders?: () => void }) {
+  const insets = useSafeAreaInsets();
   const { colors: c, styles: s } = useMobileTheme();
   const online = useInternetAvailable();
   const [profile, setProfile] = useState<{ is_online: boolean }>({ is_online: false });
@@ -1212,8 +1229,9 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
         <Pressable onPress={()=>setBalanceOpen(false)} style={s.sheetCta} accessibilityRole="button"><Text style={s.sheetCtaText}>حسناً</Text></Pressable>
       </Pressable></Pressable>
     </Modal>}
-    {isActive&&<Modal visible={!!deliveryDraft} animationType="slide" onRequestClose={()=>{if(!busy)setDeliveryDraft(null)}}>
-      <SafeAreaView style={[s.safe,{flex:1}]}><KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS==='ios'?'padding':undefined}>
+    {isActive&&<Modal visible={!!deliveryDraft} animationType="slide" statusBarTranslucent navigationBarTranslucent onRequestClose={()=>{if(!busy)setDeliveryDraft(null)}}>
+      {/* A plain View with the app's safe-area values: SafeAreaView inside a Modal could measure as empty on some Android phones and leave only a blank dark screen. */}
+      <View style={[s.safe,{flex:1,paddingTop:insets.top,paddingBottom:insets.bottom}]}><KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS==='ios'?'padding':'height'}>
         <View style={{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,paddingVertical:12,borderBottomWidth:1,borderBottomColor:c.border}}>
           <Text style={{color:c.text,fontSize:19,fontWeight:'900'}}>تأكيد تسليم الطلب</Text>
           <Pressable disabled={busy} onPress={()=>setDeliveryDraft(null)} accessibilityRole="button" accessibilityLabel="إغلاق" style={{width:40,height:40,borderRadius:20,borderWidth:1,borderColor:c.border,alignItems:'center',justifyContent:'center'}}><SymbolView name={{ios:'xmark',android:'close',web:'close'}} tintColor={c.muted} size={16}/></Pressable>
@@ -1230,7 +1248,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
         <View style={{paddingHorizontal:16,paddingTop:8,paddingBottom:12,borderTopWidth:1,borderTopColor:c.border}}>
           <Pressable disabled={busy||!online} onPress={()=>void submitDelivery()} accessibilityRole="button" style={{minHeight:56,borderRadius:18,backgroundColor:'#B7FF30',alignItems:'center',justifyContent:'center',opacity:busy||!online?0.55:1}}><Text style={{color:'#0B1411',fontSize:17,fontWeight:'900'}}>{pendingAction==='delivery-upload'?'عم نرفع صورة الإثبات…':pendingAction==='delivery-confirm'?'عم نأكد التسليم…':busy?'عم نحفظ…':'✅ تم تسليم الطلب'}</Text></Pressable>
         </View>
-      </KeyboardAvoidingView></SafeAreaView>
+      </KeyboardAvoidingView></View>
     </Modal>}
   </View>;
 }
@@ -3188,7 +3206,7 @@ export default function HomeScreen() {
       : !session
         ? <AuthScreen inviteToken={inviteToken || undefined} theme={theme} />
         : <SignedInHome userId={session.user.id} email={session.user.email ?? ''} inviteToken={inviteToken || undefined} openOrderId={openOrderId} onSignOut={async () => { await Promise.allSettled([clearCustomerOrderDraft(session.user.id), clearCustomerOrdersSnapshot(session.user.id), clearDriverOrdersSnapshot(session.user.id), unregisterPushNotifications(session.user.id), Image.clearDiskCache(), Image.clearMemoryCache(), clearUserCache(session.user.id)]); clearImageCaches(); await supabase?.auth.signOut(); }} theme={theme} onToggleTheme={() => applyTheme(theme === 'dark' ? 'light' : 'dark')} />;
-  return <MobileThemeContext.Provider value={themeContext}><ToastProvider theme={theme}><View style={{ flex: 1, backgroundColor: colors.background }}><NetworkStatusBanner />{screen}</View></ToastProvider></MobileThemeContext.Provider>;
+  return <MobileThemeContext.Provider value={themeContext}><ToastProvider theme={theme}><View style={{ flex: 1, backgroundColor: colors.background }}><NetworkStatusBanner /><AppErrorBoundary>{screen}</AppErrorBoundary></View></ToastProvider></MobileThemeContext.Provider>;
 }
 
 const styleDefinitions = {
