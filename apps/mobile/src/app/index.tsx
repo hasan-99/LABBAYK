@@ -779,6 +779,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   const showOfferToast = useAppToast();
   const seenOffers = useRef<Set<string> | null>(null);
   const [activeOrders, setActiveOrders] = useState<DriverActiveOrder[]>([]);
+  const [deliveredReceipt, setDeliveredReceipt] = useState<ReceiptData | null>(null);
   const [offersCount, setOffersCount] = useState(0);
   const [activeOrdersCount, setActiveOrdersCount] = useState(0);
   const [orderSection, setOrderSection] = useState<'offers' | 'active' | 'history'>('offers');
@@ -881,7 +882,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   const loadHistory = useCallback(async () => {
     if (!supabase || !online) return;
     // Cash and note columns come with the main query; addresses follow in one more request.
-    const { data, error } = await supabase.from('orders').select('id,request_text,status,delivery_fee_minor,purchase_amount_minor,budget_ceiling_minor,delivered_at,address_id,cash_collected_minor,delivery_note').eq('driver_id', userId).in('status', ['delivered', 'settled']).order('delivered_at', { ascending: false }).limit(100);
+    const { data, error } = await supabase.from('orders').select('id,request_text,status,delivery_fee_minor,purchase_amount_minor,budget_ceiling_minor,delivered_at,created_at,address_id,cash_collected_minor,delivery_note').eq('driver_id', userId).in('status', ['delivered', 'settled']).order('delivered_at', { ascending: false }).limit(100);
     if (error) { setMessage('ما قدرنا نحمّل سجل طلباتك. جرّب مرة ثانية.'); return; }
     const rows = data ?? [];
     setHistory(rows);
@@ -1021,6 +1022,8 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       if (missing(error)) ({ error } = await supabase.rpc('confirm_order_delivery_with_photo', { p_order_id: orderId, p_proof_path: path, p_cash_collected_minor: collected }));
       if (missing(error)) ({ error } = await supabase.rpc('confirm_order_delivery_with_photo', { p_order_id: orderId, p_proof_path: path }));
       if (error) throw error;
+      const finished = activeOrders.find((order) => order.id === orderId);
+      if (finished) setDeliveredReceipt({ id: finished.id, createdAt: finished.created_at, deliveredAt: new Date().toISOString(), request: finished.request_text, address: finished.address ?? null, budget: finished.budget_ceiling_minor, purchase: finished.purchase_amount_minor, fee: finished.delivery_fee_minor, collected, note });
       setBusy(false); setPendingAction(''); setDeliveryDraft(null); setActiveOrders((current) => current.filter((order) => order.id !== orderId)); setActiveOrdersCount((count) => Math.max(0, count - 1)); setMessage('تم تسليم الطلب وحُفظت صورة الإثبات.'); void refreshNow();
     } catch {
       setBusy(false); setPendingAction(''); setMessage('ما قدرنا نأكد التسليم. تأكد من الاتصال وجرّب مرة ثانية.');
@@ -1049,7 +1052,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       </View>
       {!rows.length ? <View style={s.noOffers}><View style={s.emptyIconWrap}><SymbolView name={{ ios: 'clock.arrow.circlepath', android: 'history', web: 'history' }} tintColor={c.primary} size={26}/></View><Text style={s.noOffersTitle}>ما في طلبات منتهية</Text><Text style={s.noOffersCopy}>{historyPeriod === 'all' ? 'لما تنهي أول طلب بيظهر هون.' : 'جرّب فترة أطول من الأزرار فوق.'}</Text></View> : groups.map((group) => <View key={group.label} style={{ gap: 9 }}>
         <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', marginHorizontal: 2, marginTop: 4 }}><Text style={{ color: c.muted, fontSize: 12.5, fontWeight: '800' }}>{group.label}</Text><Text style={{ color: c.muted, fontSize: 12.5 }}>{group.items.length} طلب</Text></View>
-        {group.items.map((order) => { const open = historyOpen === order.id; const extra = historyExtra[order.id]; const addr = order.address_id ? historyAddresses[order.address_id] : undefined; const { pickup, body } = splitPickup(order.request_text); const expected = (order.purchase_amount_minor ?? 0) + order.delivery_fee_minor; return <Pressable key={order.id} onPress={() => setHistoryOpen(open ? null : order.id)} accessibilityRole="button" accessibilityState={{ expanded: open }} style={{ backgroundColor: c.surface, borderColor: open ? c.primary : c.border, borderWidth: 1, borderRadius: 20, padding: 11, gap: 10 }}>
+        {group.items.map((order) => { const open = historyOpen === order.id; const extra = historyExtra[order.id]; const addr = order.address_id ? historyAddresses[order.address_id] : undefined; const { body } = splitPickup(order.request_text); return <Pressable key={order.id} onPress={() => setHistoryOpen(open ? null : order.id)} accessibilityRole="button" accessibilityState={{ expanded: open }} style={{ backgroundColor: c.surface, borderColor: open ? c.primary : c.border, borderWidth: 1, borderRadius: 20, padding: 11, gap: 10 }}>
           <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11 }}>
             <AdminOrderThumb orderId={order.id} bucket="delivery-proofs" />
             <View style={{ flex: 1, minWidth: 0 }}>
@@ -1059,17 +1062,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
             </View>
             <View style={{ alignItems: 'flex-start' }}><Text style={{ color: c.primary, fontSize: 15.5, fontWeight: '900' }}>{numberFormatter.format(order.delivery_fee_minor)}</Text><Text style={{ color: c.accent, fontSize: 11, fontWeight: '800', marginTop: 2 }}>{order.status === 'settled' ? '✅ تمت التسوية' : '✅ تم التوصيل'}</Text></View>
           </View>
-          {open && <View style={{ gap: 9, borderTopWidth: 1, borderTopColor: c.border, paddingTop: 10 }}>
-            <Text selectable style={{ color: c.text, fontSize: 14.5, fontWeight: '700', lineHeight: 23, textAlign: 'right' }}>{body}</Text>
-            {pickup ? <Text style={{ color: c.muted, fontSize: 13, textAlign: 'right' }}>🏪 الشراء من: <Text style={{ color: c.text, fontWeight: '800' }}>{pickup}</Text></Text> : null}
-            {addr ? <Text style={{ color: c.muted, fontSize: 13, lineHeight: 21, textAlign: 'right' }}>📍 {addr.neighborhood}، {addr.city} · {[addr.street, addr.building ? 'بناء ' + addr.building : '', addr.landmark].filter(Boolean).join(' · ')}</Text> : null}
-            <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 6 }}>
-              {([['ميزانية الزبون', numberFormatter.format(order.budget_ceiling_minor)], ['مشتريات', order.purchase_amount_minor !== null ? numberFormatter.format(order.purchase_amount_minor) : '—'], ['المطلوب', numberFormatter.format(expected)], ...(extra?.cash != null ? [['استلمت', numberFormatter.format(extra.cash)]] as const : [])] as const).map(([label, value]) => <View key={label} style={{ backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 10, paddingHorizontal: 9, paddingVertical: 4, flexDirection: 'row-reverse', gap: 5 }}><Text style={{ color: c.muted, fontSize: 11.5 }}>{label}</Text><Text style={{ color: c.text, fontSize: 11.5, fontWeight: '900' }}>{value}</Text></View>)}
-              {extra?.cash != null && extra.cash > expected ? <View style={{ backgroundColor: 'rgba(82,213,160,0.14)', borderRadius: 10, paddingHorizontal: 9, paddingVertical: 4 }}><Text style={{ color: c.accent, fontSize: 11.5, fontWeight: '900' }}>إكرامية {numberFormatter.format(extra.cash - expected)}</Text></View> : null}
-            </View>
-            {extra?.note ? <Text style={{ color: c.muted, fontSize: 13, lineHeight: 21, textAlign: 'right' }}>📝 {extra.note}</Text> : null}
-            <AdminImageStrip orderId={order.id} bucket="delivery-proofs" size={84} emptyText="ما في صورة تسليم لهذا الطلب." />
-          </View>}
+          {open && <OrderReceipt data={{ id: order.id, createdAt: order.created_at, deliveredAt: order.delivered_at, request: order.request_text, address: addr ?? null, budget: order.budget_ceiling_minor, purchase: order.purchase_amount_minor, fee: order.delivery_fee_minor, collected: extra?.cash ?? null, note: extra?.note ?? null }} />}
         </Pressable>; })}
       </View>)}
       {rows.length > historyVisible ? <Pressable onPress={() => setHistoryVisible((count) => count + 20)} accessibilityRole="button" style={{ minHeight: 44, borderRadius: 14, borderWidth: 1, borderColor: c.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: c.primary, fontSize: 13.5, fontWeight: '800' }}>عرض المزيد ({rows.length - historyVisible})</Text></Pressable> : null}
@@ -1245,6 +1238,15 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
         </View>
         <Pressable onPress={()=>setBalanceOpen(false)} style={s.sheetCta} accessibilityRole="button"><Text style={s.sheetCtaText}>حسناً</Text></Pressable>
       </Pressable></Pressable>
+    </Modal>}
+    {isActive&&<Modal visible={!!deliveredReceipt} animationType="slide" onRequestClose={()=>setDeliveredReceipt(null)}>
+      <SafeAreaView style={[s.safe,{flex:1}]}>
+        <ScrollView contentContainerStyle={{padding:16,gap:14,paddingBottom:28}}>
+          <View style={{alignItems:'center',gap:6,paddingVertical:8}}><View style={{width:58,height:58,borderRadius:29,backgroundColor:c.primary,alignItems:'center',justifyContent:'center'}}><Text style={{color:'#0B1411',fontSize:30,fontWeight:'900'}}>✓</Text></View><Text style={{color:c.text,fontSize:19,fontWeight:'900'}}>صار! الطلب انسلّم</Text><Text style={{color:c.muted,fontSize:13}}>هاد إيصال الطلب</Text></View>
+          {deliveredReceipt&&<OrderReceipt data={deliveredReceipt}/>}
+          <Pressable onPress={()=>setDeliveredReceipt(null)} accessibilityRole="button" style={{minHeight:52,borderRadius:16,backgroundColor:c.primary,alignItems:'center',justifyContent:'center'}}><Text style={{color:'#0B1411',fontSize:16,fontWeight:'900'}}>تمام</Text></Pressable>
+        </ScrollView>
+      </SafeAreaView>
     </Modal>}
     {isActive&&<Modal visible={!!deliveryDraft} animationType="slide" onRequestClose={()=>{if(!busy)setDeliveryDraft(null)}}>
       <SafeAreaView style={[s.safe,{flex:1}]}><KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS==='ios'?'padding':undefined}>
@@ -1620,6 +1622,65 @@ function useOrderImages(bucket: 'order-images' | 'delivery-proofs', orderId: str
   return images;
 }
 
+type ReceiptData = { id: string; createdAt: string | null; deliveredAt: string | null; request: string; address: { neighborhood: string; city: string } | null; budget: number; purchase: number | null; fee: number; collected: number | null; note: string | null; driverName?: string; customerName?: string };
+// A paper-style receipt for a finished order. Commission is read here (admins from the settlement, drivers from their own wallet).
+function OrderReceipt({ data, admin = false }: { data: ReceiptData; admin?: boolean }) {
+  const [commission, setCommission] = useState<number | null>(null);
+  useEffect(() => {
+    if (!supabase) return;
+    let alive = true;
+    const load = admin
+      ? supabase.from('cash_settlements').select('commission_amount_minor').eq('order_id', data.id).order('created_at', { ascending: false }).limit(1).then(({ data: rows }) => rows?.[0]?.commission_amount_minor ?? null)
+      : supabase.from('driver_wallet_ledger').select('amount_minor').eq('order_id', data.id).eq('entry_type', 'delivery_commission').then(({ data: rows }) => rows?.length ? rows.reduce((sum, row) => sum + -row.amount_minor, 0) : null);
+    void load.then((value) => { if (alive) setCommission(value); });
+    return () => { alive = false; };
+  }, [admin, data.id]);
+  const ink = '#1B241E'; const muted = '#6B756D'; const line = '#DAD8CC'; const good = '#0F7A52'; const bad = '#B3341F';
+  const { pickup, body } = splitPickup(data.request);
+  const expected = (data.purchase ?? 0) + data.fee;
+  const diff = data.collected === null ? 0 : data.collected - expected;
+  const minutes = data.createdAt && data.deliveredAt ? Math.max(1, Math.round((Date.parse(data.deliveredAt) - Date.parse(data.createdAt)) / 60000)) : null;
+  const row = (label: string, value: string, opts: { big?: boolean; tint?: string } = {}) => <View key={label} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', gap: 10, paddingVertical: opts.big ? 4 : 2 }}><Text style={{ color: opts.big ? ink : muted, fontSize: opts.big ? 15.5 : 13.5, fontWeight: opts.big ? '900' : '500', textAlign: 'right' }}>{label}</Text><Text style={{ color: opts.tint ?? ink, fontSize: opts.big ? 15.5 : 13.5, fontWeight: '800' }}>{value}</Text></View>;
+  const money = (value: number) => numberFormatter.format(value) + ' ل.س';
+  const section = { borderTopWidth: 1, borderTopColor: line, paddingTop: 10, marginTop: 10, gap: 2 } as const;
+  const net = commission === null ? null : data.fee - commission;
+  return <View accessibilityLabel={`إيصال الطلب ${data.id.slice(0, 6)}`} style={{ backgroundColor: '#F6F4EC', borderRadius: 18, padding: 16 }}>
+    <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: ink, fontSize: 16, fontWeight: '900', textAlign: 'right' }}>طلب #{data.id.slice(0, 6)}</Text>
+        {data.deliveredAt ? <Text style={{ color: muted, fontSize: 12, textAlign: 'right' }}>{shortDateTimeFormatter.format(new Date(data.deliveredAt))}</Text> : null}
+        {minutes !== null ? <Text style={{ color: muted, fontSize: 12, textAlign: 'right' }}>استغرق {minutes} د من الطلب للتسليم</Text> : null}
+      </View>
+      <View style={{ borderWidth: 1.5, borderColor: good, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 }}><Text style={{ color: good, fontSize: 11.5, fontWeight: '900' }}>تم التسليم</Text></View>
+    </View>
+    <View style={section}>
+      <Text style={{ color: ink, fontSize: 14.5, fontWeight: '800', lineHeight: 22, textAlign: 'right' }}>{body}</Text>
+      <Text style={{ color: muted, fontSize: 12.5, textAlign: 'right' }}>من: {pickup || 'أقرب محل للسائق'}</Text>
+      <Text style={{ color: muted, fontSize: 12.5, textAlign: 'right' }}>إلى: {data.address ? `${data.address.neighborhood}، ${data.address.city}` : '—'}</Text>
+      {admin && (data.driverName || data.customerName) ? <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', gap: 8, marginTop: 4 }}><Text style={{ color: muted, fontSize: 12.5 }}>السائق: {data.driverName ?? '—'}</Text><Text style={{ color: muted, fontSize: 12.5 }}>الزبون: {data.customerName ?? '—'}</Text></View> : null}
+    </View>
+    <View style={section}>
+      {row('ميزانية الزبون', numberFormatter.format(data.budget))}
+      {row('المشتريات (دفعها السائق)', data.purchase === null ? '—' : numberFormatter.format(data.purchase))}
+      {row('أجرة التوصيل', numberFormatter.format(data.fee))}
+      {row('المطلوب من الزبون', money(expected), { big: true })}
+      {row('المستلم فعلياً', data.collected === null ? 'لم يُسجَّل' : money(data.collected))}
+      {data.collected !== null && diff > 0 ? row('إكرامية', '+ ' + money(diff), { tint: good }) : null}
+      {data.collected !== null && diff < 0 ? row('نقص عن المطلوب', '− ' + money(-diff), { tint: bad }) : null}
+    </View>
+    {commission !== null && net !== null ? <View style={section}>
+      {row('عمولة الشركة', '− ' + numberFormatter.format(commission))}
+      {row(admin ? 'صافي السائق من الأجرة' : 'صافي ربحي من الأجرة', numberFormatter.format(net))}
+      {data.collected !== null && diff > 0 ? row('إكرامية', '+ ' + numberFormatter.format(diff)) : null}
+      {data.collected !== null && diff < 0 ? row('نقص تحمّله السائق', '− ' + numberFormatter.format(-diff), { tint: bad }) : null}
+      {row(admin ? 'إجمالي ربح السائق' : 'إجمالي ربحي من الطلب', money(net + (data.collected === null ? 0 : diff)), { big: true, tint: good })}
+    </View> : null}
+    <View style={section}>
+      <AdminImageStrip orderId={data.id} bucket="delivery-proofs" size={84} emptyText="ما في صورة تسليم لهذا الطلب." />
+      {data.note ? <Text style={{ color: muted, fontSize: 12.5, lineHeight: 20, textAlign: 'right' }}>ملاحظة: {data.note}</Text> : null}
+    </View>
+  </View>;
+}
 function AdminOrderThumb({ orderId, bucket = 'order-images' }: { orderId: string; bucket?: 'order-images' | 'delivery-proofs' }) {
   const { colors: c } = useMobileTheme();
   const images = useOrderImages(bucket, orderId);
@@ -1677,7 +1738,7 @@ function CustomerDriverRow({ orderId, status }: { orderId: string; status: strin
   </View>;
 }
 
-type HistoryOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'  | 'request_text' | 'status' | 'delivery_fee_minor' | 'purchase_amount_minor' | 'budget_ceiling_minor' | 'delivered_at' | 'address_id'>;
+type HistoryOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'  | 'request_text' | 'status' | 'delivery_fee_minor' | 'purchase_amount_minor' | 'budget_ceiling_minor' | 'delivered_at' | 'created_at' | 'address_id'>;
 type HistoryPeriod = 'today' | 'week' | 'all';
 function historyCutoff(period: HistoryPeriod) {
   if (period === 'all') return 0;
@@ -2565,24 +2626,8 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
             <AdminImageStrip orderId={sheet.id} />
           </View>
           {delivered && <View style={[card, { borderColor: color.accent, gap: 9 }]}>
-            <Text style={{ color: color.accent, fontSize: 14.5, fontWeight: '900', textAlign: 'right' }}>✅ إثبات التسليم</Text>
-            <AdminImageStrip orderId={sheet.id} bucket="delivery-proofs" size={96} emptyText="ما في صورة إثبات (سُلّم بالطريقة القديمة)." />
-            {(() => {
-              const purchases = sheet.purchase_amount_minor; const expected = (purchases ?? 0) + sheet.delivery_fee_minor; const collected = cashCollected[sheet.id] ?? null; const diff = collected === null ? null : collected - expected;
-              const line = (label: string, value: string, strong = false, tint?: string) => <View key={label} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5 }}>{label}</Text><Text style={{ color: tint ?? (strong ? color.primary : color.text), fontSize: 13.5, fontWeight: '900' }}>{value}</Text></View>;
-              return <View style={{ backgroundColor: color.background, borderColor: color.border, borderWidth: 1, borderRadius: 14, padding: 10, gap: 6 }}>
-                <Text style={{ color: color.muted, fontSize: 12, fontWeight: '800', textAlign: 'right' }}>💰 حساب الطلب</Text>
-                {line('ميزانية الزبون', numberFormatter.format(sheet.budget_ceiling_minor) + ' ل.س')}
-                {line('مشتريات دفعها السائق', purchases === null ? '—' : numberFormatter.format(purchases) + ' ل.س')}
-                {line('أجرة التوصيل', numberFormatter.format(sheet.delivery_fee_minor) + ' ل.س')}
-                {line('المطلوب من الزبون', numberFormatter.format(expected) + ' ل.س')}
-                {line('المبلغ الذي استلمه السائق', collected === null ? 'لم يُسجَّل' : numberFormatter.format(collected) + ' ل.س', true)}
-                {deliveryNotes[sheet.id] ? <View style={{ borderTopWidth: 1, borderTopColor: color.border, paddingTop: 6 }}><Text style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>ملاحظة السائق</Text><Text style={{ color: color.text, fontSize: 13.5, fontWeight: '700', lineHeight: 21, textAlign: 'right' }}>{deliveryNotes[sheet.id]}</Text></View> : null}
-                {diff !== null && diff !== 0 ? line(diff > 0 ? 'زيادة (إكرامية)' : 'نقص عن المطلوب', numberFormatter.format(Math.abs(diff)) + ' ل.س', false, diff > 0 ? '#52D5A0' : '#FF8A8A') : null}
-              </View>;
-            })()}
-            <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5 }}>السائق</Text><Text style={{ color: color.text, fontSize: 13.5, fontWeight: '800' }}>{nameOf(sheet.driver_id)}</Text></View>
-            <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5 }}>وقت التسليم</Text><Text style={{ color: color.text, fontSize: 13.5, fontWeight: '800' }}>{sheet.delivered_at ? shortDateTimeFormatter.format(new Date(sheet.delivered_at)) : '—'}</Text></View>
+            <Text style={{ color: color.accent, fontSize: 14.5, fontWeight: '900', textAlign: 'right' }}>✅ إيصال الطلب</Text>
+            <OrderReceipt admin data={{ id: sheet.id, createdAt: sheet.created_at, deliveredAt: sheet.delivered_at, request: sheet.request_text, address: sheet.address_id ? addresses[sheet.address_id] ?? null : null, budget: sheet.budget_ceiling_minor, purchase: sheet.purchase_amount_minor, fee: sheet.delivery_fee_minor, collected: cashCollected[sheet.id] ?? null, note: deliveryNotes[sheet.id] ?? null, driverName: nameOf(sheet.driver_id), customerName: customerLabel(sheet) }} />
             {sheet.driver_id && driverPhones[sheet.driver_id] ? <Pressable onPress={() => void Linking.openURL(`tel:${driverPhones[sheet.driver_id!]}`)} accessibilityRole="button" accessibilityLabel="اتصال بالسائق" style={{ minHeight: 44, borderRadius: 13, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 14, fontWeight: '900' }}>📞 اتصال بالسائق · {ltrPhone(driverPhones[sheet.driver_id])}</Text></Pressable> : null}
           </View>}
           {(sheet.status === 'disputed' || openDisputes[sheet.id]) && <View style={[card, { borderColor: '#C98A2B', gap: 8 }]}>
