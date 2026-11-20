@@ -3166,7 +3166,6 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       </View>
       <View style={s.note}><Text style={s.noteIcon}>ⓘ</Text><Text style={s.noteText}>بعد إرسال الطلب، الإدارة بتحدد أجرة التوصيل وبتعيّن سائق أو بتبعته للسائقين المتاحين. الدفع كاش عند الاستلام.</Text></View>
       <Pressable disabled={sending || !draftReady || !online} onPress={() => { if (!hasAddress) { navigate('addresses'); return; } void submitOrder(); }} style={[s.submit, (sending || !draftReady || !online)&&s.disabled]} accessibilityRole="button"><Text style={s.submitText}>{!hasAddress?'إضافة عنوان تسليم':!online?'بانتظار الاتصال':sending?'عم نرسل الطلب والصور…':pendingOrderId?'إكمال رفع الصور وإرسال الطلب':'إرسال الطلب'} <Text style={s.submitArrow}>←</Text></Text></Pressable>
-      {requestMessage ? <Text accessibilityRole="alert" style={s.requestMessage}>{requestMessage}</Text> : null}
       </> : tab === 'orders' ? <View style={s.orderPage}><StaggeredSections transitionKey={`${tab}-orders`}>
         <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', marginTop: 4, marginBottom: 2 }}>
           <View><Text style={s.accountPageTitle}>طلباتي</Text><Text style={s.accountPageSubtitle}>تابع كل طلب خطوة بخطوة</Text></View>
