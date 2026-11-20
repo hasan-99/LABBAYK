@@ -1517,6 +1517,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
           </View>
           {!editingProfile&&<>
             <Pressable onPress={onToggleTheme} style={s.profileThemeRow} accessibilityRole="button" accessibilityLabel={theme === 'dark' ? 'تفعيل الوضع الفاتح' : 'تفعيل الوضع الداكن'}><View style={s.profileThemeIcon}><SymbolView name={{ ios: theme === 'dark' ? 'sun.max.fill' : 'moon.fill', android: theme === 'dark' ? 'light_mode' : 'dark_mode', web: theme === 'dark' ? 'light_mode' : 'dark_mode' }} tintColor={c.primary} size={20}/></View><View style={s.profileThemeCopy}><Text style={s.profileThemeTitle}>المظهر · {theme === 'dark' ? 'داكن' : 'فاتح'}</Text><Text style={s.profileThemeHint}>اضغط للتبديل إلى الوضع {theme === 'dark' ? 'الفاتح' : 'الداكن'}</Text></View><Text style={s.profileThemeStateText}>تغيير</Text></Pressable>
+            <View style={{ height: 12 }} />
             <PushStatusCard userId={userId} />
             <LegalLinksSection theme={theme}/>
             <Pressable onPress={onSignOut} style={s.profileLogout} accessibilityRole="button"><SymbolView name={{ ios: 'rectangle.portrait.and.arrow.right', android: 'logout', web: 'logout' }} tintColor={c.danger} size={18}/><Text style={s.profileLogoutText}>تسجيل الخروج</Text></Pressable>
