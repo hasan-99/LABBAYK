@@ -3434,6 +3434,7 @@ export default function HomeScreen() {
   const [inviteToken, setInviteToken] = useState('');
   const [session, setSession] = useState<Session | null>(null);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [ready, setReady] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const colors = theme === 'light' ? lightPalette : tokens.color;
@@ -3481,8 +3482,18 @@ export default function HomeScreen() {
         ? <PasswordRecoveryScreen onDone={() => setPasswordRecovery(false)} theme={theme} />
       : !session
         ? <AuthScreen inviteToken={inviteToken || undefined} theme={theme} />
-        : <SignedInHome userId={session.user.id} email={session.user.email ?? ''} inviteToken={inviteToken || undefined} openOrderId={openOrderId} onSignOut={async () => { await Promise.allSettled([clearCustomerOrderDraft(session.user.id), clearCustomerOrdersSnapshot(session.user.id), clearDriverOrdersSnapshot(session.user.id), unregisterPushNotifications(session.user.id), Image.clearDiskCache(), Image.clearMemoryCache(), clearUserCache(session.user.id)]); clearImageCaches(); await supabase?.auth.signOut(); }} theme={theme} onToggleTheme={() => applyTheme(theme === 'dark' ? 'light' : 'dark')} />;
-  return <MobileThemeContext.Provider value={themeContext}><ToastProvider theme={theme}><View style={{ flex: 1, backgroundColor: colors.background }}><NetworkStatusBanner />{screen}</View></ToastProvider></MobileThemeContext.Provider>;
+        : <SignedInHome userId={session.user.id} email={session.user.email ?? ''} inviteToken={inviteToken || undefined} openOrderId={openOrderId} onSignOut={async () => {
+          // Show progress right away and never wait more than a few seconds on a weak connection.
+          const upTo = (task: Promise<unknown>, ms: number) => Promise.race([task, new Promise((resolve) => setTimeout(resolve, ms))]);
+          setSigningOut(true);
+          try {
+            await upTo(Promise.allSettled([clearCustomerOrderDraft(session.user.id), clearCustomerOrdersSnapshot(session.user.id), clearDriverOrdersSnapshot(session.user.id), unregisterPushNotifications(session.user.id), Image.clearDiskCache(), Image.clearMemoryCache(), clearUserCache(session.user.id)]), 4000);
+            clearImageCaches();
+            await upTo(supabase?.auth.signOut() ?? Promise.resolve(), 4000);
+            await supabase?.auth.signOut({ scope: 'local' });
+          } finally { setSigningOut(false); }
+        }} theme={theme} onToggleTheme={() => applyTheme(theme === 'dark' ? 'light' : 'dark')} />;
+  return <MobileThemeContext.Provider value={themeContext}><ToastProvider theme={theme}><View style={{ flex: 1, backgroundColor: colors.background }}><NetworkStatusBanner />{screen}{signingOut ? <View accessibilityRole="progressbar" accessibilityLabel="جاري تسجيل الخروج" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 14, backgroundColor: 'rgba(11,20,17,0.88)', zIndex: 9999 }}><ActivityIndicator size="large" color="#B7FF30" /><Text style={{ color: '#EEF3EE', fontSize: 16, fontWeight: '800' }}>جاري تسجيل الخروج…</Text></View> : null}</View></ToastProvider></MobileThemeContext.Provider>;
 }
 
 const styleDefinitions = {
