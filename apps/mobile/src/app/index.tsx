@@ -1914,7 +1914,9 @@ function AdminDriversTab({ userId, active, onBadge }: { userId: string; active: 
 
 type AdminCashOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id' | 'driver_id' | 'category' | 'purchase_amount_minor' | 'delivery_fee_minor' | 'cash_collected_minor' | 'created_at'>;
 type AdminMoneyData = { orders: AdminCashOrder[]; balances: Record<string, number>; drivers: string[]; names: Record<string, string> };
-function AdminMoneyTab({ userId, active, onBadge }: { userId: string; active: boolean; onBadge: AdminBadgeSetter }) {
+type AdminLedgerRow = Pick<Database['public']['Tables']['driver_wallet_ledger']['Row'], 'id' | 'amount_minor' | 'entry_type' | 'order_id' | 'reason' | 'created_at'>;
+type AdminLedgerDetail = { category: string | null; purchase: number | null; fee: number | null; rate: number | null; commission: number | null; collected: number | null };
+function AdminMoneyTab({ userId, active, onBadge, onOpenOrder }: { userId: string; active: boolean; onBadge: AdminBadgeSetter; onOpenOrder: (orderId: string) => void }) {
   const insets = useSafeAreaInsets();
   const { colors: color } = useMobileTheme();
   const online = useInternetAvailable();
@@ -1988,9 +1990,106 @@ function AdminMoneyTab({ userId, active, onBadge }: { userId: string; active: bo
     delete keys.current['topup-fp']; delete keys.current['topup'];
     setTopUp(null); setAmount(''); setReason(''); setMessage('تم تسجيل دفعة العمولة وتحديث المستحقات.'); await refreshNow();
   };
+  // ----- Driver account history (opens from a driver's name in the wallets list) -----
+  const [historyFor, setHistoryFor] = useState<string | null>(null);
+  const [ledger, setLedger] = useState<AdminLedgerRow[] | null>(null);
+  const [ledgerDetails, setLedgerDetails] = useState<Record<string, AdminLedgerDetail>>({});
+  const [entryFilter, setEntryFilter] = useState<'all' | 'commission' | 'payment'>('all');
+  const [openEntry, setOpenEntry] = useState<number | null>(null);
+  const [entriesShown, setEntriesShown] = useState(30);
+  const historyBalance = historyFor ? (balances[historyFor] ?? 0) : 0;
+  useEffect(() => {
+    if (!historyFor || !supabase) return;
+    let alive = true;
+    void (async () => {
+      const { data, error } = await supabase!.from('driver_wallet_ledger').select('id,amount_minor,entry_type,order_id,reason,created_at').eq('driver_id', historyFor).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(300);
+      if (!alive) return;
+      if (error) { setMessage('ما قدرنا نحمّل سجل الحساب. جرّب مرة ثانية.'); setLedger((current) => current ?? []); return; }
+      const rows = data ?? [];
+      const orderIds = [...new Set(rows.flatMap((row) => row.order_id ? [row.order_id] : []))];
+      const details: Record<string, AdminLedgerDetail> = {};
+      if (orderIds.length) {
+        const [settlementResult, orderResult] = await Promise.all([
+          supabase!.from('cash_settlements').select('order_id,purchase_amount_minor,delivery_fee_minor,commission_rate_basis_points,commission_amount_minor,cash_collected_minor,created_at').in('order_id', orderIds).order('created_at', { ascending: false }),
+          supabase!.from('orders').select('id,category').in('id', orderIds),
+        ]);
+        for (const id of orderIds) details[id] = { category: null, purchase: null, fee: null, rate: null, commission: null, collected: null };
+        for (const order of orderResult.data ?? []) details[order.id].category = order.category;
+        // The newest settlement of an order is the one in force (older ones were reversed).
+        const seen = new Set<string>();
+        for (const row of settlementResult.data ?? []) {
+          if (seen.has(row.order_id)) continue;
+          seen.add(row.order_id);
+          Object.assign(details[row.order_id], { purchase: row.purchase_amount_minor, fee: row.delivery_fee_minor, rate: row.commission_rate_basis_points, commission: row.commission_amount_minor, collected: row.cash_collected_minor });
+        }
+      }
+      if (alive) { setLedger(rows); setLedgerDetails(details); }
+    })();
+    return () => { alive = false; };
+  }, [historyFor, historyBalance, setMessage]);
+  const openHistory = (id: string) => { setHistoryFor(id); setLedger(null); setEntryFilter('all'); setOpenEntry(null); setEntriesShown(30); };
+  const entryLabel = (row: AdminLedgerRow) => row.entry_type === 'delivery_commission' ? `عمولة طلب #${(row.order_id ?? '').slice(0, 4)}${ledgerDetails[row.order_id ?? '']?.category ? ' · ' + ledgerDetails[row.order_id ?? ''].category : ''}` : row.entry_type === 'cash_top_up' ? 'دفعة مسجّلة' : row.entry_type === 'wallet_reversal' ? 'عكس قيد' : 'تعديل يدوي';
+  const renderHistory = () => {
+    if (!historyFor) return null;
+    const rows = ledger ?? [];
+    let running = historyBalance;
+    const withBalance = rows.map((row) => { const after = running; running -= row.amount_minor; return { row, after }; });
+    const commissions = rows.filter((row) => row.entry_type === 'delivery_commission').reduce((sum, row) => sum - row.amount_minor, 0);
+    const payments = rows.filter((row) => row.entry_type === 'cash_top_up').reduce((sum, row) => sum + row.amount_minor, 0);
+    const others = rows.filter((row) => row.entry_type !== 'delivery_commission' && row.entry_type !== 'cash_top_up').reduce((sum, row) => sum + row.amount_minor, 0);
+    const commissionCount = rows.filter((row) => row.entry_type === 'delivery_commission').length;
+    const visible = withBalance.filter(({ row }) => entryFilter === 'all' || (entryFilter === 'commission' ? row.entry_type === 'delivery_commission' : row.entry_type === 'cash_top_up'));
+    const page = visible.slice(0, entriesShown);
+    const days = [...new Set(page.map(({ row }) => dayLabel(row.created_at)))];
+    const sign = (n: number) => n < 0 ? '−' : '';
+    const sumBox = (value: string, label: string, tint?: string) => <View style={{ flex: 1, backgroundColor: color.raised, borderRadius: 12, paddingVertical: 8, paddingHorizontal: 4, alignItems: 'center' }}><Text style={{ color: tint ?? color.text, fontSize: 14, fontWeight: '900' }}>{value}</Text><Text style={{ color: color.muted, fontSize: 11, textAlign: 'center' }}>{label}</Text></View>;
+    return <>
+      <Pressable onPress={() => setHistoryFor(null)} accessibilityRole="button" accessibilityLabel="رجوع لمحافظ العمولة" style={{ alignSelf: 'flex-end', minHeight: 40, paddingHorizontal: 14, borderRadius: 14, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface, justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 13.5, fontWeight: '800' }}>→ محافظ العمولة</Text></Pressable>
+      <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 22, padding: 16, gap: 8 }}>
+        <Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>{historyBalance < 0 ? 'عليه للشركة' : historyBalance > 0 ? 'رصيد عمولة' : 'الحساب مسدّد'}</Text>
+        <Text style={{ color: historyBalance < 0 ? adminTone.bad.fg : historyBalance > 0 ? adminTone.ok.fg : color.text, fontSize: 34, fontWeight: '900', textAlign: 'right' }}>{sign(historyBalance)}{numberFormatter.format(Math.abs(historyBalance))} <Text style={{ fontSize: 14, color: color.muted }}>ل.س</Text></Text>
+        <View style={{ flexDirection: 'row-reverse', gap: 6 }}>
+          {sumBox(numberFormatter.format(commissions), `عمولات (${commissionCount} طلب)`, adminTone.bad.fg)}
+          {sumBox(numberFormatter.format(payments), 'دفعات مسجّلة', adminTone.ok.fg)}
+          {sumBox(sign(historyBalance) + numberFormatter.format(Math.abs(historyBalance)), 'الرصيد')}
+        </View>
+        {others !== 0 ? <Text style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>عكس القيود والتعديلات اليدوية: {sign(others)}{numberFormatter.format(Math.abs(others))} ل.س (داخلة بالرصيد).</Text> : null}
+        <Pressable onPress={() => { setTopUp({ id: historyFor }); setAmount(''); setReason(''); }} accessibilityRole="button" style={{ minHeight: 48, borderRadius: 15, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', marginTop: 4 }}><Text style={{ color: color.background, fontSize: 15, fontWeight: '900' }}>تسجيل دفعة من {nameOf(historyFor)}</Text></Pressable>
+      </View>
+      <View style={{ flexDirection: 'row-reverse', gap: 8 }}>{([['all', 'الكل'], ['commission', 'عمولات'], ['payment', 'دفعات']] as const).map(([key, label]) => { const on = entryFilter === key; return <Pressable key={key} onPress={() => { setEntryFilter(key); setEntriesShown(30); }} accessibilityRole="button" accessibilityState={{ selected: on }} style={{ minHeight: 38, paddingHorizontal: 14, borderRadius: 19, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.primary : color.surface, justifyContent: 'center' }}><Text style={{ color: on ? color.background : color.text, fontSize: 13, fontWeight: '800' }}>{label}</Text></Pressable>; })}</View>
+      {ledger === null ? <ActivityIndicator color={color.primary} style={{ margin: 24 }} /> : page.length ? days.map((day) => <View key={day} style={{ gap: 8 }}>
+        <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>{day}</Text>
+        {page.filter(({ row }) => dayLabel(row.created_at) === day).map(({ row, after }) => {
+          const detail = row.order_id ? ledgerDetails[row.order_id] : undefined; const open = openEntry === row.id; const credit = row.amount_minor > 0;
+          return <View key={row.id} style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, overflow: 'hidden' }}>
+            <Pressable onPress={() => setOpenEntry(open ? null : row.id)} accessibilityRole="button" accessibilityState={{ expanded: open }} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11, padding: 12 }}>
+              <View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 14.5, fontWeight: '800', textAlign: 'right' }}>{entryLabel(row)}</Text><Text style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>{notificationTimeFormatter.format(new Date(row.created_at))}</Text></View>
+              <View style={{ alignItems: 'flex-start' }}><Text style={{ color: credit ? adminTone.ok.fg : adminTone.bad.fg, fontSize: 15, fontWeight: '900' }}>{credit ? '+' : '−'}{numberFormatter.format(Math.abs(row.amount_minor))}</Text><Text style={{ color: color.muted, fontSize: 11.5 }}>الرصيد بعدها {sign(after)}{numberFormatter.format(Math.abs(after))}</Text></View>
+            </Pressable>
+            {open ? <View style={{ borderTopWidth: 1, borderTopColor: color.border, backgroundColor: color.background, padding: 12, gap: 7 }}>
+              {row.entry_type === 'delivery_commission' ? <>
+                {detail?.purchase != null ? line('مشتريات دفعها السائق', numberFormatter.format(detail.purchase) + ' ل.س') : null}
+                {detail?.fee != null ? line('أجرة التوصيل', numberFormatter.format(detail.fee) + ' ل.س') : null}
+                {detail?.rate != null ? line('نسبة العمولة', numberFormatter.format(detail.rate / 100) + '%') : null}
+                {line('العمولة', numberFormatter.format(Math.abs(row.amount_minor)) + ' ل.س', adminTone.bad.fg)}
+                {detail?.collected != null ? line('المبلغ اللي استلمه من الزبون', numberFormatter.format(detail.collected) + ' ل.س') : null}
+                {row.order_id ? <Pressable onPress={() => onOpenOrder(row.order_id as string)} accessibilityRole="button" style={{ minHeight: 42, borderRadius: 13, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 13.5, fontWeight: '800' }}>فتح الطلب</Text></Pressable> : null}
+              </> : <>
+                {line('السبب', row.reason || '—')}
+                {line('سجّلها', 'الإدارة')}
+              </>}
+            </View> : null}
+          </View>;
+        })}
+      </View>) : <AdminEmpty title="ما في قيود بهالتصنيف" hint="العمولات والدفعات بتظهر هون لما تنسجّل." />}
+      {visible.length > entriesShown ? <Pressable onPress={() => setEntriesShown((count) => count + 30)} accessibilityRole="button" style={{ minHeight: 44, borderRadius: 14, borderWidth: 1, borderColor: color.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 13.5, fontWeight: '800' }}>عرض المزيد ({visible.length - entriesShown})</Text></Pressable> : null}
+      {rows.length >= 300 ? <Text style={{ color: color.muted, fontSize: 12, textAlign: 'center' }}>معروض آخر 300 قيد.</Text> : null}
+    </>;
+  };
   const line = (label: string, value: string, tint?: string) => <View key={label} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5 }}>{label}</Text><Text style={{ color: tint ?? color.text, fontSize: 13.5, fontWeight: '900' }}>{value}</Text></View>;
   const input = { minHeight: 50, paddingHorizontal: 14, borderRadius: 14, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, color: color.text, textAlign: 'right', fontSize: 15 } as const;
-  return <AdminTabShell title="المال" subtitle="تسويات التوصيل وحسابات العمولة" onRefresh={() => void manualRefresh()} refreshing={refreshing}>
+  return <AdminTabShell title={historyFor ? nameOf(historyFor) : 'المال'} subtitle={historyFor ? 'سجل الحساب' : 'تسويات التوصيل وحسابات العمولة'} onRefresh={() => void manualRefresh()} refreshing={refreshing}>
+    {historyFor ? renderHistory() : <>
     <View style={{ flexDirection: 'row-reverse', gap: 10 }}>
       <View style={{ flex: 1, backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12 }}><Text style={{ color: color.text, fontSize: 24, fontWeight: '900', textAlign: 'right' }}>{numberFormatter.format(orders.length)}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>بانتظار التأكيد</Text></View>
       <View style={{ flex: 1, backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12 }}><Text style={{ color: adminTone.bad.fg, fontSize: 24, fontWeight: '900', textAlign: 'right' }}>{numberFormatter.format(dueTotal)}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>مستحق على السائقين · ل.س</Text></View>
@@ -2013,11 +2112,12 @@ function AdminMoneyTab({ userId, active, onBadge }: { userId: string; active: bo
       <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>السالب مبلغ مستحق على السائق</Text>
       {walletIds.length ? <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 20, overflow: 'hidden' }}>
         {walletIds.map((id, index) => { const balance = balances[id] ?? 0; return <View key={id} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10, padding: 12, borderTopWidth: index ? 1 : 0, borderTopColor: color.border }}>
-          <View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 15, fontWeight: '800', textAlign: 'right' }}>{nameOf(id)}</Text><Text style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>{balance < 0 ? 'مستحق للشركة' : 'رصيد عمولة'}</Text></View>
+          <Pressable onPress={() => openHistory(id)} accessibilityRole="button" accessibilityLabel={`سجل حساب ${nameOf(id)}`} style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 15, fontWeight: '800', textAlign: 'right' }}>{nameOf(id)}</Text><Text style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>{balance < 0 ? 'مستحق للشركة' : 'رصيد عمولة'} · سجل الحساب ›</Text></Pressable>
           <Text style={{ color: balance < 0 ? adminTone.bad.fg : adminTone.ok.fg, fontSize: 15, fontWeight: '900' }}>{balance < 0 ? '−' : ''}{numberFormatter.format(Math.abs(balance))}</Text>
           <Pressable onPress={() => { setTopUp({ id }); setAmount(''); setReason(''); }} accessibilityRole="button" accessibilityLabel={`تسجيل دفعة من ${nameOf(id)}`} style={{ minHeight: 40, paddingHorizontal: 14, borderRadius: 12, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 13, fontWeight: '900' }}>دفعة</Text></Pressable>
         </View>; })}
       </View> : <AdminEmpty title="ما في محافظ" hint="محافظ السائقين المعتمدين بتظهر هون." />}
+    </>}
     </>}
     <Modal visible={!!topUp} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => setTopUp(null)}>
       <KeyboardAvoidingView style={{ flex: 1, justifyContent: 'flex-end' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -2156,7 +2256,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
   return <View style={{ flex: 1, backgroundColor: color.background }}>
     <View style={pane('orders')}><AdminOrdersTab userId={userId} onBadge={setBadge} onDetail={setInDetail} focusOrderId={focusOrderId} onFocusHandled={clearFocus} /></View>
     {visited.drivers ? <View style={pane('drivers')}><AdminDriversTab userId={userId} active={tab === 'drivers'} onBadge={setBadge} /></View> : null}
-    {visited.money ? <View style={pane('money')}><AdminMoneyTab userId={userId} active={tab === 'money'} onBadge={setBadge} /></View> : null}
+    {visited.money ? <View style={pane('money')}><AdminMoneyTab userId={userId} active={tab === 'money'} onBadge={setBadge} onOpenOrder={(id) => { setFocusOrderId(id); openTab('orders'); }} /></View> : null}
     {visited.reports ? <View style={pane('reports')}><AdminReportsTab userId={userId} active={tab === 'reports'} onBadge={setBadge} onOpenOrder={(id) => { setFocusOrderId(id); openTab('orders'); }} /></View> : null}
     {visited.more ? <View style={pane('more')}><AdminMoreTab email={email} theme={theme} onToggleTheme={onToggleTheme} onSignOut={onSignOut} /></View> : null}
     {!(tab === 'orders' && inDetail) ? <SafeAreaView edges={['bottom']} style={{ backgroundColor: color.surface, borderTopWidth: 1, borderTopColor: color.border }}>
