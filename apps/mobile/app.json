@@ -16,6 +16,7 @@
     },
     "android": {
       "package": "com.hasan99.labbayk",
+      "googleServicesFile": "./google-services.json",
       "allowBackup": false,
       "blockedPermissions": [
         "android.permission.SYSTEM_ALERT_WINDOW",
