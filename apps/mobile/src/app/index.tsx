@@ -2778,7 +2778,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   const [orderActionBusy, setOrderActionBusy] = useState('');
   const [orderActionMessage, setOrderActionMessage] = useToastMessage();
   const [sending, setSending] = useState(false);
-  const [requestMessage, setRequestMessage] = useToastMessage();
+  const [, setRequestMessage] = useToastMessage();
   const [orderImages, setOrderImages] = useState<OrderImage[]>([]);
   const [pendingOrderId, setPendingOrderId] = useState('');
   const requestKey = useRef(newRequestKey());
