@@ -1524,7 +1524,7 @@ type AdminMobileDriver = Pick<Database['public']['Tables']['driver_profiles']['R
 const pickupPrefix = 'الشراء من: ';
 const composeRequest = (pickup: string, request: string) => pickup.trim() ? `${pickupPrefix}${pickup.trim()}\n${request.trim()}` : request.trim();
 const splitPickup = (text: string) => { const match = text.match(/^الشراء من: (.+)\n([\s\S]*)$/); return match ? { pickup: match[1].trim(), body: match[2].trim() } : { pickup: '', body: text }; };
-type AdminAddress = Pick<Database['public']['Tables']['addresses']['Row'], 'id' | 'street' | 'city' | 'neighborhood' | 'building' | 'landmark' | 'contact_phone'>;
+type AdminAddress = Pick<Database['public']['Tables']['addresses']['Row'], 'id' | 'label' | 'street' | 'city' | 'neighborhood' | 'building' | 'landmark' | 'contact_phone'>;
 type CachedImage = { path: string; url: string; key: string };
 /** Remote avatars get a stable cache key so the photo is downloaded once; local drafts don't. */
 const avatarSource = (uri: string, path: string | null) => path && !uri.startsWith('file:') && !uri.startsWith('blob:') && !uri.startsWith('data:') ? { uri, cacheKey: imageCacheKey('profile-avatars', path) } : { uri };
@@ -2191,7 +2191,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
         searchingIds.length ? supabase.from('order_events').select('order_id,actor_id').eq('event_type', 'driver_declined_offer').in('order_id', searchingIds) : Promise.resolve(null),
         searchingIds.length ? supabase.from('order_offers').select('order_id,driver_id,expires_at').eq('status', 'pending').in('order_id', searchingIds) : Promise.resolve(null),
         driverIds.length ? supabase.from('driver_profiles').select('user_id,phone_e164').in('user_id', driverIds) : Promise.resolve(null),
-        addressIds.length ? supabase.from('addresses').select('id,street,city,neighborhood,building,landmark,contact_phone').in('id', addressIds) : Promise.resolve(null),
+        addressIds.length ? supabase.from('addresses').select('id,label,street,city,neighborhood,building,landmark,contact_phone').in('id', addressIds) : Promise.resolve(null),
       ]);
       const declineMap: Record<string, string[]> = {};
       for (const row of declineResult?.data ?? []) if (row.actor_id) declineMap[row.order_id] = [...new Set([...(declineMap[row.order_id] ?? []), row.actor_id])];
@@ -2381,8 +2381,8 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
             <View style={{ flexDirection: 'row-reverse', gap: 9, alignItems: 'flex-start' }}>
               <Text style={{ fontSize: 16 }}>📍</Text>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: color.text, fontSize: 14.5, fontWeight: '800', lineHeight: 22, textAlign: 'right' }}>{address ? [address.neighborhood + '، ' + address.city, address.street].filter(Boolean).join(' · ') : '—'}</Text>
-                {address && (address.landmark || address.building) ? <Text style={{ color: color.muted, fontSize: 12.5, lineHeight: 19, textAlign: 'right' }}>{[address.landmark, address.building ? 'بناء ' + address.building : ''].filter(Boolean).join(' · ')}</Text> : null}
+                <Text style={{ color: color.text, fontSize: 14.5, fontWeight: '800', lineHeight: 22, textAlign: 'right' }}>{address ? [address.neighborhood, address.label].filter(Boolean).join(' · ') : '—'}</Text>
+                {address && [address.city, address.street, address.building ? 'بناء ' + address.building : '', address.landmark].some(Boolean) ? <Text style={{ color: color.muted, fontSize: 12.5, lineHeight: 19, textAlign: 'right' }}>{[address.city, address.street, address.building ? 'بناء ' + address.building : '', address.landmark].filter(Boolean).join(' · ')}</Text> : null}
               </View>
             </View>
           </View>
