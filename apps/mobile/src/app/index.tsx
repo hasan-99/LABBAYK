@@ -17,7 +17,7 @@ import { readStoredSession, supabase, supabaseConfigured } from '@/lib/supabase'
 import { getBackendHealth, subscribeBackendHealth, type BackendHealth } from '@/lib/network-health';
 import { clearCustomerOrderDraft, clearCustomerOrdersSnapshot, loadCustomerOrderDraft, loadCustomerOrdersSnapshot, saveCustomerOrderDraft, saveCustomerOrdersSnapshot, type CustomerOrderImageDraft, type CustomerOrderSnapshot } from '@/lib/customer-order-draft';
 import { clearDriverOrdersSnapshot, loadDriverOrdersSnapshot, saveDriverOrdersSnapshot } from '@/lib/driver-orders-cache';
-import { enablePushNotifications, hasRegisteredPushToken, unregisterPushNotifications } from '@/lib/push-notifications';
+import { checkPushStatus, enablePushNotifications, hasRegisteredPushToken, peekPushStatus, sendTestPush, unregisterPushNotifications, type PushRegistrationResult, type TestPushResult } from '@/lib/push-notifications';
 import { AuthScreen, PasswordRecoveryScreen } from '@/components/AuthScreen';
 import { LegalLinksSection } from '@/components/LegalLinksSection';
 import { SUPPORT_EMAIL } from '@/lib/legal-contact';
@@ -391,6 +391,65 @@ function AddressBook({ userId, onBack, backLabel, onAddressSaved }: { userId: st
       <Pressable disabled={busy || addressLoading} onPress={() => void save()} style={[s.saveAddress,(busy || addressLoading)&&s.disabled]} accessibilityRole="button"><Text style={s.saveAddressText}>{addressLoading?'عم نحمّل عنوانك…':busy?'عم نحفظ…':editingAddress?'حفظ التعديلات':'حفظ العنوان'} <Text style={s.submitArrow}>←</Text></Text></Pressable>
     </View>
   </View>;
+}
+
+const pushProblemText: Record<string, string> = {
+  'permission-denied': 'الإشعارات مو مفعّلة على هالموبايل، فما رح توصلك العروض والتنبيهات والتطبيق مسكّر. فعّلها من إعدادات الموبايل.',
+  'development-build-required': 'الإشعارات ما بتشتغل ضمن تطبيق Expo Go. استخدم النسخة المثبّتة من التطبيق.',
+  'missing-project-id': 'التطبيق ناقصه إعداد الإشعارات. أبلغ الدعم.',
+  unsupported: 'هالجهاز أو المتصفح ما بيدعم الإشعارات.',
+  error: 'ما قدرنا نفعّل الإشعارات هلأ. تأكد من النت واضغط «إعادة المحاولة».',
+};
+const testPushText = (result: TestPushResult) => {
+  if (result.status === 'sent') return 'انبعت إشعار تجريبي. سكّر التطبيق وانتظر ثواني. إذا ما وصل، قلّي للإدارة تتأكد من إعداد Firebase.';
+  if (result.status === 'no-token') return 'هالموبايل مو مسجّل للإشعارات. اضغط «إعادة المحاولة» وبعدين جرّب.';
+  if (result.status === 'unsupported') return 'اختبار الإشعارات متاح على الموبايل فقط.';
+  if (result.status === 'rejected') {
+    if (result.detail === 'InvalidCredentials') return 'خدمة الإشعارات ما عندها مفتاح Firebase. على المسؤول يرفع المفتاح السري على Expo (eas credentials).';
+    if (result.detail === 'DeviceNotRegistered') return 'الموبايل مو مسجّل عند خدمة الإشعارات. اضغط «إعادة المحاولة» أو سجّل خروج ودخول.';
+    return `خدمة الإشعارات رفضت الطلب${result.detail ? ' (' + result.detail + ')' : ''}.`;
+  }
+  return 'ما قدرنا نوصل لخدمة الإشعارات. تأكد من النت وجرّب مرة ثانية.';
+};
+/** Shows whether notifications work on this phone, explains the problem in plain words, and can send a test push. */
+function usePushStatus(userId: string) {
+  const [status, setStatus] = useState<PushRegistrationResult['status'] | 'checking'>(() => peekPushStatus(userId) ?? 'checking');
+  useEffect(() => {
+    let active = true;
+    void checkPushStatus(userId).then((next) => { if (active) setStatus(next); });
+    return () => { active = false; };
+  }, [userId]);
+  const retry = async () => { setStatus('checking'); setStatus(await checkPushStatus(userId, true)); };
+  return { status, retry };
+}
+function PushStatusCard({ userId }: { userId: string }) {
+  const { colors: c } = useMobileTheme();
+  const { status, retry } = usePushStatus(userId);
+  const [testing, setTesting] = useState(false);
+  const [answer, setAnswer] = useState('');
+  if (Platform.OS === 'web') return null;
+  const ok = status === 'enabled';
+  const btn = { minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: c.border, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 } as const;
+  const runTest = async () => { setTesting(true); setAnswer(''); const result = await sendTestPush(userId); setAnswer(testPushText(result)); setTesting(false); };
+  return <View style={{ backgroundColor: c.surface, borderColor: ok ? c.border : '#C98A2B', borderWidth: 1, borderRadius: 18, padding: 14, gap: 10 }}>
+    <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
+      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: status === 'checking' ? c.muted : ok ? '#52D5A0' : '#F0CC83' }} />
+      <Text style={{ color: c.text, fontSize: 15, fontWeight: '900', textAlign: 'right' }}>الإشعارات</Text>
+    </View>
+    <Text style={{ color: ok ? c.muted : '#F0CC83', fontSize: 13, lineHeight: 21, textAlign: 'right' }}>{status === 'checking' ? 'عم نتأكد…' : ok ? 'الإشعارات شغّالة على هالموبايل. العروض والتنبيهات بتوصلك حتى لو التطبيق مسكّر.' : (pushProblemText[status] ?? pushProblemText.error)}</Text>
+    {status === 'permission-denied' ? <Pressable onPress={() => void Linking.openSettings()} accessibilityRole="button" style={btn}><Text style={{ color: c.primary, fontSize: 14, fontWeight: '800' }}>فتح إعدادات الموبايل</Text></Pressable> : null}
+    {!ok && status !== 'checking' ? <Pressable onPress={() => void retry()} accessibilityRole="button" style={btn}><Text style={{ color: c.text, fontSize: 14, fontWeight: '800' }}>إعادة المحاولة</Text></Pressable> : null}
+    {ok ? <Pressable disabled={testing} onPress={() => void runTest()} accessibilityRole="button" style={[btn, { borderColor: c.primary, opacity: testing ? 0.6 : 1 }]}><Text style={{ color: c.primary, fontSize: 14, fontWeight: '800' }}>{testing ? 'عم نبعت…' : 'اختبار الإشعارات'}</Text></Pressable> : null}
+    {answer ? <Text accessibilityRole="status" style={{ color: c.muted, fontSize: 12.5, lineHeight: 20, textAlign: 'right' }}>{answer}</Text> : null}
+  </View>;
+}
+/** A short warning on the driver's home screen only when notifications are not working. */
+function PushWarning({ userId, onOpen }: { userId: string; onOpen: () => void }) {
+  const { status } = usePushStatus(userId);
+  if (Platform.OS === 'web' || status === 'checking' || status === 'enabled') return null;
+  return <Pressable onPress={onOpen} accessibilityRole="button" style={{ marginTop: 10, backgroundColor: 'rgba(240,204,131,0.12)', borderColor: '#C98A2B', borderWidth: 1, borderRadius: 14, padding: 12, flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
+    <Text style={{ flex: 1, color: '#F0CC83', fontSize: 12.5, fontWeight: '800', lineHeight: 20, textAlign: 'right' }}>الإشعارات مو شغّالة على موبايلك، فما رح توصلك العروض والتطبيق مسكّر. اضغط لتصلّحها.</Text>
+  </Pressable>;
 }
 
 class NotificationBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -1450,6 +1509,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
           </View>
           {!editingProfile&&<>
             <Pressable onPress={onToggleTheme} style={s.profileThemeRow} accessibilityRole="button" accessibilityLabel={theme === 'dark' ? 'تفعيل الوضع الفاتح' : 'تفعيل الوضع الداكن'}><View style={s.profileThemeIcon}><SymbolView name={{ ios: theme === 'dark' ? 'sun.max.fill' : 'moon.fill', android: theme === 'dark' ? 'light_mode' : 'dark_mode', web: theme === 'dark' ? 'light_mode' : 'dark_mode' }} tintColor={c.primary} size={20}/></View><View style={s.profileThemeCopy}><Text style={s.profileThemeTitle}>المظهر · {theme === 'dark' ? 'داكن' : 'فاتح'}</Text><Text style={s.profileThemeHint}>اضغط للتبديل إلى الوضع {theme === 'dark' ? 'الفاتح' : 'الداكن'}</Text></View><Text style={s.profileThemeStateText}>تغيير</Text></Pressable>
+            <PushStatusCard userId={userId} />
             <LegalLinksSection theme={theme}/>
             <Pressable onPress={onSignOut} style={s.profileLogout} accessibilityRole="button"><SymbolView name={{ ios: 'rectangle.portrait.and.arrow.right', android: 'logout', web: 'logout' }} tintColor={c.danger} size={18}/><Text style={s.profileLogoutText}>تسجيل الخروج</Text></Pressable>
             <Text style={s.versionStamp}>{buildStamp}</Text>
@@ -1457,6 +1517,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
         </> : null}
         </StaggeredSections>
         {(visitedTabs.home || visitedTabs.orders) && !loading && !profileLoadError && (operationsScreen === 'orders' || profileComplete) && <View style={tab === 'home' || tab === 'orders' ? undefined : s.hidden}>
+          {tab === 'home' && <PushWarning userId={userId} onOpen={() => goTab('profile')} />}
           <DriverOperations key={userId} onRegisterRefresh={registerRefresh} userId={userId} screen={operationsScreen} isActive={tab === 'home' || tab === 'orders'} profileComplete={profileComplete} onCompleteProfile={() => goTab('profile')} onOpenOrders={() => goTab('orders')}/>
         </View>}
         {tab === 'notifications' && <View style={s.driverPageIntro}><Text style={s.driverHeroEyebrow}>تحديثات طلباتك</Text><Text style={s.accountPageTitle}>التنبيهات</Text><Text style={s.accountPageSubtitle}>كل تنبيه لحاله مع وقت وصوله ورقم الطلب. اضغط عليه لتفتح الطلب.</Text></View>}
@@ -3030,6 +3091,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
           <View style={s.profileSectionHeading}><View style={s.profileHeadingIcon}><SymbolView name={{ ios: 'circle.lefthalf.filled', android: 'contrast', web: 'contrast' }} tintColor={c.primary} size={21}/></View><Text style={s.profileSectionTitle}>المظهر</Text></View>
           <Pressable onPress={onToggleTheme} style={s.profileThemeRow} accessibilityRole="button" accessibilityLabel={theme === 'dark' ? 'تفعيل الوضع الفاتح' : 'تفعيل الوضع الداكن'}><View style={s.profileThemeIcon}><SymbolView name={{ ios: theme === 'dark' ? 'sun.max.fill' : 'moon.fill', android: theme === 'dark' ? 'light_mode' : 'dark_mode', web: theme === 'dark' ? 'light_mode' : 'dark_mode' }} tintColor={c.primary} size={20}/></View><View style={s.profileThemeCopy}><Text style={s.profileThemeTitle}>الوضع {theme === 'dark' ? 'الداكن' : 'الفاتح'}</Text><Text style={s.profileThemeHint}>اضغط للتبديل إلى الوضع {theme === 'dark' ? 'الفاتح' : 'الداكن'}</Text></View><View style={s.profileThemeState}><Text style={s.profileThemeStateText}>{theme === 'dark' ? 'داكن' : 'فاتح'}</Text></View></Pressable>
         </View>
+        <PushStatusCard userId={userId} />
         <LegalLinksSection theme={theme}/>
         <Pressable onPress={onSignOut} style={s.profileLogout} accessibilityRole="button"><SymbolView name={{ ios: 'rectangle.portrait.and.arrow.right', android: 'logout', web: 'logout' }} tintColor={c.danger} size={19}/><Text style={s.profileLogoutText}>تسجيل الخروج</Text></Pressable>
         {showDriverFlow && <DriverApplicationFlow key={inviteToken ?? 'driver-application'} userId={userId} initialToken={inviteToken} knownStatus={driverStatus}/>}

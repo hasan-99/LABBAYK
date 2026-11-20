@@ -124,3 +124,42 @@ function decodeBase64Url(value: string): ArrayBuffer {
   for (let index = 0; index < raw.length; index += 1) bytes[index] = raw.charCodeAt(index);
   return bytes.buffer as ArrayBuffer;
 }
+
+/** Last known registration result per account, so several screens can show it without repeating the check. */
+const statusCache = new Map<string, { status: PushRegistrationResult['status']; at: number }>();
+export function peekPushStatus(userId: string): PushRegistrationResult['status'] | null {
+  return statusCache.get(userId)?.status ?? null;
+}
+/** Checks (and, when the permission is already granted, refreshes) this device's push registration. */
+export async function checkPushStatus(userId: string, askPermission = false): Promise<PushRegistrationResult['status']> {
+  const cached = statusCache.get(userId);
+  if (!askPermission && cached && Date.now() - cached.at < 5 * 60 * 1000) return cached.status;
+  const result = await enablePushNotifications(userId, askPermission);
+  statusCache.set(userId, { status: result.status, at: Date.now() });
+  return result.status;
+}
+
+export type TestPushResult = { status: 'sent' | 'no-token' | 'unsupported' | 'rejected' | 'error'; detail?: string };
+/**
+ * Sends a real push to this device through Expo's push service (the same path server notifications use),
+ * so it tests the whole chain: device token, Expo, Firebase (FCM) credentials. Expo reports credential problems
+ * in its answer, which is shown to the person instead of failing silently.
+ */
+export async function sendTestPush(userId: string): Promise<TestPushResult> {
+  if (Platform.OS === 'web') return { status: 'unsupported' };
+  try {
+    const token = await SecureStore.getItemAsync(tokenStorageKey(userId));
+    if (!token) return { status: 'no-token' };
+    const response = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ to: token, title: 'اختبار الإشعارات', body: 'وصلك هالإشعار، يعني الإشعارات شغّالة على موبايلك.', sound: 'default', priority: 'high', channelId: 'order_updates' }),
+    });
+    const json = await response.json() as { data?: { status?: string; message?: string; details?: { error?: string } }; errors?: { message?: string }[] };
+    const ticket = json.data;
+    if (ticket?.status === 'ok') return { status: 'sent' };
+    return { status: 'rejected', detail: ticket?.details?.error ?? ticket?.message ?? json.errors?.[0]?.message };
+  } catch {
+    return { status: 'error' };
+  }
+}
