@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "لَبّيك | LABBAYK",
+    "name": "لَبّيك",
     "slug": "labbayk",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -25,7 +25,7 @@
       ],
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
-        "foregroundImage": "./assets/images/labbayk-app-icon.png"
+        "foregroundImage": "./assets/images/labbayk-adaptive-icon.png"
       },
       "predictiveBackGestureEnabled": false
     },
