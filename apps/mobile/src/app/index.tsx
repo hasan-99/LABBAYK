@@ -17,7 +17,7 @@ import { readStoredSession, supabase, supabaseConfigured } from '@/lib/supabase'
 import { getBackendHealth, subscribeBackendHealth, type BackendHealth } from '@/lib/network-health';
 import { clearCustomerOrderDraft, clearCustomerOrdersSnapshot, loadCustomerOrderDraft, loadCustomerOrdersSnapshot, saveCustomerOrderDraft, saveCustomerOrdersSnapshot, type CustomerOrderImageDraft, type CustomerOrderSnapshot } from '@/lib/customer-order-draft';
 import { clearDriverOrdersSnapshot, loadDriverOrdersSnapshot, saveDriverOrdersSnapshot } from '@/lib/driver-orders-cache';
-import { checkPushStatus, enablePushNotifications, hasRegisteredPushToken, peekPushStatus, sendTestPush, unregisterPushNotifications, type PushRegistrationResult, type TestPushResult } from '@/lib/push-notifications';
+import { checkPushStatus, enablePushNotifications, hasRegisteredPushToken, peekPushFailureStage, peekPushStatus, sendTestPush, subscribePushStatus, unregisterPushNotifications, type PushFailureStage, type PushRegistrationResult, type TestPushResult } from '@/lib/push-notifications';
 import { AuthScreen, PasswordRecoveryScreen } from '@/components/AuthScreen';
 import { LegalLinksSection } from '@/components/LegalLinksSection';
 import { SUPPORT_EMAIL } from '@/lib/legal-contact';
@@ -29,6 +29,14 @@ import { AppText as Text } from '@/components/AppText';
 import { ToastProvider, useAppToast, useToastMessage } from '@/components/Toast';
 
 const c: any = tokens.color;
+if (Platform.OS !== 'web') void import('expo-notifications').then(Notifications => {
+  Notifications.setNotificationHandler({
+    handleNotification: async notification => {
+      const isTest = notification.request.content.data?.testNotification === true;
+      return { shouldShowBanner: !isTest, shouldShowList: !isTest, shouldPlaySound: !isTest, shouldSetBadge: false };
+    },
+  });
+}).catch(() => undefined);
 const MobileThemeContext = createContext<{ colors: any; styles: Record<string, any> } | null>(null);
 function useMobileTheme() {
   const theme = useContext(MobileThemeContext);
@@ -400,6 +408,14 @@ const pushProblemText: Record<string, string> = {
   unsupported: 'هالجهاز أو المتصفح ما بيدعم الإشعارات.',
   error: 'ما قدرنا نفعّل الإشعارات هلأ. تأكد من النت واضغط «إعادة المحاولة».',
 };
+const pushFailureText: Record<PushFailureStage, string> = {
+  'notifications-module': 'التطبيق ما قدر يحمّل وحدة إشعارات Android.',
+  'android-channel': 'Android ما قدر يجهّز قناة الإشعارات.',
+  'permission-check': 'ما قدر التطبيق يقرأ إذن الإشعارات من إعدادات الهاتف.',
+  'fcm-token': 'الهاتف ما قدر يجيب رمز Firebase. افحص Google Play services وإعدادات Firebase بالبناء.',
+  'supabase-registration': 'تم إنشاء رمز الهاتف، لكن ما قدرنا نسجّله بالخادم.',
+  'local-storage': 'التسجيل بالخادم نجح، لكن تعذّر حفظ رمز الهاتف محليًا.',
+};
 const testPushText = (result: TestPushResult) => {
   if (result.status === 'sent') return 'انبعت إشعار تجريبي. سكّر التطبيق وانتظر ثواني. إذا ما وصل، قلّي للإدارة تتأكد من إعداد Firebase.';
   if (result.status === 'no-token') return 'هالموبايل مو مسجّل للإشعارات. اضغط «إعادة المحاولة» وبعدين جرّب.';
@@ -409,34 +425,53 @@ const testPushText = (result: TestPushResult) => {
     if (result.detail === 'DeviceNotRegistered') return 'الموبايل مو مسجّل عند خدمة الإشعارات. اضغط «إعادة المحاولة» أو سجّل خروج ودخول.';
     return `خدمة الإشعارات رفضت الطلب${result.detail ? ' (' + result.detail + ')' : ''}.`;
   }
+  if (result.detail) return `توقف اختبار الإشعارات عند خطوة (${result.detail}). سجلناها لنشوف السبب.`;
   return 'ما قدرنا نوصل لخدمة الإشعارات. تأكد من النت وجرّب مرة ثانية.';
 };
 /** Shows whether notifications work on this phone, explains the problem in plain words, and can send a test push. */
 function usePushStatus(userId: string) {
   const [status, setStatus] = useState<PushRegistrationResult['status'] | 'checking'>(() => peekPushStatus(userId) ?? 'checking');
+  const [failureStage, setFailureStage] = useState<PushFailureStage | null>(() => peekPushFailureStage(userId));
   useEffect(() => {
     let active = true;
-    void checkPushStatus(userId).then((next) => { if (active) setStatus(next); });
-    return () => { active = false; };
+    const unsubscribe = subscribePushStatus(userId, (next, failure) => { if (active) { setStatus(next); setFailureStage(failure ?? null); } });
+    void checkPushStatus(userId).then((next) => { if (active) { setStatus(next); setFailureStage(peekPushFailureStage(userId)); } });
+    return () => { active = false; unsubscribe(); };
   }, [userId]);
-  const retry = async () => { setStatus('checking'); setStatus(await checkPushStatus(userId, true)); };
-  return { status, retry };
+  const retry = async () => {
+    setStatus('checking'); setFailureStage(null);
+    const next = await checkPushStatus(userId, true);
+    setStatus(next); setFailureStage(peekPushFailureStage(userId));
+  };
+  return { status, failureStage, retry };
 }
 function PushStatusCard({ userId }: { userId: string }) {
   const { colors: c } = useMobileTheme();
-  const { status, retry } = usePushStatus(userId);
+  const { status, failureStage, retry } = usePushStatus(userId);
   const [testing, setTesting] = useState(false);
   const [answer, setAnswer] = useState('');
   if (Platform.OS === 'web') return null;
   const ok = status === 'enabled';
   const btn = { minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: c.border, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 } as const;
-  const runTest = async () => { setTesting(true); setAnswer(''); const result = await sendTestPush(userId); setAnswer(testPushText(result)); setTesting(false); };
+  const runTest = async () => {
+    setTesting(true);
+    setAnswer('بدء اختبار الإشعارات…');
+    try {
+      const result = await sendTestPush(userId, setAnswer);
+      setAnswer(testPushText(result));
+    } catch (error) {
+      setAnswer(`فشل الاختبار: ${error instanceof Error ? error.message : 'خطأ غير معروف'}`);
+    } finally {
+      setTesting(false);
+    }
+  };
   return <View style={{ backgroundColor: c.surface, borderColor: ok ? c.border : '#C98A2B', borderWidth: 1, borderRadius: 18, padding: 14, gap: 10 }}>
     <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
       <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: status === 'checking' ? c.muted : ok ? '#52D5A0' : '#F0CC83' }} />
       <Text style={{ color: c.text, fontSize: 15, fontWeight: '900', textAlign: 'right' }}>الإشعارات</Text>
     </View>
     <Text style={{ color: ok ? c.muted : '#F0CC83', fontSize: 13, lineHeight: 21, textAlign: 'right' }}>{status === 'checking' ? 'عم نتأكد…' : ok ? 'الإشعارات شغّالة على هالموبايل. العروض والتنبيهات بتوصلك حتى لو التطبيق مسكّر.' : (pushProblemText[status] ?? pushProblemText.error)}</Text>
+    {status === 'error' && failureStage ? <Text style={{ color: c.muted, fontSize: 12, lineHeight: 19, textAlign: 'right' }}>{pushFailureText[failureStage]}</Text> : null}
     {status === 'permission-denied' ? <Pressable onPress={() => void Linking.openSettings()} accessibilityRole="button" style={btn}><Text style={{ color: c.primary, fontSize: 14, fontWeight: '800' }}>فتح إعدادات الموبايل</Text></Pressable> : null}
     {!ok && status !== 'checking' ? <Pressable onPress={() => void retry()} accessibilityRole="button" style={btn}><Text style={{ color: c.text, fontSize: 14, fontWeight: '800' }}>إعادة المحاولة</Text></Pressable> : null}
     {ok ? <Pressable disabled={testing} onPress={() => void runTest()} accessibilityRole="button" style={[btn, { borderColor: c.primary, opacity: testing ? 0.6 : 1 }]}><Text style={{ color: c.primary, fontSize: 14, fontWeight: '800' }}>{testing ? 'عم نبعت…' : 'اختبار الإشعارات'}</Text></Pressable> : null}
@@ -486,7 +521,6 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
   useEffect(()=>{
     let subscription:{remove:()=>void}|undefined
     if(Platform.OS!=='web')void import('expo-notifications').then(Notifications=>{
-        Notifications.setNotificationHandler({handleNotification:async()=>({shouldShowBanner:true,shouldShowList:true,shouldPlaySound:true,shouldSetBadge:false})})
         const handleResponse=(response:NotificationResponse)=>{
           const orderId=response.notification.request.content.data?.orderId
           if(typeof orderId==='string')openOrderRef.current?.(orderId)
