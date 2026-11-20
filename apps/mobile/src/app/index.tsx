@@ -1621,6 +1621,14 @@ function useOrderImages(bucket: 'order-images' | 'delivery-proofs', orderId: str
 
 type ReceiptData = { id: string; createdAt: string | null; deliveredAt: string | null; request: string; address: { neighborhood: string; city: string } | null; budget: number; purchase: number | null; fee: number; collected: number | null; note: string | null; driverName?: string; customerName?: string };
 // A paper-style receipt for a finished order. Commission is read here (admins from the settlement, drivers from their own wallet).
+function CustomerHomeSkeleton() {
+  return <View style={{ gap: 14, marginTop: 4 }} accessibilityLabel="عم نحمّل الصفحة">
+    <SkeletonBlock width="100%" height={58} style={{ borderRadius: 18, alignSelf: 'stretch' }} />
+    <SkeletonBlock width="100%" height={200} style={{ borderRadius: 24, alignSelf: 'stretch' }} />
+    <SkeletonBlock width="100%" height={380} style={{ borderRadius: 20, alignSelf: 'stretch' }} />
+  </View>;
+}
+
 function UrgentTag() {
   return <View style={{ backgroundColor: '#F5A623', borderRadius: 10, paddingHorizontal: 8, minHeight: 22, justifyContent: 'center' }}><Text style={{ color: '#2B1A00', fontSize: 11.5, fontWeight: '900' }}>⚡ مستعجل</Text></View>;
 }
@@ -2772,6 +2780,10 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   const online = useInternetAvailable();
   const [request, setRequest] = useState('');
   const [urgent, setUrgent] = useState(false);
+  const [addressesDone, setAddressesDone] = useState(false);
+  const [homeSettled, setHomeSettled] = useState(false);
+  const [homeTimedOut, setHomeTimedOut] = useState(false);
+  useEffect(() => { const timer = setTimeout(() => setHomeTimedOut(true), 2500); return () => clearTimeout(timer); }, []);
   const [pickup, setPickup] = useState('');
   const [budgetCeiling, setBudgetCeiling] = useState('');
   const [tab, setTab] = useState(() => inviteToken ? 'profile' : 'home');
@@ -2871,6 +2883,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     void supabase.from('addresses').select('id,label,city,neighborhood,is_default,street,contact_phone,building,landmark').eq('user_id', userId).order('is_default', { ascending: false }).order('updated_at', { ascending: false })
       .then(({ data, error }) => {
         if (!active) return;
+        setAddressesDone(true);
         if (error) { setRequestMessage('ما قدرنا نحمّل عنوان التوصيل. العنوان المحفوظ ما تغيّر؛ جرّب تحدّث الصفحة.'); return; }
         addressesDirty.current = false; addressesFetchedAt.current = Date.now();
         const rows = data ?? [];
@@ -3144,12 +3157,16 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   useEffect(() => { bodyScrollRef.current?.scrollTo({ y: 0, animated: false }); }, [tab]);
   const displayedOrders = notificationOrderId ? [...orders].sort((left,right) => Number(right.id === notificationOrderId) - Number(left.id === notificationOrderId)) : orders;
   const filteredOrders = displayedOrders.filter((order) => orderFilter === 'all' || customerGroup(order.status) === orderFilter);
+  // The home page opens only once its first data (draft, delivery address, orders) is in, so it paints
+  // once instead of loading in pieces. It never returns to the skeleton after that.
+  const homeReady = !homeSettled && ((draftReady && (addressesDone || !online) && !ordersLoading) || homeTimedOut);
+  if (homeReady) setHomeSettled(true);
   return <SafeAreaView style={s.safe}>
     <View accessibilityRole="main" style={{flex:1}}>
       <View style={s.header}><View style={s.brand}><View style={s.brandMark}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={s.brandLogo} contentFit="contain" accessibilityLabel="شعار لَبّيك"/></View><View><Text style={s.brandName}>لَبّيك</Text><Text style={s.brandTag}>اطلب، والباقي علينا.</Text></View></View><View style={s.headerActions}><Pressable onPress={() => navigate('profile')} style={s.accountAvatar} accessibilityRole="button" accessibilityLabel="فتح حسابي">{profileAvatarUrl ? <Image source={avatarSource(profileAvatarUrl, profileAvatarPath)} cachePolicy="memory-disk" style={s.avatarImage} contentFit="cover" accessibilityLabel="صورة الحساب"/> : <Text style={s.accountAvatarText}>{accountInitial}</Text>}</Pressable></View></View>
       <KeyboardScroll ref={bodyScrollRef} style={s.bodyScroll} contentContainerStyle={s.content} refreshControl={<RefreshControl refreshing={pullRefreshing} onRefresh={() => void pullRefresh()} tintColor={c.primary} colors={[c.primary]} progressBackgroundColor={c.surface} />}>
       <StaggeredSections transitionKey={`${tab}-${tab === 'orders' && ordersLoading ? 'loading' : 'ready'}`}>
-      {tab === 'addresses' ? <EntranceSection transitionKey={tab}><AddressBook userId={userId} onBack={goBack} backLabel={`العودة إلى ${tabHistory[tabHistory.length - 1] === 'profile' ? 'حسابي' : 'الرئيسية'}`} onAddressSaved={(address) => { addressIdRef.current = address.id; setAddressId(address.id); setAddressSummary(`${address.label} · ${address.neighborhood}`); setSelectedAddress(address); }} /></EntranceSection> : tab === 'home' ? <>
+      {tab === 'addresses' ? <EntranceSection transitionKey={tab}><AddressBook userId={userId} onBack={goBack} backLabel={`العودة إلى ${tabHistory[tabHistory.length - 1] === 'profile' ? 'حسابي' : 'الرئيسية'}`} onAddressSaved={(address) => { addressIdRef.current = address.id; setAddressId(address.id); setAddressSummary(`${address.label} · ${address.neighborhood}`); setSelectedAddress(address); }} /></EntranceSection> : tab === 'home' && !homeSettled ? <CustomerHomeSkeleton /> : tab === 'home' ? <>
       {tab === 'home' && activeCustomerOrders.length > 0 && <Pressable onPress={() => { setOrderFilter('live'); navigate('orders'); }} accessibilityRole="button" accessibilityLabel={activeCustomerOrders.length === 1 ? `${bannerLabels[activeCustomerOrders[0].status] ?? 'طلبك جارٍ'}. تتبّع الطلب` : `لديك ${activeCustomerOrders.length} طلبات جارية. عرض`} style={{ backgroundColor: c.surface, borderColor: '#3F6A2E', borderWidth: 1, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, gap: 8, marginBottom: 10 }}>
         <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 9 }}>
           <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: '#B7FF30', shadowColor: '#B7FF30', shadowOpacity: 0.6, shadowRadius: 5, shadowOffset: { width: 0, height: 0 } }} />
