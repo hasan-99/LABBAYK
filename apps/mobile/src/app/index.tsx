@@ -1687,7 +1687,7 @@ function useAdminTabRefresh(active: boolean, refresh: () => Promise<void>, memor
 function AdminTopBar({ right }: { right?: ReactNode }) {
   const { colors: color, styles: s } = useMobileTheme();
   return <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6 }}>
-    <View style={s.brand}>
+    <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10 }}>
       <View style={s.brandMark}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={s.brandLogo} contentFit="contain" accessibilityLabel="شعار لَبّيك" /></View>
       <View><Text style={s.brandName}>لَبّيك</Text><Text style={{ color: color.muted, fontSize: 11.5, textAlign: 'right' }}>الإدارة</Text></View>
     </View>
