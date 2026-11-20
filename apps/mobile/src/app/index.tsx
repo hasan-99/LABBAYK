@@ -1054,7 +1054,6 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
         <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', marginHorizontal: 2, marginTop: 4 }}><Text style={{ color: c.muted, fontSize: 12.5, fontWeight: '800' }}>{group.label}</Text><Text style={{ color: c.muted, fontSize: 12.5 }}>{group.items.length} طلب</Text></View>
         {group.items.map((order) => { const open = historyOpen === order.id; const extra = historyExtra[order.id]; const addr = order.address_id ? historyAddresses[order.address_id] : undefined; const { body } = splitPickup(order.request_text); return <Pressable key={order.id} onPress={() => setHistoryOpen(open ? null : order.id)} accessibilityRole="button" accessibilityState={{ expanded: open }} style={{ backgroundColor: c.surface, borderColor: open ? c.primary : c.border, borderWidth: 1, borderRadius: 20, padding: 11, gap: 10 }}>
           <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11 }}>
-            <AdminOrderThumb orderId={order.id} bucket="delivery-proofs" />
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text numberOfLines={1} style={{ color: c.text, fontSize: 14.5, fontWeight: '900', textAlign: 'right' }}>{body}</Text>
               <Text numberOfLines={1} style={{ color: c.muted, fontSize: 12, textAlign: 'right', marginTop: 1 }}>{addr ? addr.neighborhood : ''} · {order.delivered_at ? notificationTimeFormatter.format(new Date(order.delivered_at)) : ''}</Text>
