@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "685480626569",
+    "project_id": "labbayk-a2c9f",
+    "storage_bucket": "labbayk-a2c9f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:685480626569:android:b7464c634cb57992bb7958",
+        "android_client_info": {
+          "package_name": "com.hasan99.labbayk"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB2_BtBAIUP_g9WTa3CJ-bklYvL4opoFKU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
