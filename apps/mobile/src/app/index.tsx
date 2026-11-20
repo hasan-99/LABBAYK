@@ -1,7 +1,7 @@
 import { Children, Component, Fragment, createContext, isValidElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import type { Metadata } from 'expo-router/server';
-import { ActivityIndicator, Alert, Animated, AppState, Easing, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, Share, StyleSheet, TextInput, View, type ScrollViewProps } from 'react-native';
+import { AccessibilityInfo, ActivityIndicator, Alert, Animated, AppState, Easing, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, Share, StyleSheet, TextInput, View, type ScrollViewProps } from 'react-native';
 import { SymbolView, type AndroidSymbol, type SFSymbol } from 'expo-symbols';
 import { useNetworkState } from 'expo-network';
 import type { NotificationResponse } from 'expo-notifications';
@@ -13,7 +13,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { tokens } from '@labbayk/design-tokens';
 import type { Session } from '@supabase/supabase-js';
 import type { Database } from '@labbayk/shared/database.types';
-import { supabase, supabaseConfigured } from '@/lib/supabase';
+import { readStoredSession, supabase, supabaseConfigured } from '@/lib/supabase';
 import { getBackendHealth, subscribeBackendHealth, type BackendHealth } from '@/lib/network-health';
 import { clearCustomerOrderDraft, clearCustomerOrdersSnapshot, loadCustomerOrderDraft, loadCustomerOrdersSnapshot, saveCustomerOrderDraft, saveCustomerOrdersSnapshot, type CustomerOrderImageDraft, type CustomerOrderSnapshot } from '@/lib/customer-order-draft';
 import { clearDriverOrdersSnapshot, loadDriverOrdersSnapshot, saveDriverOrdersSnapshot } from '@/lib/driver-orders-cache';
@@ -183,17 +183,31 @@ function confirmAction(title: string, message: string, confirmLabel: string): Pr
   return new Promise((resolve) => Alert.alert(title, message, [{ text: 'رجوع', style: 'cancel', onPress: () => resolve(false) }, { text: confirmLabel, style: 'destructive', onPress: () => resolve(true) }], { cancelable: true, onDismiss: () => resolve(false) }));
 }
 
+// One shared pulse for every skeleton block: a loading screen has 20–40 blocks, and one animation
+// per block kept the UI thread busy on cheap phones exactly while data was arriving.
+const skeletonPulse = new Animated.Value(0.45);
+let skeletonUsers = 0;
+let skeletonLoop: Animated.CompositeAnimation | null = null;
+function useSkeletonPulse() {
+  useEffect(() => {
+    skeletonUsers += 1;
+    if (!skeletonLoop) {
+      skeletonLoop = Animated.loop(Animated.sequence([
+        Animated.timing(skeletonPulse, { toValue: 1, duration: 750, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(skeletonPulse, { toValue: 0.45, duration: 750, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      ]));
+      skeletonLoop.start();
+    }
+    return () => {
+      skeletonUsers -= 1;
+      if (!skeletonUsers && skeletonLoop) { skeletonLoop.stop(); skeletonLoop = null; }
+    };
+  }, []);
+  return skeletonPulse;
+}
 function SkeletonBlock({ width = '68%', height = 11, style }: { width?: number | `${number}%`; height?: number; style?: object }) {
   const { colors: c } = useMobileTheme();
-  const [pulse] = useState(() => new Animated.Value(0.45));
-  useEffect(() => {
-    const loop = Animated.loop(Animated.sequence([
-      Animated.timing(pulse, { toValue: 1, duration: 750, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      Animated.timing(pulse, { toValue: 0.45, duration: 750, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-    ]));
-    loop.start();
-    return () => loop.stop();
-  }, [pulse]);
+  const pulse = useSkeletonPulse();
   return <Animated.View style={[{ width, height, borderRadius: 8, backgroundColor: c.border, alignSelf: 'flex-end', opacity: pulse }, style]} />;
 }
 
@@ -235,23 +249,31 @@ function flattenSections(children: ReactNode): ReactNode[] {
   });
 }
 
+// Entrance motion is kept short: content used to fade in over 0.68 s with up to 0.6 s of stagger per
+// section (and nested sections stacked those delays), so a tab looked "still loading" for ~2 s.
+// Now everything is fully visible within ~0.3 s, and nested sections don't animate twice.
+const NestedEntranceContext = createContext(false);
+let reduceMotion = false;
+void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => { reduceMotion = enabled; }).catch(() => undefined);
 function EntranceSection({ children, delay = 0, transitionKey = '' }: { children: ReactNode; delay?: number; transitionKey?: string }) {
-  const [progress] = useState(() => new Animated.Value(0));
-  const translateY = progress.interpolate({ inputRange: [0, 1], outputRange: [26, 0] });
-  const scale = progress.interpolate({ inputRange: [0, 1], outputRange: [0.985, 1] });
+  const nested = useContext(NestedEntranceContext);
+  const [progress] = useState(() => new Animated.Value(nested || reduceMotion ? 1 : 0));
+  const translateY = progress.interpolate({ inputRange: [0, 1], outputRange: [10, 0] });
   useEffect(() => {
+    if (nested || reduceMotion) { progress.setValue(1); return; }
     progress.setValue(0);
-    const animation = Animated.timing(progress, { toValue: 1, duration: 680, delay, easing: Easing.out(Easing.cubic), useNativeDriver: true });
+    const animation = Animated.timing(progress, { toValue: 1, duration: 200, delay, easing: Easing.out(Easing.cubic), useNativeDriver: true });
     animation.start();
     return () => animation.stop();
-  }, [delay, progress, transitionKey]);
-  return <Animated.View style={{ width: '100%', opacity: progress, transform: [{ translateY }, { scale }] }}>{children}</Animated.View>;
+  }, [delay, nested, progress, transitionKey]);
+  if (nested) return <>{children}</>;
+  return <NestedEntranceContext.Provider value><Animated.View style={{ width: '100%', opacity: progress, transform: [{ translateY }] }}>{children}</Animated.View></NestedEntranceContext.Provider>;
 }
 
 function StaggeredSections({ children, transitionKey, animateSingle = false }: { children: ReactNode; transitionKey: string; animateSingle?: boolean }) {
   const sections = flattenSections(children);
   if (sections.length === 1 && !animateSingle) return <>{sections[0]}</>;
-  return <>{sections.map((section, index) => <EntranceSection key={`${transitionKey}-${String(isValidElement(section) ? section.key ?? index : index)}`} transitionKey={transitionKey} delay={Math.min(index * 120, 600)}>{section}</EntranceSection>)}</>;
+  return <>{sections.map((section, index) => <EntranceSection key={`${transitionKey}-${String(isValidElement(section) ? section.key ?? index : index)}`} transitionKey={transitionKey} delay={Math.min(index * 30, 90)}>{section}</EntranceSection>)}</>;
 }
 
 function AddressBook({ userId, onBack, backLabel, onAddressSaved }: { userId: string; onBack: () => void; backLabel: string; onAddressSaved: (address: Address) => void }) {
@@ -679,6 +701,8 @@ function DriverOperationsSkeleton({ screen }: { screen: 'home' | 'orders' }) {
   </View>;
 }
 
+// Last successful driver sync per account (kept outside React so the refresh callback stays pure).
+const driverLastSync = new Map<string, number>();
 function DriverOperations({ userId, screen = 'orders', isActive = true, profileComplete = true, onCompleteProfile = () => {}, onOpenOrders = () => {} }: { isActive?: boolean; userId: string; screen?: 'home' | 'orders'; profileComplete?: boolean; onCompleteProfile?: () => void; onOpenOrders?: () => void }) {
   const { colors: c, styles: s } = useMobileTheme();
   const online = useInternetAvailable();
@@ -692,6 +716,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   const [orderSection, setOrderSection] = useState<'offers' | 'active' | 'history'>('offers');
   const [history, setHistory] = useState<HistoryOrder[] | null>(null);
   const [historyPeriod, setHistoryPeriod] = useState<HistoryPeriod>('today');
+  const [historyVisible, setHistoryVisible] = useState(20);
   const [historyOpen, setHistoryOpen] = useState<string | null>(null);
   const [historyAddresses, setHistoryAddresses] = useState<Record<string, { neighborhood: string; city: string; street: string; building: string | null; landmark: string | null }>>({});
   const [historyExtra, setHistoryExtra] = useState<Record<string, { cash: number | null; note: string | null }>>({});
@@ -714,104 +739,77 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   const [walletUnavailable, setWalletUnavailable] = useState(false);
   const [loadedScreens, setLoadedScreens] = useState<{ home: boolean; orders: boolean }>({ home: false, orders: false });
   // The skeleton only shows the first time a screen loads (or on a manual refresh); switching tabs refreshes quietly.
-  const pageLoading = !loadedScreens[screen] || (refreshing && loading);
+  // A manual refresh keeps the current cards on screen (only the refresh control spins); the skeleton is for the first load.
+  const pageLoading = !loadedScreens[screen];
   useEffect(() => {
     const ids = new Set(offers.map((offer) => offer.id));
     if (seenOffers.current && offers.some((offer) => !seenOffers.current?.has(offer.id))) showOfferToast('وصلك عرض توصيل جديد. افتح الرئيسية أو الطلبات.', 'info');
     seenOffers.current = ids;
   }, [offers, showOfferToast]);
-  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastSyncAt = useRef(0);
   const channelTopic = useRef(`driver-orders-${userId}-${newRequestKey()}`);
   const refresh = useCallback(async () => {
     if (!supabase) { setOperationsAreStale(true); setLoadedScreens({ home: true, orders: true }); setLoading(false); return; }
     try {
-    const cachedSnapshot = await loadDriverOrdersSnapshot(userId);
-    if (cachedSnapshot) {
-      setOrdersSyncedAt(cachedSnapshot.syncedAt);
-      // The cache has hidden values (zero amounts, no address): only show it when offline,
-      // never as a flash before live data arrives on a normal online refresh.
-      if (!online) {
+    // The local snapshot is only needed offline (or as a fallback); reading it no longer delays the network.
+    const snapshotPromise = loadDriverOrdersSnapshot(userId);
+    if (!online) {
+      const cachedSnapshot = await snapshotPromise;
+      if (cachedSnapshot) {
+        // The cache has hidden values (zero amounts, no address), so it is shown only when offline.
+        setOrdersSyncedAt(cachedSnapshot.syncedAt);
         setActiveOrders(cachedSnapshot.orders);
         setActiveOrdersCount(cachedSnapshot.orders.length);
-        setOperationsAreStale(true);
-      }
-    }
-    if (!online) {
-      if (!cachedSnapshot) setActiveOrders([]);
+      } else setActiveOrders([]);
       setOperationsAreStale(true); setLoading(false); return;
     }
-    // Profile, wallet, offers and assigned orders are independent: one wave instead of two.
+    // One wave: profile, wallet, offers and assigned orders, with each order's address embedded in the
+    // same request. This used to take four sequential round trips before a new offer could be accepted.
     const [driver, wallet, offerRows, assigned] = await Promise.all([
       supabase.from('driver_profiles').select('is_online').eq('user_id', userId).single(),
       supabase.rpc('get_driver_wallet_balances'),
-      supabase.from('order_offers').select('id,order_id,expires_at').eq('driver_id', userId).eq('status', 'pending').gt('expires_at', new Date().toISOString()).order('expires_at'),
-      supabase.from('orders').select('id,status,category,request_text,delivery_fee_minor,budget_ceiling_minor,purchase_amount_minor,purchase_approved_at,created_at,address_id').eq('driver_id', userId).neq('status', 'delivered').neq('status', 'settled').neq('status', 'cancelled').order('created_at', { ascending: false }),
+      supabase.from('order_offers').select('id,order_id,expires_at,order:orders(id,status,category,request_text,delivery_fee_minor,budget_ceiling_minor,address_id,address:addresses(id,label,street,city,neighborhood,building,landmark))').eq('driver_id', userId).eq('status', 'pending').gt('expires_at', new Date().toISOString()).order('expires_at'),
+      supabase.from('orders').select('id,status,category,request_text,delivery_fee_minor,budget_ceiling_minor,purchase_amount_minor,purchase_approved_at,created_at,address_id,address:addresses(id,label,street,city,neighborhood,contact_phone,building,landmark)').eq('driver_id', userId).neq('status', 'delivered').neq('status', 'settled').neq('status', 'cancelled').order('created_at', { ascending: false }),
     ]);
     const { data: walletRows, error: walletError } = wallet;
     if (!walletError) { setWalletBalance(walletRows?.find((row) => row.driver_id === userId)?.balance_minor ?? 0); setWalletUnavailable(false); }
     else { setWalletBalance(null); setWalletUnavailable(true); }
     if (driver.data) setProfile(driver.data);
-    const [addressResult, offerOrderResult] = await Promise.all([
-      assigned.data?.length
-        ? supabase.from('addresses').select('id,label,street,city,neighborhood,contact_phone,building,landmark').in('id', assigned.data.map((order) => order.address_id).filter((id): id is string => id !== null))
-        : Promise.resolve(null),
-      offerRows.data?.length
-        ? supabase.from('orders').select('id,status,category,request_text,delivery_fee_minor,budget_ceiling_minor,address_id').in('id', offerRows.data.map((offer) => offer.order_id))
-        : Promise.resolve(null),
-    ]);
-    const offerAddressResult = offerOrderResult?.data?.length
-      ? await supabase.from('addresses').select('id,label,street,city,neighborhood,building,landmark').in('id', offerOrderResult.data.map((order) => order.address_id).filter((id): id is string => id !== null))
-      : null;
-    let addressError = false;
-    if (offerAddressResult?.error) addressError = true;
     let currentOrders: DriverActiveOrder[] | null = null;
-    if (assigned.error) addressError = true;
-    else if (assigned.data?.length) {
-      const { data: addressRows, error } = addressResult!;
-      if (error) addressError = true;
-      else {
-        const addressMap = new Map((addressRows ?? []).map((address) => [address.id, address]));
-        currentOrders = assigned.data.map((order) => ({ ...order, address: order.address_id ? addressMap.get(order.address_id) ?? null : null }));
-      }
-    } else currentOrders = [];
-    if (currentOrders) {
+    if (!assigned.error) {
+      currentOrders = (assigned.data ?? []).map((order) => ({ ...order, address: order.address ?? null }));
       setActiveOrders(currentOrders);
       setActiveOrdersCount(currentOrders.length);
       void saveDriverOrdersSnapshot(userId, currentOrders).then((snapshot) => setOrdersSyncedAt(snapshot.syncedAt)).catch(() => {});
     }
-    if (offerRows.data?.length) {
-      const { data: orderRows, error } = offerOrderResult!;
-      if (!error) {
-        const orderMap = new Map((orderRows ?? []).map((order) => [order.id, order]));
-        const addressMap = new Map((offerAddressResult?.data ?? []).map((address) => [address.id, address]));
-        setOffers(offerRows.data.flatMap((offer) => { const order = orderMap.get(offer.order_id); return order ? [{ id: offer.id, expires_at: offer.expires_at, order: { ...order, address: order.address_id ? addressMap.get(order.address_id) ?? null : null } }] : []; }));
-        setOffersCount(offerRows.data.length);
-      }
-    } else if (!offerRows.error) { setOffers([]); setOffersCount(0); }
-    const syncFailed = !!driver.error || !!offerRows.error || !!assigned.error || addressError || !!offerOrderResult?.error;
+    if (!offerRows.error) {
+      const cards: DriverOfferCard[] = (offerRows.data ?? []).flatMap((offer) => offer.order ? [{ id: offer.id, expires_at: offer.expires_at, order: { ...offer.order, address: offer.order.address ?? null } }] : []);
+      setOffers(cards);
+      setOffersCount(cards.length);
+    }
+    const syncFailed = !!driver.error || !!offerRows.error || !!assigned.error;
     setOperationsAreStale(syncFailed);
     if (!syncFailed) setMessage('');
-    if (syncFailed && !currentOrders && cachedSnapshot) setActiveOrders(cachedSnapshot.orders);
+    if (syncFailed && !currentOrders) { const cachedSnapshot = await snapshotPromise; if (cachedSnapshot) setActiveOrders(cachedSnapshot.orders); }
     } catch {
       setOperationsAreStale(true);
     } finally {
       // Home and orders show the same data, so one load serves both screens.
-      lastSyncAt.current = Date.now();
+      driverLastSync.set(userId, Date.now());
       setLoadedScreens({ home: true, orders: true });
       setLoading(false);
     }
   }, [online, userId, setMessage]);
-  const scheduleRefresh = useCallback(() => {
-    if (refreshTimer.current) clearTimeout(refreshTimer.current);
-    refreshTimer.current = setTimeout(() => { refreshTimer.current = null; void refresh(); }, 250);
-  }, [refresh]);
-  useEffect(() => () => { if (refreshTimer.current) clearTimeout(refreshTimer.current); }, []);
+  // One scheduler: realtime bursts collapse into one reload, and a reload requested while another is
+  // running waits for it instead of racing it (two overlapping reloads used to fight over the lists).
+  const scheduler = useMemo(() => createRefreshScheduler(refresh, 300), [refresh]);
+  useEffect(() => () => scheduler.cancel(), [scheduler]);
+  const scheduleRefresh = scheduler.schedule;
+  const refreshNow = scheduler.now;
   // Initial load and realtime refresh are server synchronization, not derived render state.
-  useEffect(() => { setLoading(true); void refresh(); }, [refresh]);
+  useEffect(() => { setLoading(true); void refreshNow(); }, [refreshNow]);
   // Switching between home and orders reuses loaded data; realtime keeps it current.
   // Only data older than 30 s is refreshed, quietly in the background.
-  useEffect(() => { if (lastSyncAt.current && Date.now() - lastSyncAt.current > 30 * 1000) scheduleRefresh(); }, [screen]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const last = driverLastSync.get(userId) ?? 0; if (last && Date.now() - last > 30 * 1000) scheduleRefresh(); }, [screen]); // eslint-disable-line react-hooks/exhaustive-deps
   const loadHistory = useCallback(async () => {
     if (!supabase || !online) return;
     // Cash and note columns come with the main query; addresses follow in one more request.
@@ -831,7 +829,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     if (busy || refreshing) return;
     if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; }
     setRefreshing(true); setLoading(true);
-    await refresh();
+    await refreshNow();
     if (orderSection === 'history') await loadHistory();
     setRefreshing(false); setRefreshToastPending(true);
   };
@@ -844,41 +842,47 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     if (!supabase || !online) return;
     const channel = supabase.channel(channelTopic.current)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'order_offers', filter: `driver_id=eq.${userId}` }, scheduleRefresh)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_events' }, scheduleRefresh)
+      // Only this driver's orders; listening to every order event made each driver reload for all orders.
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `driver_id=eq.${userId}` }, scheduleRefresh)
       .subscribe();
     return () => { void supabase?.removeChannel(channel); };
   }, [online, scheduleRefresh, userId]);
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') scheduleRefresh();
+      if (state === 'active' && Date.now() - (driverLastSync.get(userId) ?? 0) > 30 * 1000) scheduleRefresh();
     });
     return () => subscription.remove();
   }, [scheduleRefresh]);
+  const patchOrder = (orderId: string, changes: Partial<DriverActiveOrder>) => setActiveOrders((current) => current.map((order) => order.id === orderId ? { ...order, ...changes } : order));
+  const [pendingAction, setPendingAction] = useState('');
   const setAvailability = async (is_online: boolean) => {
     if (!profileComplete) { setMessage('أكمل ملفك الشخصي أولاً حتى تقدر تستقبل الطلبات.'); onCompleteProfile(); return; }
     if (!supabase || !online || operationsAreStale) { setMessage('هالإجراء يحتاج اتصالاً بالخادم. تأكد من الإنترنت وحدّث الصفحة.'); return; }
     setBusy(true); setMessage('');
+    setProfile({ is_online }); // the switch moves at once; it flips back if the server refuses
     const { error } = await supabase.from('driver_profiles').update({ is_online }).eq('user_id', userId);
     setBusy(false);
-    if (error) { setMessage('ما قدرنا نحدّث التوفر. حاول مرة ثانية.'); return; }
-    setProfile({ is_online });
+    if (error) { setProfile({ is_online: !is_online }); setMessage('ما قدرنا نحدّث التوفر. حاول مرة ثانية.'); return; }
     setMessage(is_online ? 'تم تفعيل استقبال الطلبات. العروض الجديدة توصلك فوراً.' : 'تم إيقاف استقبال الطلبات.');
   };
   const accept = async (offerId: string) => {
     if (!supabase || !online || operationsAreStale) { setMessage('هالإجراء يحتاج اتصالاً بالخادم. تأكد من الإنترنت وحدّث الصفحة.'); return; }
-    setBusy(true); setMessage('');
+    setBusy(true); setPendingAction(`accept-${offerId}`); setMessage('');
     const { error } = await supabase.rpc('accept_order_offer', { p_offer_id: offerId });
-    setBusy(false);
-    if (error) { setMessage('العرض انتهى أو قبله سائق تاني. حدّث القائمة.'); await refresh(); return; }
-    setMessage('تم قبول الطلب من السيرفر.'); await refresh();
+    setBusy(false); setPendingAction('');
+    if (error) { setMessage('العرض انتهى أو قبله سائق تاني. حدّث القائمة.'); void refreshNow(); return; }
+    // Show the result immediately; the reload that brings the full order runs in the background.
+    setOffers((current) => current.filter((offer) => offer.id !== offerId)); setOffersCount((count) => Math.max(0, count - 1));
+    setMessage('تم قبول الطلب من السيرفر.'); void refreshNow();
   };
   const decline = async (offerId: string) => {
     if (!supabase || !online || operationsAreStale) { setMessage('هالإجراء يحتاج اتصالاً بالخادم. تأكد من الإنترنت وحدّث الصفحة.'); return; }
-    setBusy(true); setMessage('');
+    setBusy(true); setPendingAction(`decline-${offerId}`); setMessage('');
     const { error } = await supabase.rpc('decline_order_offer', { p_offer_id: offerId });
-    setBusy(false);
-    if (error) { setMessage('انتهى العرض أو ما عاد متاح. حدّث القائمة.'); await refresh(); return; }
-    setMessage('اعتذرت عن العرض.'); await refresh();
+    setBusy(false); setPendingAction('');
+    if (error) { setMessage('انتهى العرض أو ما عاد متاح. حدّث القائمة.'); void refreshNow(); return; }
+    setOffers((current) => current.filter((offer) => offer.id !== offerId)); setOffersCount((count) => Math.max(0, count - 1));
+    setMessage('اعتذرت عن العرض.'); void refreshNow();
   };
   const startShopping = async (orderId: string) => {
     if (!supabase || !online || operationsAreStale) { setMessage('هالإجراء يحتاج اتصالاً بالخادم. تأكد من الإنترنت وحدّث الصفحة.'); return; }
@@ -886,7 +890,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     const { error } = await supabase.rpc('start_order_shopping', { p_order_id: orderId });
     setBusy(false);
     if (error) { setMessage('ما قدرنا نبدأ التسوق. حدّث حالة الطلب وحاول مرة ثانية.'); return; }
-    setMessage('تم تأكيد بدء التسوق.'); await refresh();
+    patchOrder(orderId, { status: 'shopping' }); setMessage('تم تأكيد بدء التسوق.'); void refreshNow();
   };
   const confirmPurchase = async (orderId: string) => {
     if (!supabase || !online || operationsAreStale) { setMessage('هالإجراء يحتاج اتصالاً بالخادم. تأكد من الإنترنت وحدّث الصفحة.'); return; }
@@ -901,8 +905,8 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     }
     const { error: confirmError } = await supabase.rpc('confirm_order_purchase', { p_order_id: orderId });
     setBusy(false);
-    if (confirmError) { setMessage('انسجل المبلغ لكن ما قدرنا نأكد الشراء. جرّب مرة ثانية.'); await refresh(); return; }
-    setMessage('تم تأكيد الشراء. ابدأ التوصيل لما تكون جاهز.'); await refresh();
+    if (confirmError) { setMessage('انسجل المبلغ لكن ما قدرنا نأكد الشراء. جرّب مرة ثانية.'); void refreshNow(); return; }
+    patchOrder(orderId, { status: 'purchased', purchase_amount_minor: amount }); setMessage('تم تأكيد الشراء. ابدأ التوصيل لما تكون جاهز.'); void refreshNow();
   };
   const startDelivery = async (orderId: string) => {
     if (!supabase || !online || operationsAreStale) { setMessage('هالإجراء يحتاج اتصالاً بالخادم. تأكد من الإنترنت وحدّث الصفحة.'); return; }
@@ -910,7 +914,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     const { error } = await supabase.rpc('start_order_delivery', { p_order_id: orderId });
     setBusy(false);
     if (error) { setMessage('ما قدرنا نبدأ التوصيل. تأكد أن المشتريات مسجلة وموافق عليها.'); return; }
-    setMessage('بدأ التوصيل. اطلب من الزبون رمز التأكيد عند التسليم.'); await refresh();
+    patchOrder(orderId, { status: 'delivering' }); setMessage('بدأ التوصيل. اطلب من الزبون رمز التأكيد عند التسليم.'); void refreshNow();
   };
   const startDeliveryPhoto = async (orderId: string) => {
     if (!supabase || !online || operationsAreStale) { setMessage('هالإجراء يحتاج اتصالاً بالخادم. تأكد من الإنترنت وحدّث الصفحة.'); return; }
@@ -935,17 +939,19 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       const body = await fetch(uri).then((response) => response.arrayBuffer());
       if (body.byteLength > 5 * 1024 * 1024) { setBusy(false); setMessage('حجم الصورة أكبر من 5 ميغابايت. صوّر مرة ثانية.'); return; }
       const path = `${orderId}/${Date.now()}.jpg`;
+      setPendingAction('delivery-upload');
       const upload = await supabase.storage.from('delivery-proofs').upload(path, body, { contentType: mimeType, cacheControl: '3600', upsert: false });
       if (upload.error) throw upload.error;
       const missing = (error: { code?: string; message: string } | null) => !!error && /find the function|PGRST202/i.test(`${error.code ?? ''} ${error.message}`);
       const note = deliveryNote.trim() || null;
+      setPendingAction('delivery-confirm');
       let { error } = await supabase.rpc('confirm_order_delivery_with_photo', { p_order_id: orderId, p_proof_path: path, p_cash_collected_minor: collected, p_note: note });
       if (missing(error)) ({ error } = await supabase.rpc('confirm_order_delivery_with_photo', { p_order_id: orderId, p_proof_path: path, p_cash_collected_minor: collected }));
       if (missing(error)) ({ error } = await supabase.rpc('confirm_order_delivery_with_photo', { p_order_id: orderId, p_proof_path: path }));
       if (error) throw error;
-      setBusy(false); setDeliveryDraft(null); setMessage('تم تسليم الطلب وحُفظت صورة الإثبات.'); await refresh();
+      setBusy(false); setPendingAction(''); setDeliveryDraft(null); setActiveOrders((current) => current.filter((order) => order.id !== orderId)); setActiveOrdersCount((count) => Math.max(0, count - 1)); setMessage('تم تسليم الطلب وحُفظت صورة الإثبات.'); void refreshNow();
     } catch {
-      setBusy(false); setMessage('ما قدرنا نأكد التسليم. تأكد من الاتصال وجرّب مرة ثانية.');
+      setBusy(false); setPendingAction(''); setMessage('ما قدرنا نأكد التسليم. تأكد من الاتصال وجرّب مرة ثانية.');
     }
   };
   const renderHistory = () => {
@@ -957,7 +963,8 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     const knownCash = rows.filter((order) => historyExtra[order.id]?.cash != null);
     const cashTotal = knownCash.reduce((sum, order) => sum + (historyExtra[order.id]?.cash ?? 0), 0);
     const groups: { label: string; items: HistoryOrder[] }[] = [];
-    for (const order of rows) { const label = dayLabel(order.delivered_at as string); const last = groups[groups.length - 1]; if (last && last.label === label) last.items.push(order); else groups.push({ label, items: [order] }); }
+    // Up to 100 delivered orders: render 20 at a time (each row loads a proof thumbnail).
+    for (const order of rows.slice(0, historyVisible)) { const label = dayLabel(order.delivered_at as string); const last = groups[groups.length - 1]; if (last && last.label === label) last.items.push(order); else groups.push({ label, items: [order] }); }
     return <View style={{ gap: 10, marginTop: 4 }}>
       <View style={{ backgroundColor: c.surface, borderColor: '#3F6A2E', borderWidth: 1, borderRadius: 20, padding: 12, gap: 9 }}>
         <Text style={{ color: c.muted, fontSize: 13, fontWeight: '800', textAlign: 'right' }}>{historyPeriod === 'today' ? '📅 اليوم' : historyPeriod === 'week' ? '📅 آخر 7 أيام' : '📅 كل الطلبات'}</Text>
@@ -966,7 +973,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
         </View>
       </View>
       <View style={{ flexDirection: 'row-reverse', gap: 7 }}>
-        {([['today', 'اليوم'], ['week', 'هذا الأسبوع'], ['all', 'الكل']] as const).map(([key, label]) => { const on = historyPeriod === key; return <Pressable key={key} onPress={() => setHistoryPeriod(key)} accessibilityRole="button" accessibilityState={{ selected: on }} style={{ minHeight: 36, paddingHorizontal: 14, borderRadius: 18, borderWidth: 1, borderColor: on ? '#B7FF30' : c.border, backgroundColor: on ? '#B7FF30' : c.surface, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: on ? '#0B1411' : c.muted, fontSize: 12.5, fontWeight: '800' }}>{label}</Text></Pressable>; })}
+        {([['today', 'اليوم'], ['week', 'هذا الأسبوع'], ['all', 'الكل']] as const).map(([key, label]) => { const on = historyPeriod === key; return <Pressable key={key} onPress={() => { setHistoryPeriod(key); setHistoryVisible(20); }} accessibilityRole="button" accessibilityState={{ selected: on }} style={{ minHeight: 36, paddingHorizontal: 14, borderRadius: 18, borderWidth: 1, borderColor: on ? '#B7FF30' : c.border, backgroundColor: on ? '#B7FF30' : c.surface, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: on ? '#0B1411' : c.muted, fontSize: 12.5, fontWeight: '800' }}>{label}</Text></Pressable>; })}
       </View>
       {!rows.length ? <View style={s.noOffers}><View style={s.emptyIconWrap}><SymbolView name={{ ios: 'clock.arrow.circlepath', android: 'history', web: 'history' }} tintColor={c.primary} size={26}/></View><Text style={s.noOffersTitle}>ما في طلبات منتهية</Text><Text style={s.noOffersCopy}>{historyPeriod === 'all' ? 'لما تنهي أول طلب بيظهر هون.' : 'جرّب فترة أطول من الأزرار فوق.'}</Text></View> : groups.map((group) => <View key={group.label} style={{ gap: 9 }}>
         <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', marginHorizontal: 2, marginTop: 4 }}><Text style={{ color: c.muted, fontSize: 12.5, fontWeight: '800' }}>{group.label}</Text><Text style={{ color: c.muted, fontSize: 12.5 }}>{group.items.length} طلب</Text></View>
@@ -993,6 +1000,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
           </View>}
         </Pressable>; })}
       </View>)}
+      {rows.length > historyVisible ? <Pressable onPress={() => setHistoryVisible((count) => count + 20)} accessibilityRole="button" style={{ minHeight: 44, borderRadius: 14, borderWidth: 1, borderColor: c.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: c.primary, fontSize: 13.5, fontWeight: '800' }}>عرض المزيد ({rows.length - historyVisible})</Text></Pressable> : null}
     </View>;
   };
   const activeLabels: Record<string, string> = { accepted: 'بانتظار بدء التسوق', assigned: 'بانتظار بدء التسوق', shopping: 'مرحلة التسوق', awaiting_approval: 'بانتظار موافقة العميل', purchased: 'جاهز للتوصيل', delivering: 'قيد التوصيل', disputed: 'متوقف مؤقتاً' };
@@ -1093,7 +1101,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       {operationsAreStale && !pageLoading && <Text style={s.driverAvailabilityOffline}>{ordersSyncedAt ? 'طلبات محفوظة وقديمة · آخر مزامنة ' + shortDateTimeFormatter.format(new Date(ordersSyncedAt)) + ' · لا تظهر عناوين العملاء أو المبالغ دون اتصال.' : 'تعذرت مزامنة الخادم. الإجراءات والعروض تحتاج اتصالاً.'}</Text>}
     {pageLoading ? <DriverOperationsSkeleton screen={screen}/> : <StaggeredSections transitionKey={`${screen}-ready`}><>
     {screen==='home'&&<View style={s.radarStage}>
-      <RadarRings active={profile.is_online}/>
+      <RadarRings active={profile.is_online && isActive && screen === 'home'}/>
       <Pressable disabled={busy||!online||operationsAreStale} onPress={()=>void setAvailability(!profile.is_online)} style={[s.radarButton,profile.is_online?s.radarButtonOn:s.radarButtonOff,(busy||!online||operationsAreStale)&&s.disabled]} accessibilityRole="switch" accessibilityLabel={profile.is_online?'إيقاف استقبال الطلبات':'بدء استقبال الطلبات'} accessibilityState={{checked:profile.is_online,disabled:busy||!online||operationsAreStale}} aria-checked={profile.is_online}>
         <SymbolView name={profile.is_online?{ios:'dot.radiowaves.left.and.right',android:'sensors',web:'sensors'}:{ios:'power',android:'power_settings_new',web:'power_settings_new'}} tintColor={profile.is_online?'#0B1411':c.muted} size={42}/>
         <Text style={[s.radarButtonText,profile.is_online&&s.radarButtonTextOn]}>{busy?'لحظة…':profile.is_online?'متصل':profileComplete?'اضغط للبدء':'أكمل ملفك'}</Text>
@@ -1123,7 +1131,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       </View>
       <View style={s.driverOrdersToolbar}><View style={s.driverOrdersToolbarTitleRow}><Text style={s.driverOrdersToolbarTitle}>{orderSection === 'offers' ? 'عروض قريبة منك' : orderSection === 'active' ? 'طلباتك النشطة' : 'سجل طلباتك'}</Text></View><Pressable disabled={busy || refreshing} onPress={() => void manualRefresh()} style={[s.driverToolbarRefresh, busy && s.disabled]} accessibilityRole="button" accessibilityLabel="تحديث طلبات السائق"><SymbolView name={{ ios: 'arrow.clockwise', android: 'refresh', web: 'refresh' }} tintColor={c.primary} size={15}/><Text style={s.driverToolbarRefreshText}>{refreshing ? 'لحظة…' : 'تحديث'}</Text></Pressable></View>
       <View style={orderSection === 'offers' ? undefined : s.hidden}>{!profile.is_online && <View style={s.driverOrdersHint}><SymbolView name={{ios:'pause.circle.fill',android:'pause_circle',web:'pause_circle'}} tintColor={c.accent} size={19}/><Text style={s.driverOrdersHintText}>الاستقبال متوقف. فعّله من الرئيسية حتى تقدر تقبل عرضاً.</Text></View>}
-    {offers.length ? offers.map((offer) => <View key={offer.id} style={s.driverIncomingCard}><View style={s.driverIncomingTop}><View style={s.driverOrderCategoryPill}><Text style={s.driverOrderCategoryPillText}>{offer.order.category}</Text></View><View style={s.driverFeeHighlight}><Text style={s.driverFeeLabel}>أجرة التوصيل</Text><Text style={s.driverFeeValue}>{numberFormatter.format(offer.order.delivery_fee_minor)} ل.س</Text></View></View><Text style={s.driverOfferRequest}>{offer.order.request_text}</Text><OrderImageGallery orderId={offer.order.id} defaultOpen/><View style={s.driverOfferDestination}><View style={s.driverOfferSectionTitle}><SymbolView name={{ios:'mappin.and.ellipse',android:'location_on',web:'location_on'}} tintColor={c.primary} size={17}/><Text style={s.dropoffTitle}>مكان التوصيل</Text></View>{offer.order.address?<><Text style={s.dropoffText}>{offer.order.address.street}{offer.order.address.building?'، بناء '+offer.order.address.building:''}</Text><Text style={s.dropoffText}>{offer.order.address.neighborhood}، {offer.order.address.city}{offer.order.address.landmark?' · '+offer.order.address.landmark:''}</Text></>:<Text style={s.dropoffText}>عم نحمل عنوان التوصيل…</Text>}</View><View style={s.driverOfferBudget}><Text style={s.driverOrderFactLabel}>الحد الأعلى لمشتريات العميل</Text><Text style={s.driverOrderFactValue}>حتى {numberFormatter.format(offer.order.budget_ceiling_minor)} ل.س</Text><Text style={s.dropoffText}>أي مبلغ أعلى يحتاج موافقة العميل.</Text></View><OfferCountdown expiresAt={offer.expires_at}/><View style={s.offerActions}><Pressable disabled={busy || !profile.is_online || !online || operationsAreStale || !offer.order.address} onPress={() => void accept(offer.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale || !offer.order.address)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>قبول العرض</Text></Pressable><Pressable disabled={busy || !online || operationsAreStale} onPress={() => void decline(offer.id)} style={[s.declineOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.declineOfferText}>رفض</Text></Pressable></View></View>) : <View style={s.noOffers}><View style={s.emptyIconWrap}><SymbolView name={{ios:'sparkles',android:'new_releases',web:'new_releases'}} tintColor={c.primary} size={26}/></View><Text style={s.noOffersTitle}>ما في عروض حالياً</Text><Text style={s.noOffersCopy}>لما يوصلك عرض جديد بيظهر هون. فيك تحدّث القائمة بأي وقت.</Text></View>}
+    {offers.length ? offers.map((offer) => <View key={offer.id} style={s.driverIncomingCard}><View style={s.driverIncomingTop}><View style={s.driverOrderCategoryPill}><Text style={s.driverOrderCategoryPillText}>{offer.order.category}</Text></View><View style={s.driverFeeHighlight}><Text style={s.driverFeeLabel}>أجرة التوصيل</Text><Text style={s.driverFeeValue}>{numberFormatter.format(offer.order.delivery_fee_minor)} ل.س</Text></View></View><Text style={s.driverOfferRequest}>{offer.order.request_text}</Text><OrderImageGallery orderId={offer.order.id} defaultOpen/><View style={s.driverOfferDestination}><View style={s.driverOfferSectionTitle}><SymbolView name={{ios:'mappin.and.ellipse',android:'location_on',web:'location_on'}} tintColor={c.primary} size={17}/><Text style={s.dropoffTitle}>مكان التوصيل</Text></View>{offer.order.address?<><Text style={s.dropoffText}>{offer.order.address.street}{offer.order.address.building?'، بناء '+offer.order.address.building:''}</Text><Text style={s.dropoffText}>{offer.order.address.neighborhood}، {offer.order.address.city}{offer.order.address.landmark?' · '+offer.order.address.landmark:''}</Text></>:<Text style={s.dropoffText}>عم نحمل عنوان التوصيل…</Text>}</View><View style={s.driverOfferBudget}><Text style={s.driverOrderFactLabel}>الحد الأعلى لمشتريات العميل</Text><Text style={s.driverOrderFactValue}>حتى {numberFormatter.format(offer.order.budget_ceiling_minor)} ل.س</Text><Text style={s.dropoffText}>أي مبلغ أعلى يحتاج موافقة العميل.</Text></View><OfferCountdown expiresAt={offer.expires_at}/><View style={s.offerActions}><Pressable disabled={busy || !profile.is_online || !online || operationsAreStale || !offer.order.address} onPress={() => void accept(offer.id)} style={[s.acceptOffer,(busy || !online || operationsAreStale || !offer.order.address)&&s.disabled]} accessibilityRole="button"><Text style={s.acceptOfferText}>{pendingAction===`accept-${offer.id}`?'لحظة…':'قبول العرض'}</Text></Pressable><Pressable disabled={busy || !online || operationsAreStale} onPress={() => void decline(offer.id)} style={[s.declineOffer,(busy || !online || operationsAreStale)&&s.disabled]} accessibilityRole="button"><Text style={s.declineOfferText}>رفض</Text></Pressable></View></View>) : <View style={s.noOffers}><View style={s.emptyIconWrap}><SymbolView name={{ios:'sparkles',android:'new_releases',web:'new_releases'}} tintColor={c.primary} size={26}/></View><Text style={s.noOffersTitle}>ما في عروض حالياً</Text><Text style={s.noOffersCopy}>لما يوصلك عرض جديد بيظهر هون. فيك تحدّث القائمة بأي وقت.</Text></View>}
     </View><View style={orderSection === 'active' ? undefined : s.hidden}>{!!activeOrders.length && <>{activeOrders.map(renderActiveOrder)}</>}
     {!activeOrders.length && <View style={s.noOffers}><View style={s.emptyIconWrap}><SymbolView name={{ios:'shippingbox.fill',android:'local_shipping',web:'local_shipping'}} tintColor={c.primary} size={26}/></View><Text style={s.noOffersTitle}>ما عندك طلبات نشطة</Text><Text style={s.noOffersCopy}>بعد قبول عرض، تفاصيله وخطوات التوصيل بتظهر هون.</Text></View>}</View><View style={orderSection === 'history' ? undefined : s.hidden}>{renderHistory()}</View></>}
     </></StaggeredSections>}
@@ -1142,7 +1150,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
           <OrderImageGallery orderId={live.order.id} defaultOpen/>
           <View style={s.liveDivider}/>
           <View style={s.liveStats}><Text style={s.liveStat}>الأجرة: <Text style={s.liveStatValue}>{numberFormatter.format(live.order.delivery_fee_minor)} ل.س</Text></Text><Text style={s.liveStat}>النوع: <Text style={s.liveStatValue}>{live.order.category}</Text></Text></View>
-          <Pressable disabled={!can} onPress={()=>void accept(live.id)} style={[s.liveAccept,!can&&s.disabled]} accessibilityRole="button"><Text style={s.liveAcceptText}>قبول العرض الآن</Text></Pressable>
+          <Pressable disabled={!can} onPress={()=>void accept(live.id)} style={[s.liveAccept,!can&&s.disabled]} accessibilityRole="button"><Text style={s.liveAcceptText}>{pendingAction===`accept-${live.id}`?'لحظة… عم نثبّت القبول':'قبول العرض الآن'}</Text></Pressable>
         </View>
         <View style={s.offerActions}>
           <Pressable onPress={()=>{setDismissedOfferId(live.id);setOrderSection('offers');onOpenOrders()}} style={s.liveSecondary} accessibilityRole="button"><Text style={s.liveSecondaryText}>عرض كل الطلبات</Text></Pressable>
@@ -1182,7 +1190,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
             <TextInput value={deliveryNote} onChangeText={(value)=>setDeliveryNote(value.slice(0,300))} multiline maxLength={300} textAlign="right" textAlignVertical="top" placeholder="مثال: الزبون أعطاني إكرامية، أو سلّمته للجار" placeholderTextColor="#839188" style={[s.field,{minHeight:84}]} accessibilityLabel="ملاحظة التسليم"/></View>
         </KeyboardScroll>
         <View style={{paddingHorizontal:16,paddingTop:8,paddingBottom:12,borderTopWidth:1,borderTopColor:c.border}}>
-          <Pressable disabled={busy||!online} onPress={()=>void submitDelivery()} accessibilityRole="button" style={{minHeight:56,borderRadius:18,backgroundColor:'#B7FF30',alignItems:'center',justifyContent:'center',opacity:busy||!online?0.55:1}}><Text style={{color:'#0B1411',fontSize:17,fontWeight:'900'}}>{busy?'عم نحفظ…':'✅ تم تسليم الطلب'}</Text></Pressable>
+          <Pressable disabled={busy||!online} onPress={()=>void submitDelivery()} accessibilityRole="button" style={{minHeight:56,borderRadius:18,backgroundColor:'#B7FF30',alignItems:'center',justifyContent:'center',opacity:busy||!online?0.55:1}}><Text style={{color:'#0B1411',fontSize:17,fontWeight:'900'}}>{pendingAction==='delivery-upload'?'عم نرفع صورة الإثبات…':pendingAction==='delivery-confirm'?'عم نأكد التسليم…':busy?'عم نحفظ…':'✅ تم تسليم الطلب'}</Text></Pressable>
         </View>
       </KeyboardAvoidingView></SafeAreaView>
     </Modal>}
@@ -1229,7 +1237,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
   const network = useNetworkState();
   const online = useInternetAvailable();
   const [tab, setTab] = useState<'home' | 'orders' | 'notifications' | 'profile'>('home');
-  const [visitedTabs, setVisitedTabs] = useState({ home: true, orders: false, notifications: true, profile: true });
+  const [visitedTabs, setVisitedTabs] = useState({ home: true, orders: false, notifications: false, profile: true });
   const [operationsScreen, setOperationsScreen] = useState<'home' | 'orders'>('home');
   const [notificationCount,setNotificationCount]=useState(0);
   const [profile, setProfile] = useState<DriverProfileDraft>({ name: '', phone: '', age: '', avatarPath: null, avatarUrl: null, avatarDraft: null });
@@ -1246,6 +1254,17 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
   const [, setMessage] = useToastMessage();
   const [tabScale] = useState(() => new Animated.Value(1));
   const [activeTabAnimation, setActiveTabAnimation] = useState<'home' | 'orders' | 'notifications' | 'profile'>('home');
+  // The driver's own profile is cached on the device so the workspace opens without waiting for it.
+  useEffect(() => {
+    let active = true;
+    void readPersisted<DriverProfileDraft>(cacheKey(userId, 'driver-profile'), 30 * 24 * 60 * 60 * 1000).then((entry) => {
+      if (!active || !entry || profileLoaded.current) return;
+      const cached = { ...entry.value, avatarUrl: entry.value.avatarPath ? peekSignedImageUrl('profile-avatars', entry.value.avatarPath) : null, avatarDraft: null };
+      setProfile(cached); setName(cached.name); setPhone(cached.phone); setAge(cached.age);
+      profileLoaded.current = true; setLoading(false);
+    });
+    return () => { active = false; };
+  }, [userId]);
   useEffect(() => {
     if (!supabase || !online) return;
     let active = true;
@@ -1273,7 +1292,9 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
       return;
     }
     let active = true;
-    setLoading(true);
+    // Only the very first load shows the skeleton. Later reloads (reconnects, a flapping
+    // "internet reachable" flag) happen quietly so the operations screen is never unmounted.
+    if (!profileLoaded.current) setLoading(true);
     setProfileLoadError('');
     void Promise.all([
       supabase.from('profiles').select('display_name,avatar_path').eq('id', userId).maybeSingle(),
@@ -1282,18 +1303,23 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
       if (!active) return;
       if (account.error || driver.error) throw account.error ?? driver.error;
       const avatarPath = account.data?.avatar_path ?? null;
-      const avatar = avatarPath ? await signedImageUrl('profile-avatars', avatarPath) : null;
-      if (!active) return;
       const loaded: DriverProfileDraft = {
         name: account.data?.display_name ?? '',
         phone: (driver.data?.phone_e164 ?? '').replace(/^\+963/, ''),
         age: driver.data?.age == null ? '' : String(driver.data.age),
         avatarPath,
-        avatarUrl: avatar,
+        avatarUrl: avatarPath ? peekSignedImageUrl('profile-avatars', avatarPath) : null,
         avatarDraft: null,
       };
+      // Show the profile now; the avatar link is signed afterwards instead of holding up the screen.
       setProfile(loaded); setName(loaded.name); setPhone(loaded.phone); setAge(loaded.age);
       profileLoaded.current = true;
+      writePersisted(cacheKey(userId, 'driver-profile'), { ...loaded, avatarUrl: null });
+      setLoading(false);
+      if (avatarPath && !loaded.avatarUrl) {
+        const avatar = await signedImageUrl('profile-avatars', avatarPath);
+        if (active && avatar) setProfile((current) => current.avatarPath === avatarPath ? { ...current, avatarUrl: avatar } : current);
+      }
     }).catch(() => { if (active && !profileLoaded.current) setProfileLoadError('ما قدرنا نحمّل بيانات الملف. أعد المحاولة.'); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [online, network.isConnected, profileRefreshKey, userId]);
@@ -1348,6 +1374,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
       if (profile.avatarPath) await supabase.storage.from('profile-avatars').remove([profile.avatarPath]);
     }
     const saved = { name: name.trim(), phone: normalizedPhone, age: String(parsedAge), avatarPath: uploadedAvatarPath ?? profile.avatarPath, avatarUrl, avatarDraft: null };
+    writePersisted(cacheKey(userId, 'driver-profile'), { ...saved, avatarUrl: null });
     setProfile(saved); setPhone(normalizedPhone); setAge(String(parsedAge)); setAvatarDraft(null); setBusy(false); setMessage('تم حفظ تعديلات ملفك.'); setEditingProfile(false);
   };
   const avatar = avatarDraft?.uri ?? profile.avatarUrl;
@@ -3009,9 +3036,13 @@ export default function HomeScreen() {
   useEffect(() => {
     if (!supabase) { setReady(true); return; }
     let active = true;
+    let resolved = false;
     const readyTimeout = setTimeout(() => { if (active) setReady(true); }, 5000);
+    // Open instantly from the session saved on the device; getSession() (which may need the network
+    // to refresh an expired token) confirms or replaces it below.
+    void readStoredSession().then((stored) => { if (active && stored && !resolved) { setSession(stored); setReady(true); } });
     void supabase.auth.getSession()
-      .then(({ data }) => { if (active) setSession(data.session); })
+      .then(({ data }) => { resolved = true; if (active) setSession(data.session); })
       .catch(() => { if (active) setSession(null); })
       .finally(() => { clearTimeout(readyTimeout); if (active) setReady(true); });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, value) => { if (event === 'PASSWORD_RECOVERY') setPasswordRecovery(true); setSession(value); });
