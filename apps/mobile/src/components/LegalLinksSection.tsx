@@ -1,6 +1,6 @@
 import { Link } from 'expo-router';
 import { Linking, Pressable, View } from 'react-native';
-import { ltrPhone, prettyPhone, useSupportContact, whatsappUrl } from '@/lib/support-contact';
+import { useSupportContact, whatsappUrl } from '@/lib/support-contact';
 import { SymbolView, type AndroidSymbol, type SFSymbol } from 'expo-symbols';
 import { AppText as Text } from '@/components/AppText';
 
@@ -23,7 +23,6 @@ export function LegalLinksSection({ theme }: { theme: 'dark' | 'light' }) {
         {support.phone ? <Pressable onPress={() => void Linking.openURL(`tel:${support.phone}`)} accessibilityRole="button" accessibilityLabel="اتصال بالإدارة" style={{ flex: 1, minHeight: 48, borderRadius: 14, backgroundColor: '#B7FF30', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#0B1411', fontSize: 14, fontWeight: '900' }}>📞 اتصال</Text></Pressable> : null}
         {support.whatsapp ? <Pressable onPress={() => void Linking.openURL(whatsappUrl(support.whatsapp as string))} accessibilityRole="button" accessibilityLabel="واتساب الإدارة" style={{ flex: 1, minHeight: 48, borderRadius: 14, backgroundColor: '#25D366', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#06210F', fontSize: 14, fontWeight: '900' }}>💬 واتساب</Text></Pressable> : null}
       </View>
-      {support.phone ? <Text selectable style={{ color: colors.muted, fontSize: 13, textAlign: 'center' }}>{ltrPhone(prettyPhone(support.phone))}</Text> : null}
     </View> : null}
     <View style={{ padding: 15, borderRadius: 18, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }}>
       <Text style={{ color: colors.text, fontSize: 16, fontWeight: '800', textAlign: 'right', marginBottom: 5 }}>السياسات والمساعدة</Text>
