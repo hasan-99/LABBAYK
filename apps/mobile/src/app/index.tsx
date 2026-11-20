@@ -603,7 +603,6 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
         {!standalone&&<View style={s.notificationExpandIcon}><SymbolView name={{ios:expanded?'chevron.up':'chevron.down',android:expanded?'expand_less':'expand_more',web:expanded?'expand_less':'expand_more'}} tintColor={c.muted} size={18}/></View>}
       </Pressable>
     </View>}
-    {message?<Text accessibilityRole="alert" style={s.formMessage}>{message}</Text>:null}
     {false?<Pressable onPress={()=>void markAllRead()} disabled={markingAllRead||!online} accessibilityRole="button" style={[s.notificationMarkAll,s.notificationMarkAllStandalone,(markingAllRead||!online)&&{opacity:0.6}]}><SymbolView name={{ios:'checkmark.circle.fill',android:'mark_email_read',web:'mark_email_read'}} tintColor="#17210F" size={18}/><Text style={[s.notificationMarkAllText,s.notificationMarkAllStandaloneText]}>{markingAllRead?'عم نحدّث التنبيهات…':'تحديد الكل كمقروء'}</Text></Pressable>:null}
     {(expanded||standalone) && <View style={[s.notificationList,standalone&&s.notificationListStandalone]}>
       {standalone&&!loading&&items.length>0&&!items.some(i=>filter==='all'||!i.read_at)&&<Text style={s.notificationEmpty}>كل تنبيهاتك مقروءة.</Text>}
@@ -1279,7 +1278,7 @@ function DriverApplicationFlow({ userId, initialToken, knownStatus }: { userId: 
   const [inviteCode, setInviteCode] = useState(initialToken ?? '');
   const [vehicle, setVehicle] = useState('');
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useToastMessage();
+  const [, setMessage] = useToastMessage();
   const [checked, setChecked] = useState(knownStatus !== undefined);
   useEffect(() => {
     if (!supabase || !online) return;
@@ -1303,7 +1302,7 @@ function DriverApplicationFlow({ userId, initialToken, knownStatus }: { userId: 
   }, [checked, status, online, initialToken]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!checked) return <View accessibilityRole="progressbar" accessibilityLabel="تحميل حالة طلب الانضمام" style={[s.driverApplyCard, { minHeight: 166, justifyContent: 'center', gap: 14 }]}><SkeletonBlock width="46%" height={18} /><SkeletonBlock width="82%" height={12} /><SkeletonBlock width="66%" height={12} /></View>;
   if (status === 'approved') return <DriverOperations userId={userId}/>;
-  return <View style={s.driverApplyCard}><View style={s.driverApplyMark}><Text style={s.driverApplyIcon}>♙</Text></View><Text style={s.driverApplyTitle}>انضم لفريق السائقين</Text>{status ? <><Text style={s.driverApplyCopy}>{status === 'pending' ? 'طلبك قيد المراجعة. رح يتواصل معك الفريق بعد التحقق.' : status === 'approved' ? 'تم اعتماد حسابك. واجهة السائق قيد التجهيز.' : status === 'suspended' ? 'حساب السائق موقوف حالياً. تواصل مع فريق لَبّيك.' : 'تمت مراجعة الطلب. تواصل مع الفريق إذا بدك تعرف التفاصيل.'}</Text><Text style={s.driverStatus}>{status === 'pending' ? 'بانتظار المراجعة' : status === 'approved' ? 'سائق معتمد' : status === 'suspended' ? 'موقوف' : 'مرفوض'}</Text></> : <><Text style={s.driverApplyCopy}>إذا وصلك رمز دعوة من فريق لَبّيك، دخّله حتى نبدأ مراجعة طلبك.</Text><Text style={s.label}>رمز الدعوة</Text><TextInput value={inviteCode} onChangeText={setInviteCode} autoCapitalize="none" autoCorrect={false} textAlign="left" placeholder="64 حرفاً" placeholderTextColor="#839188" style={s.field} accessibilityLabel="رمز دعوة السائق"/><Text style={s.label}>نوع المركبة <Text style={s.optional}>اختياري</Text></Text><TextInput value={vehicle} onChangeText={setVehicle} placeholder="دراجة، سيارة..." placeholderTextColor="#839188" style={s.field} accessibilityLabel="نوع المركبة" maxLength={160}/><Pressable disabled={busy} onPress={() => void apply()} style={[s.saveAddress,busy&&s.disabled]} accessibilityRole="button"><Text style={s.saveAddressText}>{busy?'عم نتحقق…':'إرسال طلب الانضمام'} <Text style={s.submitArrow}>←</Text></Text></Pressable>{message ? <Text accessibilityRole="alert" style={s.formMessage}>{message}</Text> : null}</>}</View>;
+  return <View style={s.driverApplyCard}><View style={s.driverApplyMark}><Text style={s.driverApplyIcon}>♙</Text></View><Text style={s.driverApplyTitle}>انضم لفريق السائقين</Text>{status ? <><Text style={s.driverApplyCopy}>{status === 'pending' ? 'طلبك قيد المراجعة. رح يتواصل معك الفريق بعد التحقق.' : status === 'approved' ? 'تم اعتماد حسابك. واجهة السائق قيد التجهيز.' : status === 'suspended' ? 'حساب السائق موقوف حالياً. تواصل مع فريق لَبّيك.' : 'تمت مراجعة الطلب. تواصل مع الفريق إذا بدك تعرف التفاصيل.'}</Text><Text style={s.driverStatus}>{status === 'pending' ? 'بانتظار المراجعة' : status === 'approved' ? 'سائق معتمد' : status === 'suspended' ? 'موقوف' : 'مرفوض'}</Text></> : <><Text style={s.driverApplyCopy}>إذا وصلك رمز دعوة من فريق لَبّيك، دخّله حتى نبدأ مراجعة طلبك.</Text><Text style={s.label}>رمز الدعوة</Text><TextInput value={inviteCode} onChangeText={setInviteCode} autoCapitalize="none" autoCorrect={false} textAlign="left" placeholder="64 حرفاً" placeholderTextColor="#839188" style={s.field} accessibilityLabel="رمز دعوة السائق"/><Text style={s.label}>نوع المركبة <Text style={s.optional}>اختياري</Text></Text><TextInput value={vehicle} onChangeText={setVehicle} placeholder="دراجة، سيارة..." placeholderTextColor="#839188" style={s.field} accessibilityLabel="نوع المركبة" maxLength={160}/><Pressable disabled={busy} onPress={() => void apply()} style={[s.saveAddress,busy&&s.disabled]} accessibilityRole="button"><Text style={s.saveAddressText}>{busy?'عم نتحقق…':'إرسال طلب الانضمام'} <Text style={s.submitArrow}>←</Text></Text></Pressable></>}</View>;
 }
 
 type DriverProfileDraft = { name: string; phone: string; age: string; avatarPath: string | null; avatarUrl: string | null; avatarDraft: ProfileAvatarDraft | null };
@@ -2776,9 +2775,9 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   const [ordersSyncedAt, setOrdersSyncedAt] = useState('');
   const [ordersAreStale, setOrdersAreStale] = useState(false);
   const [orderActionBusy, setOrderActionBusy] = useState('');
-  const [orderActionMessage, setOrderActionMessage] = useToastMessage();
+  const [, setOrderActionMessage] = useToastMessage();
   const [sending, setSending] = useState(false);
-  const [requestMessage, setRequestMessage] = useToastMessage();
+  const [, setRequestMessage] = useToastMessage();
   const [orderImages, setOrderImages] = useState<OrderImage[]>([]);
   const [pendingOrderId, setPendingOrderId] = useState('');
   const requestKey = useRef(newRequestKey());
@@ -3166,7 +3165,6 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       </View>
       <View style={s.note}><Text style={s.noteIcon}>ⓘ</Text><Text style={s.noteText}>بعد إرسال الطلب، الإدارة بتحدد أجرة التوصيل وبتعيّن سائق أو بتبعته للسائقين المتاحين. الدفع كاش عند الاستلام.</Text></View>
       <Pressable disabled={sending || !draftReady || !online} onPress={() => { if (!hasAddress) { navigate('addresses'); return; } void submitOrder(); }} style={[s.submit, (sending || !draftReady || !online)&&s.disabled]} accessibilityRole="button"><Text style={s.submitText}>{!hasAddress?'إضافة عنوان تسليم':!online?'بانتظار الاتصال':sending?'عم نرسل الطلب والصور…':pendingOrderId?'إكمال رفع الصور وإرسال الطلب':'إرسال الطلب'} <Text style={s.submitArrow}>←</Text></Text></Pressable>
-      {requestMessage ? <Text accessibilityRole="alert" style={s.requestMessage}>{requestMessage}</Text> : null}
       </> : tab === 'orders' ? <View style={s.orderPage}><StaggeredSections transitionKey={`${tab}-orders`}>
         <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', marginTop: 4, marginBottom: 2 }}>
           <View><Text style={s.accountPageTitle}>طلباتي</Text><Text style={s.accountPageSubtitle}>تابع كل طلب خطوة بخطوة</Text></View>
@@ -3184,7 +3182,6 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
             <Text style={s.retryOrdersText}>تحديث الطلبات ↻</Text>
           </Pressable>}
         </View>}
-        {orderActionMessage ? <Text accessibilityRole="status" style={s.formMessage}>{orderActionMessage}</Text> : null}
         {ordersLoading ? <OrdersSkeleton styles={s} /> : orders.length ? filteredOrders.slice(0, ordersVisible).map((order) => { const group = customerGroup(order.status); const done = group === 'done'; const cancelled = group === 'cancelled'; const hasDriver = !!order.driver_id && !cancelled && !['searching', 'requested', 'quoted'].includes(order.status);
           const finished = group !== 'live';
           const expanded = !finished || openFinished === order.id || order.id === notificationOrderId;
