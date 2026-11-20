@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import type { Metadata } from 'expo-router/server';
 import { AccessibilityInfo, ActivityIndicator, Alert, Animated, AppState, Easing, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, RefreshControl, ScrollView, Share, StyleSheet, TextInput, View, type ScrollViewProps } from 'react-native';
 import { SymbolView, type AndroidSymbol, type SFSymbol } from 'expo-symbols';
+import * as Notifications from 'expo-notifications';
 import { useNetworkState } from 'expo-network';
 import type { NotificationResponse } from 'expo-notifications';
 import { Image } from 'expo-image';
@@ -29,14 +30,14 @@ import { AppText as Text } from '@/components/AppText';
 import { ToastProvider, useAppToast, useToastMessage } from '@/components/Toast';
 
 const c: any = tokens.color;
-if (Platform.OS !== 'web') void import('expo-notifications').then(Notifications => {
+if (Platform.OS !== 'web') {
   Notifications.setNotificationHandler({
     handleNotification: async notification => {
       const isTest = notification.request.content.data?.testNotification === true;
       return { shouldShowBanner: !isTest, shouldShowList: !isTest, shouldPlaySound: !isTest, shouldSetBadge: false };
     },
   });
-}).catch(() => undefined);
+}
 const MobileThemeContext = createContext<{ colors: any; styles: Record<string, any> } | null>(null);
 function useMobileTheme() {
   const theme = useContext(MobileThemeContext);
