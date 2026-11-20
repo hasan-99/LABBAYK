@@ -108,6 +108,11 @@ export function peekOrderImagePaths(bucket: 'order-images' | 'delivery-proofs', 
   return listCache.get(`${bucket}:${orderId}`)?.paths ?? null;
 }
 
+/** Drops a cached listing, e.g. right after photos were uploaded to that order. */
+export function forgetOrderImages(bucket: 'order-images' | 'delivery-proofs', orderId: string) {
+  listCache.delete(`${bucket}:${orderId}`);
+}
+
 export function clearImageCaches() {
   urlCache.clear(); listCache.clear(); avatarsLoaded = null;
   void AsyncStorage.removeItem(avatarStorageKey).catch(() => undefined);

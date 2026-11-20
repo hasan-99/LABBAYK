@@ -22,7 +22,7 @@ import { AuthScreen, PasswordRecoveryScreen } from '@/components/AuthScreen';
 import { LegalLinksSection } from '@/components/LegalLinksSection';
 import { SUPPORT_EMAIL } from '@/lib/legal-contact';
 import { ltrPhone, prettyPhone, useSupportContact, whatsappUrl } from '@/lib/support-contact';
-import { clearImageCaches, imageCacheKey, listOrderImagePaths, peekOrderImagePaths, peekSignedImageUrl, signedImageUrl, signedImageUrls } from '@/lib/storage-cache';
+import { clearImageCaches, forgetOrderImages, imageCacheKey, listOrderImagePaths, peekOrderImagePaths, peekSignedImageUrl, signedImageUrl, signedImageUrls } from '@/lib/storage-cache';
 import { shrinkPhoto } from '@/lib/image-compress';
 import { cacheKey, clearUserCache, createRefreshScheduler, isFresh, readMemory, readPersisted, writeMemory, writePersisted } from '@/lib/data-cache';
 import { AppText as Text } from '@/components/AppText';
@@ -172,7 +172,8 @@ type ProfileAvatarDraft = { uri: string; mimeType: string; extension: string };
 const orderStatus: Record<string, string> = { requested:'بانتظار تحديد أجرة التوصيل', quoted:'بانتظار سائق متاح', searching:'عم نفتش على سائق', accepted:'قبل السائق الطلب', assigned:'تم تعيين سائق', shopping:'عم نجهز طلبك', awaiting_approval:'بانتظار موافقتك', purchased:'تم الشراء', delivering:'بالطريق لعندك', delivered:'تم التوصيل', settled:'تمت التسوية', disputed:'قيد مراجعة الدعم', cancelled:'ملغي' };
 
 // Scroll container that keeps the focused input visible above the keyboard on every page.
-function KeyboardScroll(props: ScrollViewProps) {
+type ScrollHandle = React.ComponentRef<typeof ScrollView>;
+function KeyboardScroll(props: ScrollViewProps & { ref?: React.Ref<ScrollHandle> }) {
   const ios = Platform.OS === 'ios';
   const scroll = <ScrollView {...props} keyboardShouldPersistTaps="handled" keyboardDismissMode={ios ? 'interactive' : 'on-drag'} automaticallyAdjustKeyboardInsets={ios} />;
   return Platform.OS === 'android' ? <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">{scroll}</KeyboardAvoidingView> : scroll;
@@ -587,21 +588,23 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
   </View>
 }
 
-function SupportIssueForm({orderId,status,disabled=false}:{orderId:string;status:string;disabled?:boolean}) {
+const reportableStatuses = ['accepted','assigned','shopping','awaiting_approval','purchased','delivering','delivered','settled','disputed'];
+function SupportIssueForm({orderId,status,disabled=false,userId}:{orderId:string;status:string;disabled?:boolean;userId?:string}) {
   const { styles: s } = useMobileTheme();
   const [mineDisputed,setMineDisputed]=useState<boolean|null>(null);
+  const reportable = reportableStatuses.includes(status);
   // The report is private: only its author is told it is "their" report; the other side sees a neutral note.
+  // Orders that cannot carry a report (new, searching, cancelled) no longer query anything: this ran once per card.
   useEffect(()=>{
-    if(!supabase)return
+    if(!supabase||!reportable)return
     let active=true
     void (async()=>{
-      const {data:session}=await supabase!.auth.getSession()
-      const me=session.session?.user.id
+      const me=userId ?? (await supabase!.auth.getSession()).data.session?.user.id
       const {data}=await supabase!.from('order_disputes').select('opened_by').eq('order_id',orderId).is('resolved_at',null).limit(1)
       if(active)setMineDisputed(!!me&&!!data?.some(row=>row.opened_by===me))
     })()
     return()=>{active=false}
-  },[orderId])
+  },[orderId,reportable,userId])
   const online = useInternetAvailable();
   const [expanded,setExpanded]=useState(false);const [reason,setReason]=useState('');const [details,setDetails]=useState('');const [busy,setBusy]=useState(false);const [message,setMessage]=useToastMessage();const [idempotencyKey]=useState(newRequestKey());const [submitted,setSubmitted]=useState(false)
   const submit=async()=>{
@@ -1094,7 +1097,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       {!operationsAreStale && order.status === 'awaiting_approval' && <View style={s.driverWaitNotice}><Text style={s.driverWaitTitle}>لا تشتري بعد</Text><Text style={s.driverWaitCopy}>المبلغ المقترح {numberFormatter.format(order.purchase_amount_minor ?? 0)} ل.س، وبانتظار موافقة العميل.</Text></View>}
       {!operationsAreStale && order.status === 'purchased' && <Pressable disabled={locked} onPress={() => void startDelivery(order.id)} accessibilityRole="button" style={bigButton}><Text style={bigText}>بدء التوصيل ←</Text></Pressable>}
       {order.status === 'delivering' && <Pressable disabled={locked} onPress={() => void startDeliveryPhoto(order.id)} accessibilityRole="button" style={bigButton}><Text style={bigText}>📷 تصوير التسليم</Text></Pressable>}
-      <SupportIssueForm orderId={order.id} status={order.status} disabled={operationsAreStale} />
+      <SupportIssueForm orderId={order.id} status={order.status} disabled={operationsAreStale} userId={userId} />
     </View>;
   };
   return <View style={[s.driverPanel,s.driverHomePanel]}>{false&&<View style={s.driverPanelTop}><View><Text style={s.driverApplyTitle}>{screen==='home'?'استقبال الطلبات':'قائمة التوصيل'}</Text><Text style={s.driverApplyCopy}>{screen==='home'?'بدّل حالتك من هون لتبدأ أو توقف استقبال العروض.':'شوف العروض الجديدة أو تابع طلباتك النشطة.'}</Text></View><Pressable disabled={busy || refreshing} onPress={() => void manualRefresh()} style={s.driverRefresh} accessibilityRole="button" accessibilityLabel="تحديث طلبات السائق"><Text style={s.driverRefreshGlyph}>↻</Text></Pressable></View>}
@@ -1197,15 +1200,17 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   </View>;
 }
 
-function DriverApplicationFlow({ userId, initialToken }: { userId: string; initialToken?: string }) {
+function DriverApplicationFlow({ userId, initialToken, knownStatus }: { userId: string; initialToken?: string; knownStatus?: string | null }) {
   const { styles: s } = useMobileTheme();
   const online = useInternetAvailable();
-  const [status, setStatus] = useState<string | null>(null);
+  // Start from the status SignedInHome already loaded (or cached), so the card renders at once and
+  // also works offline; the server check below only confirms it.
+  const [status, setStatus] = useState<string | null>(knownStatus ?? null);
   const [inviteCode, setInviteCode] = useState(initialToken ?? '');
   const [vehicle, setVehicle] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useToastMessage();
-  const [checked, setChecked] = useState(false);
+  const [checked, setChecked] = useState(knownStatus !== undefined);
   useEffect(() => {
     if (!supabase || !online) return;
     supabase.from('driver_profiles').select('review_status').eq('user_id', userId).maybeSingle().then(({ data }) => { setStatus(data?.review_status ?? null); setChecked(true); });
@@ -1494,7 +1499,7 @@ function SignedInHome({ userId, email, inviteToken, openOrderId, onSignOut, them
   }, [online, userId]);
   if (supabase && online && !checked) return <AppShellSkeleton />;
   if (roles.includes('super_admin')) return <AdminWorkspace userId={userId} email={email} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
-  if (reviewStatus !== 'approved') return <CustomerHome key={inviteToken ?? 'customer-home'} userId={userId} email={email} inviteToken={inviteToken} openOrderId={openOrderId} showDriverFlow={!!inviteToken || !!reviewStatus} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
+  if (reviewStatus !== 'approved') return <CustomerHome key={inviteToken ?? 'customer-home'} userId={userId} email={email} inviteToken={inviteToken} openOrderId={openOrderId} showDriverFlow={!!inviteToken || !!reviewStatus} driverStatus={reviewStatus} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
   return <DriverWorkspace userId={userId} email={email} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
 }
 
@@ -1570,14 +1575,16 @@ function OrderTrack({ status }: { status: string }) {
     </View>; })}
   </View>;
 }
+// The driver of an order doesn't change once assigned: one request per order per session, not per visit.
+const driverContactCache = new Map<string, { display_name: string; phone: string | null }>();
 function CustomerDriverRow({ orderId, status }: { orderId: string; status: string }) {
   const { colors: c } = useMobileTheme();
   const online = useInternetAvailable();
-  const [contact, setContact] = useState<{ display_name: string; phone: string | null } | null>(null);
+  const [contact, setContact] = useState<{ display_name: string; phone: string | null } | null>(() => driverContactCache.get(orderId) ?? null);
   useEffect(() => {
-    if (!supabase || !online) return;
+    if (!supabase || !online || driverContactCache.has(orderId)) return;
     let active = true;
-    void supabase.rpc('get_order_driver_contact', { p_order_id: orderId }).then(({ data, error }) => { if (active && !error && data?.[0]) setContact(data[0]); });
+    void supabase.rpc('get_order_driver_contact', { p_order_id: orderId }).then(({ data, error }) => { if (!error && data?.[0]) { driverContactCache.set(orderId, data[0]); if (active) setContact(data[0]); } });
     return () => { active = false; };
   }, [online, orderId]);
   if (!contact) return null;
@@ -2478,7 +2485,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   </SafeAreaView>;
 }
 
-function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, showDriverFlow, theme, onToggleTheme }: { onSignOut: () => void; userId: string; email: string; inviteToken?: string; openOrderId?: string; showDriverFlow: boolean; theme: 'dark' | 'light'; onToggleTheme: () => void }) {
+function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, showDriverFlow, driverStatus = null, theme, onToggleTheme }: { driverStatus?: string | null; onSignOut: () => void; userId: string; email: string; inviteToken?: string; openOrderId?: string; showDriverFlow: boolean; theme: 'dark' | 'light'; onToggleTheme: () => void }) {
   const { colors: c, styles: s } = useMobileTheme();
   const online = useInternetAvailable();
   const [request, setRequest] = useState('');
@@ -2540,11 +2547,10 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   useEffect(() => {
     if (!supabase) return;
     let active = true;
-    void supabase.from('driver_profiles').select('user_id').eq('user_id', userId).maybeSingle().then(({ data }) => {
-      if (active && data) setTab((current) => current === 'home' ? 'profile' : current);
-    });
+    // The driver-application status is already known by SignedInHome; no extra request here.
+    if (active && driverStatus) setTab((current) => current === 'home' ? 'profile' : current);
     return () => { active = false; };
-  }, [userId]);
+  }, [driverStatus]);
   useEffect(() => {
     let active = true;
     draftDirty.current = false;
@@ -2570,7 +2576,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       void saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, category, budgetCeiling, addressId, idempotencyKey: requestKey.current, pendingOrderId: pendingOrderId || undefined, images: orderImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) })
         .then(() => setDraftSaveError(false))
         .catch(() => setDraftSaveError(true));
-    }, 250);
+    }, 800); // saved after a pause in typing, not on nearly every keystroke
     return () => clearTimeout(timeout);
   }, [userId, draftReady, request, category, budgetCeiling, addressId, pendingOrderId, orderImages]);
   // The delivery address is re-read when coming back from the address book, otherwise at most once a minute.
@@ -2648,12 +2654,17 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       setProfileBusy(false); setProfileMessage('ما قدرنا نحفظ التعديلات. جرّب مرة ثانية.'); return;
     }
     const previousAvatarPath = profileAvatarPath;
+    const localAvatarUri = profileAvatarDraft?.uri ?? null;
     setProfileName(data.display_name); setProfileNameDraft(data.display_name); setProfileAvatarPath(data.avatar_path); setProfileAvatarDraft(null);
-    if (uploadedAvatarPath && data.avatar_path) {
-      setProfileAvatarUrl(await signedImageUrl('profile-avatars', data.avatar_path));
-      if (previousAvatarPath && previousAvatarPath !== data.avatar_path) await supabase.storage.from('profile-avatars').remove([previousAvatarPath]);
-    }
+    // Saved: return at once showing the photo already on the device; signing its link and deleting
+    // the old file continue in the background instead of holding the screen.
+    if (uploadedAvatarPath && localAvatarUri) setProfileAvatarUrl(localAvatarUri);
     setProfileBusy(false); setProfileMessage('تم حفظ تعديلات الحساب.'); goBack();
+    if (uploadedAvatarPath && data.avatar_path) {
+      const savedPath = data.avatar_path;
+      void signedImageUrl('profile-avatars', savedPath).then((url) => { if (url) setProfileAvatarUrl(url); });
+      if (previousAvatarPath && previousAvatarPath !== savedPath) void supabase.storage.from('profile-avatars').remove([previousAvatarPath]);
+    }
   };
   const applyCustomerOrders = useCallback((rows: CustomerOrder[]) => {
     setOrders(rows);
@@ -2698,7 +2709,8 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     };
     refreshOrdersRef.current = scheduleRefresh;
     const channel = supabase.channel(`customer-orders-${userId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_events' }, scheduleRefresh)
+      // Only this customer's orders (every order event in the system used to trigger a reload).
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `customer_id=eq.${userId}` }, scheduleRefresh)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${userId}` }, scheduleRefresh)
       .subscribe();
     const appStateSubscription = AppState.addEventListener('change', (state) => { if (state === 'active') scheduleRefresh(); });
@@ -2718,8 +2730,9 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     if (!pendingOrderId && !addressReadyForOrder) { setRequestMessage('أضف عنوان تسليم بدمشق أو ريف دمشق حتى نكمل الطلب.'); return; }
     if (!pendingOrderId && (!addressId || !category || !request.trim())) { setRequestMessage('اختار العنوان والقسم واكتب تفاصيل طلبك.'); return; }
     if (!pendingOrderId && (!Number.isSafeInteger(budget) || budget < 1 || budget > 100000000)) { setRequestMessage('حدد سقف ميزانية صحيح بالليرة السورية حتى ما يضطر السائق يدفع مبلغ غير متفق عليه.'); return; }
-    await saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, category, budgetCeiling, addressId, idempotencyKey: requestKey.current, pendingOrderId: pendingOrderId || undefined, images: orderImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) }).catch(() => setDraftSaveError(true));
+    // Feedback first: the button switches to its busy state before any storage or network work.
     setSending(true); setRequestMessage('');
+    await saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, category, budgetCeiling, addressId, idempotencyKey: requestKey.current, pendingOrderId: pendingOrderId || undefined, images: orderImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) }).catch(() => setDraftSaveError(true));
     let orderId = pendingOrderId;
     if (!orderId) {
       const { data, error } = await supabase.rpc('create_customer_order', { p_idempotency_key: requestKey.current, p_address_id: addressId, p_category: category, p_request_text: composeRequest(pickup, request), p_budget_ceiling_minor: budget });
@@ -2733,7 +2746,9 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       await saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, category, budgetCeiling, addressId, idempotencyKey: requestKey.current, pendingOrderId: orderId, images: orderImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) }).catch(() => setDraftSaveError(true));
     }
     let existingImageNames = new Set<string>();
-    if (orderImages.length) {
+    // Only a resumed order can already have uploaded photos; a brand-new one skips this round trip.
+    const resumingOrder = !!pendingOrderId;
+    if (orderImages.length && resumingOrder) {
       const { data: files, error } = await supabase.storage.from('order-images').list(orderId, { limit: 3, sortBy: { column: 'name', order: 'asc' } });
       if (error) {
         setSending(false);
@@ -2770,6 +2785,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     }
     setSending(false);
     await clearCustomerOrderDraft(userId);
+    forgetOrderImages('order-images', orderId);
     refreshOrdersRef.current?.();
     requestKey.current = newRequestKey(); setRequest(''); setPickup(''); setCategory(''); setBudgetCeiling(''); setOrderImages([]); setPendingOrderId(''); setRequestMessage('وصلنا طلبك! الإدارة رح تحدد أجرة التوصيل وتتابع إسناده لسائق.'); navigate('orders');
   };
@@ -2816,18 +2832,30 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     const { error } = await supabase.rpc('cancel_customer_order', { p_order_id: orderId, p_reason: 'إلغاء بطلب العميل من التطبيق' });
     setOrderActionBusy('');
     if (error) { setOrderActionMessage('ما قدرنا نلغي الطلب بهالمرحلة. تواصل مع الدعم إذا بلش الشراء.'); return; }
+    // Mark it cancelled right away; the list is re-read in the background.
+    setOrders((current) => current.map((order) => order.id === orderId ? { ...order, status: 'cancelled' } : order));
     setOrderActionMessage('انلغى الطلب قبل إتمام الشراء.');
-    const rows = await fetchCustomerOrders(); if (rows) await applyCustomerOrders(rows);
+    void fetchCustomerOrders().then((rows) => { if (rows) applyCustomerOrders(rows); });
   };
   const hasAddress = !!addressId;
   const addressReadyForOrder = hasAddress;
   const accountInitial = (profileName.trim()[0] || email.trim()[0] || 'ح').toLocaleUpperCase('ar');
   const orderCounts = { all: orders.length, live: orders.filter((order) => customerGroup(order.status) === 'live').length, done: orders.filter((order) => customerGroup(order.status) === 'done').length };
+  // The page used to be keyed by tab, so every tab tap destroyed and rebuilt the whole customer UI,
+  // including the hidden notifications inbox (6 requests + push registration each time). It now
+  // stays mounted and only scrolls back to the top.
+  // Cards are heavy (status track, photos, driver, report form), so 10 render first and more on demand.
+  const [ordersVisible, setOrdersVisible] = useState(10);
+  // A manual refresh keeps the list on screen; only the refresh button dims while it runs.
+  const [ordersRefreshing, setOrdersRefreshing] = useState(false);
+  const bodyScrollRef = useRef<ScrollHandle>(null);
+  useEffect(() => { bodyScrollRef.current?.scrollTo({ y: 0, animated: false }); }, [tab]);
   const displayedOrders = notificationOrderId ? [...orders].sort((left,right) => Number(right.id === notificationOrderId) - Number(left.id === notificationOrderId)) : orders;
+  const filteredOrders = displayedOrders.filter((order) => orderFilter === 'all' || customerGroup(order.status) === orderFilter);
   return <SafeAreaView style={s.safe}>
     <View accessibilityRole="main" style={{flex:1}}>
-      <View style={s.header}><View style={s.brand}><View style={s.brandMark}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={s.brandLogo} contentFit="contain" accessibilityLabel="شعار لَبّيك"/></View><View><Text style={s.brandName}>لَبّيك</Text><Text style={s.brandTag}>اطلب، والباقي علينا.</Text></View></View><View style={s.headerActions}><Pressable onPress={() => navigate('profile')} style={s.accountAvatar} accessibilityRole="button" accessibilityLabel="فتح حسابي">{profileAvatarUrl ? <Image source={{uri:profileAvatarUrl}} cachePolicy="none" style={s.avatarImage} contentFit="cover" accessibilityLabel="صورة الحساب"/> : <Text style={s.accountAvatarText}>{accountInitial}</Text>}</Pressable></View></View>
-      <KeyboardScroll key={tab} style={s.bodyScroll} contentContainerStyle={s.content}>
+      <View style={s.header}><View style={s.brand}><View style={s.brandMark}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={s.brandLogo} contentFit="contain" accessibilityLabel="شعار لَبّيك"/></View><View><Text style={s.brandName}>لَبّيك</Text><Text style={s.brandTag}>اطلب، والباقي علينا.</Text></View></View><View style={s.headerActions}><Pressable onPress={() => navigate('profile')} style={s.accountAvatar} accessibilityRole="button" accessibilityLabel="فتح حسابي">{profileAvatarUrl ? <Image source={avatarSource(profileAvatarUrl, profileAvatarPath)} cachePolicy="memory-disk" style={s.avatarImage} contentFit="cover" accessibilityLabel="صورة الحساب"/> : <Text style={s.accountAvatarText}>{accountInitial}</Text>}</Pressable></View></View>
+      <KeyboardScroll ref={bodyScrollRef} style={s.bodyScroll} contentContainerStyle={s.content}>
       <StaggeredSections transitionKey={`${tab}-${tab === 'orders' && ordersLoading ? 'loading' : 'ready'}`}>
       {tab === 'addresses' ? <EntranceSection transitionKey={tab}><AddressBook userId={userId} onBack={goBack} backLabel={`العودة إلى ${tabHistory[tabHistory.length - 1] === 'profile' ? 'حسابي' : 'الرئيسية'}`} onAddressSaved={(address) => { addressIdRef.current = address.id; setAddressId(address.id); setAddressSummary(`${address.label} · ${address.neighborhood}`); setSelectedAddress(address); }} /></EntranceSection> : tab === 'home' ? <>
       {tab === 'home' && activeCustomerOrders.length > 0 && <Pressable onPress={() => { setOrderFilter('live'); navigate('orders'); }} accessibilityRole="button" accessibilityLabel={activeCustomerOrders.length === 1 ? `${bannerLabels[activeCustomerOrders[0].status] ?? 'طلبك جارٍ'}. تتبّع الطلب` : `لديك ${activeCustomerOrders.length} طلبات جارية. عرض`} style={{ backgroundColor: c.surface, borderColor: '#3F6A2E', borderWidth: 1, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, gap: 8, marginBottom: 10 }}>
@@ -2861,12 +2889,12 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       </> : tab === 'orders' ? <View style={s.orderPage}><StaggeredSections transitionKey={`${tab}-orders`}>
         <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', marginTop: 4, marginBottom: 2 }}>
           <View><Text style={s.accountPageTitle}>طلباتي</Text><Text style={s.accountPageSubtitle}>تابع كل طلب خطوة بخطوة</Text></View>
-          <Pressable onPress={() => { if (ordersLoading) return; if (!online) { setOrderActionMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setNotificationsRefreshKey((value) => value + 1); setOrdersLoading(true); void fetchCustomerOrders().then((rows) => { if (rows) { applyCustomerOrders(rows); setOrderActionMessage('تم تحديث الطلبات.'); } else setOrderActionMessage('ما قدرنا نحدّث الطلبات. جرّب مرة ثانية.'); }).finally(() => setOrdersLoading(false)); }} accessibilityRole="button" accessibilityLabel="تحديث الطلبات والتنبيهات" style={s.ordersRefreshButton}>
+          <Pressable onPress={() => { if (ordersLoading || ordersRefreshing) return; if (!online) { setOrderActionMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setNotificationsRefreshKey((value) => value + 1); setOrdersRefreshing(true); void fetchCustomerOrders().then((rows) => { if (rows) { applyCustomerOrders(rows); setOrderActionMessage('تم تحديث الطلبات.'); } else setOrderActionMessage('ما قدرنا نحدّث الطلبات. جرّب مرة ثانية.'); }).finally(() => setOrdersRefreshing(false)); }} accessibilityRole="button" accessibilityLabel="تحديث الطلبات والتنبيهات" accessibilityState={{ busy: ordersRefreshing }} style={[s.ordersRefreshButton, ordersRefreshing && { opacity: 0.5 }]}>
             <SymbolView name={{ios:'arrow.clockwise',android:'refresh',web:'refresh'}} tintColor={c.primary} size={19}/>
           </Pressable>
         </View>
         <View style={{ flexDirection: 'row-reverse', gap: 7, marginVertical: 10 }}>
-          {([['all', 'الكل'], ['live', 'جارية'], ['done', 'مسلّمة']] as const).map(([key, label]) => { const on = orderFilter === key; return <Pressable key={key} onPress={() => setOrderFilter(key)} accessibilityRole="button" accessibilityState={{ selected: on }} style={{ minHeight: 38, flexDirection: 'row-reverse', alignItems: 'center', gap: 6, paddingHorizontal: 15, borderRadius: 19, borderWidth: 1, borderColor: on ? '#B7FF30' : c.border, backgroundColor: on ? '#B7FF30' : c.surface }}><Text style={{ color: on ? '#0B1411' : c.muted, fontSize: 13, fontWeight: '800' }}>{label}</Text><Text style={{ color: on ? '#0B1411' : c.muted, fontSize: 13, fontWeight: '900' }}>{orderCounts[key]}</Text></Pressable>; })}
+          {([['all', 'الكل'], ['live', 'جارية'], ['done', 'مسلّمة']] as const).map(([key, label]) => { const on = orderFilter === key; return <Pressable key={key} onPress={() => { setOrderFilter(key); setOrdersVisible(10); }} accessibilityRole="button" accessibilityState={{ selected: on }} style={{ minHeight: 38, flexDirection: 'row-reverse', alignItems: 'center', gap: 6, paddingHorizontal: 15, borderRadius: 19, borderWidth: 1, borderColor: on ? '#B7FF30' : c.border, backgroundColor: on ? '#B7FF30' : c.surface }}><Text style={{ color: on ? '#0B1411' : c.muted, fontSize: 13, fontWeight: '800' }}>{label}</Text><Text style={{ color: on ? '#0B1411' : c.muted, fontSize: 13, fontWeight: '900' }}>{orderCounts[key]}</Text></Pressable>; })}
         </View>
         {ordersAreStale && <View style={s.offlineOrders}>
           <Text style={s.offlineOrdersTitle}>{ordersSyncedAt ? 'بيانات محفوظة وقديمة للعرض فقط' : 'ما في نسخة محفوظة من طلباتك'}</Text>
@@ -2876,7 +2904,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
           </Pressable>}
         </View>}
         {orderActionMessage ? <Text accessibilityRole="status" style={s.formMessage}>{orderActionMessage}</Text> : null}
-        {ordersLoading ? <OrdersSkeleton styles={s} /> : orders.length ? displayedOrders.filter((order) => orderFilter === 'all' || customerGroup(order.status) === orderFilter).map((order) => { const group = customerGroup(order.status); const done = group === 'done'; const cancelled = group === 'cancelled'; const hasDriver = !!order.driver_id && !cancelled && !['searching', 'requested', 'quoted'].includes(order.status); return <View key={order.id} style={{ backgroundColor: c.surface, borderColor: order.id === notificationOrderId ? '#B7FF30' : group === 'live' ? '#3F6A2E' : c.border, borderWidth: order.id === notificationOrderId ? 2 : 1, borderRadius: 22, padding: 14, gap: 11, marginBottom: 11 }}>
+        {ordersLoading ? <OrdersSkeleton styles={s} /> : orders.length ? filteredOrders.slice(0, ordersVisible).map((order) => { const group = customerGroup(order.status); const done = group === 'done'; const cancelled = group === 'cancelled'; const hasDriver = !!order.driver_id && !cancelled && !['searching', 'requested', 'quoted'].includes(order.status); return <View key={order.id} style={{ backgroundColor: c.surface, borderColor: order.id === notificationOrderId ? '#B7FF30' : group === 'live' ? '#3F6A2E' : c.border, borderWidth: order.id === notificationOrderId ? 2 : 1, borderRadius: 22, padding: 14, gap: 11, marginBottom: 11 }}>
           {order.id === notificationOrderId && <Text style={s.notificationOrderLabel}>الطلب المرتبط بهذا الإشعار</Text>}
           <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
             <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 6, backgroundColor: cancelled ? '#451E21' : done ? c.raised : '#26391C', borderRadius: 12, paddingHorizontal: 11, minHeight: 28 }}><Text style={{ color: cancelled ? '#FF8A8A' : done ? c.accent : '#B7FF30', fontSize: 12.5, fontWeight: '900' }}>{done ? '✅ ' : ''}{orderStatus[order.status] ?? order.status}</Text></View>
@@ -2893,14 +2921,15 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
             <View style={{ flex: 1, backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 14, paddingVertical: 7, paddingHorizontal: 11 }}><Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>{order.purchase_amount_minor !== null ? 'مبلغ المشتريات' : 'ميزانية المشتريات'}</Text><Text style={{ color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{ordersAreStale ? '—' : numberFormatter.format(order.purchase_amount_minor ?? order.budget_ceiling_minor) + ' ل.س'}</Text></View>
           </View>
           {done && !ordersAreStale && <View style={{ borderColor: c.accent, borderWidth: 1, borderRadius: 16, padding: 9, gap: 7 }}><Text style={{ color: c.accent, fontSize: 13.5, fontWeight: '900', textAlign: 'right' }}>صورة التسليم{order.delivered_at ? ' · ' + shortDateTimeFormatter.format(new Date(order.delivered_at)) : ''}</Text><AdminImageStrip orderId={order.id} bucket="delivery-proofs" size={84} emptyText="ما في صورة تسليم لهذا الطلب." /></View>}
-          {(['requested','quoted','searching','accepted','assigned','awaiting_approval'].includes(order.status) || (order.status === 'shopping' && order.purchase_amount_minor === null)) && <Pressable disabled={orderActionBusy === order.id || !online || ordersAreStale} onPress={() => void cancelOrder(order.id)} style={[s.cancelOrder, (orderActionBusy === order.id || !online || ordersAreStale) && s.disabled]} accessibilityRole="button"><Text style={s.cancelOrderText}>إلغاء الطلب</Text></Pressable>}
-          <SupportIssueForm orderId={order.id} status={order.status} disabled={ordersAreStale}/>
+          {(['requested','quoted','searching','accepted','assigned','awaiting_approval'].includes(order.status) || (order.status === 'shopping' && order.purchase_amount_minor === null)) && <Pressable disabled={orderActionBusy === order.id || !online || ordersAreStale} onPress={() => void cancelOrder(order.id)} style={[s.cancelOrder, (orderActionBusy === order.id || !online || ordersAreStale) && s.disabled]} accessibilityRole="button"><Text style={s.cancelOrderText}>{orderActionBusy === order.id ? 'عم نلغي الطلب…' : 'إلغاء الطلب'}</Text></Pressable>}
+          <SupportIssueForm orderId={order.id} status={order.status} disabled={ordersAreStale} userId={userId}/>
         </View>; }) : <View style={s.empty}>
           <Text style={s.emptyMark}>≋</Text>
           <Text style={s.emptyTitle}>{ordersAreStale ? 'ما في طلبات محفوظة للعرض' : 'ما عندك طلبات حالياً'}</Text>
           <Text style={s.emptyCopy}>{ordersAreStale ? 'اتصل بالإنترنت حتى نحمّل أحدث حالة.' : 'أول طلب إلك رح يظهر هون.'}</Text>
           <Pressable onPress={() => navigate('home')} style={s.profileAction} accessibilityRole="button"><Text style={s.profileActionText}>ابدأ طلب جديد <Text style={s.submitArrow}>←</Text></Text></Pressable>
         </View>}
+        {!ordersLoading && filteredOrders.length > ordersVisible ? <Pressable onPress={() => setOrdersVisible((count) => count + 10)} accessibilityRole="button" style={s.retryOrdersButton}><Text style={s.retryOrdersText}>عرض المزيد ({filteredOrders.length - ordersVisible})</Text></Pressable> : null}
       </StaggeredSections></View> : tab === 'notifications' ? <View style={s.profilePage}><View style={s.accountIntro}><Text style={s.accountPageTitle}>التنبيهات</Text><Text style={s.accountPageSubtitle}>آخر التحديثات على طلباتك.</Text></View></View> : tab === 'profile-edit' ? <View style={s.profilePage}><StaggeredSections transitionKey={`${tab}-edit`}>
         <Pressable onPress={() => navigate('profile')} style={s.backNavigation} accessibilityRole="button"><Text style={s.backNavigationText}>→ العودة إلى حسابي</Text></Pressable>
         <Text style={s.pageTitle}>تعديل الملف الشخصي</Text>
@@ -2938,7 +2967,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
         </View>
         <LegalLinksSection theme={theme}/>
         <Pressable onPress={onSignOut} style={s.profileLogout} accessibilityRole="button"><SymbolView name={{ ios: 'rectangle.portrait.and.arrow.right', android: 'logout', web: 'logout' }} tintColor={c.danger} size={19}/><Text style={s.profileLogoutText}>تسجيل الخروج</Text></Pressable>
-        {showDriverFlow && <DriverApplicationFlow key={inviteToken ?? 'driver-application'} userId={userId} initialToken={inviteToken}/>}
+        {showDriverFlow && <DriverApplicationFlow key={inviteToken ?? 'driver-application'} userId={userId} initialToken={inviteToken} knownStatus={driverStatus}/>}
       </StaggeredSections></View>}
       </StaggeredSections>
       <View style={tab === 'notifications' ? undefined : s.hidden}>
