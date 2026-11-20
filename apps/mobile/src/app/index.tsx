@@ -3063,6 +3063,8 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   // stays mounted and only scrolls back to the top.
   // Cards are heavy (status track, photos, driver, report form), so 10 render first and more on demand.
   const [ordersVisible, setOrdersVisible] = useState(10);
+  // Finished and cancelled orders show as one compact row; tapping opens the full card (one at a time).
+  const [openFinished, setOpenFinished] = useState<string | null>(null);
   // A manual refresh keeps the list on screen; only the refresh button dims while it runs.
   const [ordersRefreshing, setOrdersRefreshing] = useState(false);
   // After 15 minutes without a driver the order card changes its message (the server also sends a notification).
@@ -3133,8 +3135,23 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
           </Pressable>}
         </View>}
         {orderActionMessage ? <Text accessibilityRole="status" style={s.formMessage}>{orderActionMessage}</Text> : null}
-        {ordersLoading ? <OrdersSkeleton styles={s} /> : orders.length ? filteredOrders.slice(0, ordersVisible).map((order) => { const group = customerGroup(order.status); const done = group === 'done'; const cancelled = group === 'cancelled'; const hasDriver = !!order.driver_id && !cancelled && !['searching', 'requested', 'quoted'].includes(order.status); return <View key={order.id} style={{ backgroundColor: c.surface, borderColor: order.id === notificationOrderId ? '#B7FF30' : group === 'live' ? '#3F6A2E' : c.border, borderWidth: order.id === notificationOrderId ? 2 : 1, borderRadius: 22, padding: 14, gap: 11, marginBottom: 11 }}>
+        {ordersLoading ? <OrdersSkeleton styles={s} /> : orders.length ? filteredOrders.slice(0, ordersVisible).map((order) => { const group = customerGroup(order.status); const done = group === 'done'; const cancelled = group === 'cancelled'; const hasDriver = !!order.driver_id && !cancelled && !['searching', 'requested', 'quoted'].includes(order.status);
+          const finished = group !== 'live';
+          const expanded = !finished || openFinished === order.id || order.id === notificationOrderId;
+          if (!expanded) {
+            const title = splitPickup(order.request_text).body || order.category;
+            const when = shortDateTimeFormatter.format(new Date(order.delivered_at ?? order.created_at));
+            const total = (order.purchase_amount_minor ?? 0) + order.delivery_fee_minor;
+            return <Pressable key={order.id} onPress={() => setOpenFinished(order.id)} accessibilityRole="button" accessibilityState={{ expanded: false }} accessibilityLabel={`${cancelled ? 'طلب ملغي' : 'طلب منتهي'}: ${title}. اضغط لعرض التفاصيل`} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11, minHeight: 60, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 18, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface, marginBottom: 9 }}>
+              <View style={{ width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: cancelled ? 'rgba(255,138,138,0.16)' : 'rgba(82,213,160,0.16)' }}><Text style={{ color: cancelled ? '#FF8A8A' : c.accent, fontSize: 16, fontWeight: '900' }}>{cancelled ? '✕' : '✓'}</Text></View>
+              <View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={{ color: c.text, fontSize: 14.5, fontWeight: '800', textAlign: 'right' }}>{title}</Text><Text numberOfLines={1} style={{ color: c.muted, fontSize: 12, textAlign: 'right' }}>{when}</Text></View>
+              {cancelled ? <View style={{ backgroundColor: '#451E21', borderRadius: 11, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: '#FF8A8A', fontSize: 12, fontWeight: '900' }}>ملغي</Text></View> : <Text style={{ color: c.text, fontSize: 14, fontWeight: '900' }}>{numberFormatter.format(total)}</Text>}
+              <Text style={{ color: c.muted, fontSize: 16 }}>⌄</Text>
+            </Pressable>;
+          }
+          return <View key={order.id} style={{ backgroundColor: c.surface, borderColor: order.id === notificationOrderId ? '#B7FF30' : group === 'live' ? '#3F6A2E' : c.border, borderWidth: order.id === notificationOrderId ? 2 : 1, borderRadius: 22, padding: 14, gap: 11, marginBottom: 11 }}>
           {order.id === notificationOrderId && <Text style={s.notificationOrderLabel}>الطلب المرتبط بهذا الإشعار</Text>}
+          {finished && openFinished === order.id ? <Pressable onPress={() => setOpenFinished(null)} accessibilityRole="button" accessibilityLabel="إخفاء التفاصيل" style={{ alignSelf: 'flex-start', minHeight: 32, justifyContent: 'center' }}><Text style={{ color: c.primary, fontSize: 12.5, fontWeight: '800' }}>إخفاء ⌃</Text></Pressable> : null}
           <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
             <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 6, backgroundColor: cancelled ? '#451E21' : done ? c.raised : '#26391C', borderRadius: 12, paddingHorizontal: 11, minHeight: 28 }}><Text style={{ color: cancelled ? '#FF8A8A' : done ? c.accent : '#B7FF30', fontSize: 12.5, fontWeight: '900' }}>{done ? '✅ ' : ''}{orderStatus[order.status] ?? order.status}</Text></View>
             <Text style={{ color: c.muted, fontSize: 11.5 }}>{shortDateTimeFormatter.format(new Date(order.created_at))} · #{order.id.slice(0, 6)}</Text>
