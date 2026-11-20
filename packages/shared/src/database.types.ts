@@ -36,7 +36,7 @@ export type Database = {
           longitude: number | null
           neighborhood: string
           notes: string | null
-          street: string
+          street: string | null
           updated_at: string
           user_id: string
           zone_id: string | null
@@ -56,7 +56,7 @@ export type Database = {
           longitude?: number | null
           neighborhood: string
           notes?: string | null
-          street: string
+          street?: string | null
           updated_at?: string
           user_id: string
           zone_id?: string | null
@@ -76,7 +76,7 @@ export type Database = {
           longitude?: number | null
           neighborhood?: string
           notes?: string | null
-          street?: string
+          street?: string | null
           updated_at?: string
           user_id?: string
           zone_id?: string | null

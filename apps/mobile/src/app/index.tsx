@@ -309,7 +309,7 @@ function AddressBook({ userId, onBack, backLabel, onAddressSaved }: { userId: st
     editingAddressRef.current = address;
     setEditingAddress(address);
     setManualGovernorate(address.governorate.toLowerCase().includes('ريف') || address.governorate.toLowerCase().includes('rif') ? 'ريف دمشق' : 'دمشق');
-    setManualCity(address.city); setManualNeighborhood(address.neighborhood); setLabel(address.label); setStreet(address.street);
+    setManualCity(address.city); setManualNeighborhood(address.neighborhood); setLabel(address.label); setStreet(address.street ?? '');
     setLandmark(address.landmark ?? ''); setBuilding(address.building ?? ''); setFloor(address.floor ?? ''); setContactPhone(address.contact_phone);
   }, []);
 
@@ -332,12 +332,12 @@ function AddressBook({ userId, onBack, backLabel, onAddressSaved }: { userId: st
     const neighborhoodValue = manualNeighborhood.trim();
     if (!['دمشق', 'ريف دمشق'].includes(governorateValue)) { setMessage('اختار دمشق أو ريف دمشق؛ التوصيل متاح ضمن هالنطاق حالياً.'); return; }
     if (!governorateValue || governorateValue.length < 2 || !cityValue || cityValue.length < 2 || !neighborhoodValue) { setMessage('اكتب المحافظة أو المنطقة والمدينة والحارة.'); return; }
-    if (label.trim().length < 1 || street.trim().length < 1 || contactPhone.replace(/\D/g, '').length < 9) { setMessage('كمّل اسم العنوان والشارع، ورقم التواصل إلزامي (9 أرقام على الأقل).'); return; }
+    if (label.trim().length < 1 || contactPhone.replace(/\D/g, '').length < 9) { setMessage('كمّل اسم العنوان، ورقم التواصل إلزامي (9 أرقام على الأقل).'); return; }
     setBusy(true); setMessage('');
     const values = {
       user_id: userId, zone_id: null, label: label.trim(), governorate: governorateValue,
-      city: cityValue, neighborhood: neighborhoodValue, street: street.trim(),
-      landmark: landmark.trim() || null, building: building.trim() || null, floor: floor.trim() || null,
+      city: cityValue, neighborhood: neighborhoodValue, street: editingAddress?.street ?? null,
+      landmark: landmark.trim() || null, building: editingAddress?.building ?? null, floor: editingAddress?.floor ?? null,
       contact_phone: contactPhone.trim(), is_default: editingAddress?.is_default ?? addresses.length === 0,
     };
     let savedAddress: Address | null = null;
@@ -392,9 +392,7 @@ function AddressBook({ userId, onBack, backLabel, onAddressSaved }: { userId: st
       <Text style={s.label}>المدينة أو البلدة</Text><TextInput value={manualCity} onChangeText={setManualCity} maxLength={100} placeholder="مثلاً: دمشق، كناكر، جرمانا" placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="المدينة أو البلدة"/>
       <Text style={s.label}>الحارة</Text><TextInput value={manualNeighborhood} onChangeText={setManualNeighborhood} maxLength={100} placeholder="مثلاً: الحارة الغربية" placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="الحارة"/>
       <Text style={s.label}>اسم العنوان</Text><TextInput value={label} onChangeText={setLabel} maxLength={60} placeholder="بيت أبو مالك الجاهوش، الشغل..." placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="اسم العنوان"/>
-      <Text style={s.label}>الشارع أو رقم البيت</Text><TextInput value={street} onChangeText={setStreet} maxLength={160} placeholder="مثلاً: الحارة الغربية" placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="الشارع أو رقم البيت"/>
       <Text style={s.label}>مكان معروف قريب <Text style={s.optional}>اختياري</Text></Text><TextInput value={landmark} onChangeText={setLandmark} maxLength={160} placeholder="مقابل الجامع، جنب الصيدلية..." placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="مكان معروف قريب"/>
-      <View style={s.inlineFields}><View style={s.inline}><Text style={s.label}>رقم البناء</Text><TextInput value={building} onChangeText={setBuilding} maxLength={80} placeholder="اختياري" placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="رقم البناء"/></View><View style={s.inline}><Text style={s.label}>الطابق</Text><TextInput value={floor} onChangeText={setFloor} maxLength={40} placeholder="اختياري" placeholderTextColor="#839188" textAlign="right" style={s.field} accessibilityLabel="الطابق"/></View></View>
       <Text style={s.label}>رقم اتصال أو واتساب <Text style={{ color: c.danger, fontSize: 12 }}>إلزامي</Text></Text><TextInput value={contactPhone} onChangeText={setContactPhone} maxLength={24} keyboardType="phone-pad" textAlign="left" placeholder="+963 ..." placeholderTextColor="#839188" style={s.field} accessibilityLabel="رقم اتصال أو واتساب"/>
       <Pressable disabled={busy || addressLoading} onPress={() => void save()} style={[s.saveAddress,(busy || addressLoading)&&s.disabled]} accessibilityRole="button"><Text style={s.saveAddressText}>{addressLoading?'عم نحمّل عنوانك…':busy?'عم نحفظ…':editingAddress?'حفظ التعديلات':'حفظ العنوان'} <Text style={s.submitArrow}>←</Text></Text></Pressable>
     </View>
@@ -786,7 +784,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   const [historyPeriod, setHistoryPeriod] = useState<HistoryPeriod>('today');
   const [historyVisible, setHistoryVisible] = useState(20);
   const [historyOpen, setHistoryOpen] = useState<string | null>(null);
-  const [historyAddresses, setHistoryAddresses] = useState<Record<string, { neighborhood: string; city: string; street: string; building: string | null; landmark: string | null }>>({});
+  const [historyAddresses, setHistoryAddresses] = useState<Record<string, { neighborhood: string; city: string; street: string | null; building: string | null; landmark: string | null }>>({});
   const [historyExtra, setHistoryExtra] = useState<Record<string, { cash: number | null; note: string | null }>>({});
   const [dismissedOfferId, setDismissedOfferId] = useState<string | null>(null);
   const [imagesOpen, setImagesOpen] = useState<Record<string, boolean>>({});
@@ -1741,12 +1739,15 @@ function CustomerDriverRow({ orderId, status }: { orderId: string; status: strin
   const { colors: c } = useMobileTheme();
   const online = useInternetAvailable();
   const [contact, setContact] = useState<{ display_name: string; phone: string | null } | null>(() => driverContactCache.get(orderId) ?? null);
+  const [settled, setSettled] = useState(() => driverContactCache.has(orderId));
   useEffect(() => {
     if (!supabase || !online || driverContactCache.has(orderId)) return;
     let active = true;
-    void supabase.rpc('get_order_driver_contact', { p_order_id: orderId }).then(({ data, error }) => { if (!error && data?.[0]) { driverContactCache.set(orderId, data[0]); if (active) setContact(data[0]); } });
+    void supabase.rpc('get_order_driver_contact', { p_order_id: orderId }).then(({ data, error }) => { if (!error && data?.[0]) { driverContactCache.set(orderId, data[0]); if (active) setContact(data[0]); } if (active) setSettled(true); });
     return () => { active = false; };
   }, [online, orderId]);
+  // Keep the row's space while the driver's details load so the card does not jump.
+  if (!contact && !settled && online) return <SkeletonBlock width="100%" height={58} style={{ borderRadius: 16, alignSelf: 'stretch' }} />;
   if (!contact) return null;
   return <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11, backgroundColor: c.background, borderColor: c.border, borderWidth: 1, borderRadius: 16, paddingHorizontal: 11, paddingVertical: 9 }}>
     <View style={{ width: 38, height: 38, borderRadius: 19, borderWidth: 2, borderColor: '#B7FF30', backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontSize: 17 }}>🛵</Text></View>
@@ -2969,23 +2970,28 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     let active = true;
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     let hasServerOrders = false;
+    let cached: CustomerOrderSnapshot | null = null;
+    const applyCached = (snapshot: CustomerOrderSnapshot) => {
+      setOrders(snapshot.orders.map((order) => ({ ...order, request_text: '' })));
+      setOrdersSyncedAt(snapshot.syncedAt);
+      ordersLoaded.current = true;
+      setOrdersLoading(false);
+    };
     if (!ordersLoaded.current) setOrdersLoading(true);
     void loadCustomerOrdersSnapshot(userId).then((snapshot: CustomerOrderSnapshot | null) => {
       if (!active) return;
+      cached = snapshot;
       if (!snapshot) { if (!online) { setOrdersAreStale(true); ordersLoaded.current = true; setOrdersLoading(false); } return; }
-      if (hasServerOrders) return;
-      setOrders(snapshot.orders.map((order) => ({ ...order, request_text: '' })));
-      setOrdersSyncedAt(snapshot.syncedAt);
-      // The snapshot is a fallback while online data loads; avoid briefly
-      // showing the offline notice before the server response is known.
-      if (!online) setOrdersAreStale(true);
-      ordersLoaded.current = true;
-      setOrdersLoading(false);
+      // Online: wait for the server answer instead of painting the cached list first, which made
+      // the page flash twice (cached rows with empty titles, then the real ones).
+      if (hasServerOrders || online) return;
+      setOrdersAreStale(true);
+      applyCached(snapshot);
     });
     const refresh = async () => {
       const rows = await fetchCustomerOrders();
       if (active && rows) { hasServerOrders = true; ordersLoaded.current = true; ordersFetchedAt.current = Date.now(); applyCustomerOrders(rows); }
-      else if (active) setOrdersAreStale(true);
+      else if (active) { setOrdersAreStale(true); if (cached && !hasServerOrders) applyCached(cached); }
       if (active && online) setOrdersLoading(false);
     };
     void refresh();
@@ -3156,7 +3162,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       {selectedAddress && <Pressable style={s.address} onPress={() => navigate('addresses')} accessibilityRole="button" accessibilityLabel={`تغيير عنوان التوصيل: ${addressSummary}`} accessibilityHint="يفتح تفاصيل العنوان لتعديله"><View style={s.pin}><SymbolView name={{ios:'house.fill',android:'home',web:'home'}} tintColor={theme === 'light' ? '#385616' : c.primary} size={17}/></View><View style={s.addressCopy}><Text style={s.addressEyebrow}>عنوان التوصيل الحالي</Text><Text style={s.addressName} numberOfLines={1}>{addressSummary}</Text></View><View style={s.addressChangeButton}><SymbolView name={{ios:'pencil',android:'edit',web:'edit'}} tintColor="#0B1411" size={14}/><Text numberOfLines={1} style={s.addressChange}>تغيير</Text></View></Pressable>}
       <View style={s.heroImageWrap}><Image source={require('../../assets/images/labbayk-hero.jpg')} style={s.heroImage} contentFit="cover" contentPosition={{ top: '12%' }} accessibilityLabel="لَبّيك لتلبية احتياجاتك اليومية. كل شي ناقصك، بطلب واحد. اطلب منتجاتك الآن واستلمها بسرعة وأمان."/></View>
       <View style={s.formCard}><View style={s.formHeader}><View style={{ width: 28, height: 28, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(183,255,48,0.1)', borderWidth: 1, borderColor: 'rgba(183,255,48,0.28)' }}><SymbolView name={{ ios: 'bag', android: 'shopping_bag', web: 'shopping_bag' }} tintColor="#B7FF30" size={15}/></View><View style={s.formHeaderCopy}><Text style={s.formTitle}>شو بدك نجيبلك؟</Text></View><View style={s.cashBadge}><Text style={s.cashBadgeText}>دفع كاش</Text></View></View>{draftSaveError ? <Text style={s.formMessage}>تعذّر حفظ المسودة على هذا الجهاز.</Text> : null}
-        <View style={s.formSection}><View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}><Text style={s.label}>تفاصيل الطلب</Text><UrgentChip on={urgent} disabled={!!pendingOrderId || sending} onPress={() => setUrgent((value) => !value)} /></View><TextInput editable={draftReady && !pendingOrderId} value={request} onChangeText={(value) => { draftDirty.current = true; setRequest(value); }} maxLength={4000} multiline textAlignVertical="top" placeholder="مثال: جرة غاز ممتلئة مع توصيلها للبيت..." placeholderTextColor="#809087" style={[s.input,s.orderRequestInput,urgent&&{borderColor:'#F5A623'}]} accessibilityLabel="اكتب تفاصيل طلبك" /></View>
+        <View style={s.formSection}><View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}><Text style={s.label}>تفاصيل الطلب</Text><UrgentChip on={urgent} disabled={!!pendingOrderId || sending} onPress={() => setUrgent((value) => !value)} /></View><TextInput editable={draftReady && !pendingOrderId} value={request} onChangeText={(value) => { draftDirty.current = true; setRequest(value); }} maxLength={4000} multiline textAlignVertical="top" placeholder="مثال: جرة غاز ممتلئة مع توصيلها للبيت..." placeholderTextColor="#809087" style={[s.input,s.orderRequestInput,urgent&&{borderColor:'#F5A623'}]} accessibilityLabel="اكتب تفاصيل طلبك" /></View>
         <View style={s.formSection}><TextInput editable={draftReady && !pendingOrderId} value={pickup} onChangeText={(value) => setPickup(value.slice(0, 120))} maxLength={120} placeholder="من وين نشتري؟ (اختياري)" placeholderTextColor="#809087" style={[s.input, { minHeight: 54, paddingVertical: 0, borderRadius: 16 }]} accessibilityLabel="مكان الشراء"/></View>
         <View style={[s.formSection, { marginTop: 10 }]}><View style={s.moneyField}><TextInput editable={draftReady && !pendingOrderId} value={budgetCeiling ? numberFormatter.format(Number(budgetCeiling)) : ''} onChangeText={(value) => { draftDirty.current = true; setBudgetCeiling(normalizeDigits(value)); }} keyboardType="number-pad" textAlign="right" placeholder="أعلى ميزانية للمشتريات" placeholderTextColor="#809087" style={s.moneyInput} accessibilityLabel="سقف الميزانية بالليرة السورية"/><View style={s.currencyBadge}><Text style={s.currencyBadgeText}>ل.س</Text></View></View></View>
         <View style={s.photoSection}><View style={s.photoHead}><Text style={s.label}>صور تساعدنا نفهم طلبك</Text><Text style={s.photoCount}>{orderImages.length}/3</Text></View>
@@ -3201,17 +3207,16 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
               <View style={{ width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: cancelled ? 'rgba(255,138,138,0.16)' : 'rgba(82,213,160,0.16)' }}><Text style={{ color: cancelled ? '#FF8A8A' : c.accent, fontSize: 16, fontWeight: '900' }}>{cancelled ? '✕' : '✓'}</Text></View>
               <View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={{ color: c.text, fontSize: 14.5, fontWeight: '800', textAlign: 'right' }}>{title}</Text><Text numberOfLines={1} style={{ color: c.muted, fontSize: 12, textAlign: 'right' }}>{when}</Text></View>
               {cancelled ? <View style={{ backgroundColor: '#451E21', borderRadius: 11, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: '#FF8A8A', fontSize: 12, fontWeight: '900' }}>ملغي</Text></View> : <Text style={{ color: c.text, fontSize: 14, fontWeight: '900' }}>{numberFormatter.format(total)}</Text>}
-              <View style={{ minHeight: 30, paddingHorizontal: 11, borderRadius: 15, borderWidth: 1, borderColor: '#3D5A45', backgroundColor: '#1F2E24', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#B7FF30', fontSize: 12, fontWeight: '800' }}>التفاصيل ⌄</Text></View>
+              <View style={{ minHeight: 30, paddingHorizontal: 11, borderRadius: 15, borderWidth: 1, borderColor: '#3D5A45', backgroundColor: '#1F2E24', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#B7FF30', fontSize: 12, fontWeight: '800' }}>التفاصيل</Text></View>
             </Pressable>;
           }
           return <View key={order.id} style={{ backgroundColor: c.surface, borderColor: order.id === notificationOrderId ? '#B7FF30' : order.is_urgent && group === 'live' ? '#F5A623' : group === 'live' ? '#3F6A2E' : c.border, borderWidth: order.id === notificationOrderId || (order.is_urgent && group === 'live') ? 2 : 1, borderRadius: 22, padding: 14, gap: 11, marginBottom: 11 }}>
           {order.id === notificationOrderId && <Text style={s.notificationOrderLabel}>الطلب المرتبط بهذا الإشعار</Text>}
-          {finished && <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11 }}>
+          {finished && <Pressable disabled={openFinished !== order.id} onPress={() => setOpenFinished(null)} accessibilityRole="button" accessibilityLabel="طيّ التفاصيل" style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11 }}>
             <View style={{ width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: cancelled ? 'rgba(255,138,138,0.16)' : 'rgba(82,213,160,0.16)' }}><Text style={{ color: cancelled ? '#FF8A8A' : c.accent, fontSize: 16, fontWeight: '900' }}>{cancelled ? '✕' : '✓'}</Text></View>
             <View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={2} style={{ color: c.text, fontSize: 14.5, fontWeight: '800', textAlign: 'right' }}>{splitPickup(order.request_text).body}</Text><Text numberOfLines={1} style={{ color: c.muted, fontSize: 12, textAlign: 'right' }}>{shortDateTimeFormatter.format(new Date(order.delivered_at ?? order.created_at))} · #{order.id.slice(0, 6)}</Text></View>
             {cancelled ? <View style={{ backgroundColor: '#451E21', borderRadius: 11, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: '#FF8A8A', fontSize: 12, fontWeight: '900' }}>ملغي</Text></View> : <Text style={{ color: c.text, fontSize: 14, fontWeight: '900' }}>{numberFormatter.format((order.purchase_amount_minor ?? 0) + order.delivery_fee_minor)}</Text>}
-            {openFinished === order.id ? <Pressable onPress={() => setOpenFinished(null)} accessibilityRole="button" accessibilityLabel="إخفاء التفاصيل" style={{ minHeight: 30, paddingHorizontal: 11, borderRadius: 15, borderWidth: 1, borderColor: '#3D5A45', backgroundColor: '#1F2E24', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#B7FF30', fontSize: 12, fontWeight: '800' }}>إخفاء ⌃</Text></Pressable> : null}
-          </View>}
+          </Pressable>}
           {!finished && <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
             <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 6, backgroundColor: cancelled ? '#451E21' : done ? c.raised : '#26391C', borderRadius: 12, paddingHorizontal: 11, minHeight: 28 }}><Text style={{ color: cancelled ? '#FF8A8A' : done ? c.accent : '#B7FF30', fontSize: 12.5, fontWeight: '900' }}>{done ? '✅ ' : ''}{orderStatus[order.status] ?? order.status}</Text></View>{order.is_urgent ? <UrgentTag /> : null}
             <Text style={{ color: c.muted, fontSize: 11.5 }}>{shortDateTimeFormatter.format(new Date(order.created_at))} · #{order.id.slice(0, 6)}</Text>
