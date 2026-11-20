@@ -664,6 +664,8 @@ export type Database = {
       }
       orders: {
         Row: {
+          no_response_alerted_at: string | null
+          customer_wait_alerted_at: string | null
           address_id: string | null
           base_fee_minor: number
           budget_ceiling_minor: number
@@ -697,6 +699,8 @@ export type Database = {
           zone_surcharge_minor: number
         }
         Insert: {
+          no_response_alerted_at?: string | null
+          customer_wait_alerted_at?: string | null
           address_id: string | null
           base_fee_minor?: number
           budget_ceiling_minor?: number
@@ -730,6 +734,8 @@ export type Database = {
           zone_surcharge_minor?: number
         }
         Update: {
+          no_response_alerted_at?: string | null
+          customer_wait_alerted_at?: string | null
           address_id?: string
           base_fee_minor?: number
           budget_ceiling_minor?: number
@@ -931,6 +937,7 @@ export type Database = {
       }
       admin_pause_order: { Args: { p_dispute_id: string }; Returns: undefined }
       admin_create_driver_invite: { Args: never; Returns: string }
+      flag_unanswered_orders: { Args: never; Returns: number }
       get_order_driver_contact: {
         Args: { p_order_id: string }
         Returns: { display_name: string; phone: string | null }[]

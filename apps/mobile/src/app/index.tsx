@@ -2173,6 +2173,9 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   const refresh = useCallback(async () => {
     if (!supabase) return;
     try {
+      // Fallback for projects without pg_cron: checking for orders nobody answered also happens whenever
+      // the admin refreshes. It is idempotent and only flags orders that are already overdue.
+      void supabase.rpc('flag_unanswered_orders').then(() => undefined, () => undefined);
       const [orderResult, driverResult, disputeResult, nameMap] = await Promise.all([
         supabase.from('orders').select('id,customer_id,address_id,delivered_at,purchase_amount_minor,category,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,budget_ceiling_minor,created_at,cash_collected_minor,delivery_note').order('created_at', { ascending: false }).limit(150),
         supabase.from('driver_profiles').select('user_id,vehicle_description').eq('review_status', 'approved').eq('is_online', true).order('created_at'),
@@ -2229,7 +2232,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   useEffect(() => { if (online) void refreshNow(); }, [online, refreshNow]);
   useEffect(() => {
     if (!supabase || !online) return;
-    const channel = supabase.channel(`admin-mobile-orders-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleRefresh).on('postgres_changes', { event: '*', schema: 'public', table: 'driver_profiles' }, scheduleRefresh).on('postgres_changes', { event: '*', schema: 'public', table: 'order_offers' }, scheduleRefresh).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_events' }, (payload) => { const row = payload.new as { event_type?: string; order_id?: string; actor_id?: string | null }; if (row.event_type === 'driver_declined_offer') { showToast(`اعتذر ${row.actor_id ? namesRef.current[row.actor_id] ?? 'سائق' : 'سائق'} عن الطلب #${(row.order_id ?? '').slice(0, 6)}. ما زال عند باقي السائقين.`, 'warning'); scheduleRefresh(); } }).subscribe();
+    const channel = supabase.channel(`admin-mobile-orders-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleRefresh).on('postgres_changes', { event: '*', schema: 'public', table: 'driver_profiles' }, scheduleRefresh).on('postgres_changes', { event: '*', schema: 'public', table: 'order_offers' }, scheduleRefresh).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_events' }, (payload) => { const row = payload.new as { event_type?: string; order_id?: string; actor_id?: string | null }; if (row.event_type === 'driver_declined_offer') { showToast(`اعتذر ${row.actor_id ? namesRef.current[row.actor_id] ?? 'سائق' : 'سائق'} عن الطلب #${(row.order_id ?? '').slice(0, 6)}. ما زال عند باقي السائقين.`, 'warning'); scheduleRefresh(); } else if (row.event_type === 'no_driver_response') { showToast(`ما حدا رد على الطلب #${(row.order_id ?? '').slice(0, 6)}. أعد إرساله أو أسنده لسائق.`, 'warning'); scheduleRefresh(); } }).subscribe();
     return () => { void supabase?.removeChannel(channel); };
   }, [online, scheduleRefresh, showToast, userId]);
   useEffect(() => {
@@ -2242,8 +2245,16 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
     if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; }
     setRefreshing(true); await loadAdminNames(true); await refreshNow(); setRefreshing(false); setMessage('تم تحديث الطلبات.');
   };
-  const groupOf = (order: AdminMobileOrder) => openDisputes[order.id] ? 'action' : order.status === 'searching' && (declines[order.id]?.length ?? 0) > 0 ? 'action' : adminStatusGroup(order.status);
-  const statusLabel = (order: AdminMobileOrder) => order.status === 'searching' && (pending[order.id]?.length ?? 0) === 1 ? 'بانتظار رد السائق' : (orderStatus[order.status] ?? order.status);
+  // Offers that already ran out of time are still "pending" in the database until the next send, so
+  // only the ones whose time has not passed count as waiting for an answer.
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 30 * 1000); return () => clearInterval(timer); }, []);
+  const liveOffers = (orderId: string) => (pending[orderId] ?? []).filter((offer) => Date.parse(offer.expires_at) > clock);
+  // 10 minutes after the order was sent with nobody left who can still answer: it needs the admin.
+  const noResponse = (order: AdminMobileOrder) => order.status === 'searching' && !order.driver_id && !!order.delivery_quote_set_at
+    && clock - Date.parse(order.delivery_quote_set_at) >= 10 * 60 * 1000 && liveOffers(order.id).length === 0;
+  const groupOf = (order: AdminMobileOrder) => openDisputes[order.id] ? 'action' : order.status === 'searching' && ((declines[order.id]?.length ?? 0) > 0 || noResponse(order)) ? 'action' : adminStatusGroup(order.status);
+  const statusLabel = (order: AdminMobileOrder) => noResponse(order) ? 'ما حدا رد على الطلب' : order.status === 'searching' && liveOffers(order.id).length === 1 ? 'بانتظار رد السائق' : (orderStatus[order.status] ?? order.status);
   const nameOf = (id: string | null) => id ? (names[id] ?? '#' + id.slice(0, 6)) : '—';
   // Customers who never set a name only have an email on file: show their phone number instead, which is
   // what the admin actually uses to reach them. The email stays as the last resort.
@@ -2257,13 +2268,14 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
     const result: Record<string, number> = { all: orders.length, action: 0, searching: 0, active: 0, done: 0 };
     for (const order of orders) { const group = groupOf(order); if (group in result) result[group] += 1; }
     return result;
-  }, [orders]);
+  }, [orders, declines, pending, openDisputes, clock]);
   const list = useMemo(() => {
     const term = search.trim().toLowerCase();
     return orders.filter((order) => (filter === 'all' || groupOf(order) === filter) && (!term || order.id.toLowerCase().includes(term) || order.request_text.toLowerCase().includes(term) || order.category.toLowerCase().includes(term) || (names[order.customer_id ?? ''] ?? '').toLowerCase().includes(term)));
-  }, [orders, filter, search, names, declines, pending]);
+  }, [orders, filter, search, names, declines, pending, clock]);
 
   useEffect(() => { onBadge('orders', counts.action); }, [counts.action, onBadge]);
+  const toneForOrder = (order: AdminMobileOrder) => noResponse(order) ? { bg: '#3A2D18', fg: '#F0CC83' } : toneFor(order.status);
   const toneFor = (status: string) => {
     const group = adminStatusGroup(status);
     if (status === 'cancelled') return { bg: '#451E21', fg: '#FF8A8A' };
@@ -2346,7 +2358,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
     const address = sheet.address_id ? addresses[sheet.address_id] : undefined;
     const { pickup, body } = splitPickup(sheet.request_text);
     const delivered = ['delivered', 'settled'].includes(sheet.status);
-    const tone = toneFor(sheet.status);
+    const tone = toneForOrder(sheet);
     const card = { backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12 } as const;
     const tag = (label: string, value: string) => <View key={label} style={{ flexDirection: 'row-reverse', gap: 5, backgroundColor: color.raised, borderColor: color.border, borderWidth: 1, borderRadius: 10, paddingHorizontal: 9, paddingVertical: 4 }}><Text style={{ color: color.muted, fontSize: 12 }}>{label}</Text><Text style={{ color: color.text, fontSize: 12, fontWeight: '800' }}>{value}</Text></View>;
     const segment = (on: boolean) => ({ flex: 1, minHeight: 46, borderRadius: 13, borderWidth: 1.5, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.primary : color.surface, alignItems: 'center' as const, justifyContent: 'center' as const });
@@ -2410,8 +2422,9 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
               {sheet.status !== 'disputed' && ['accepted', 'assigned', 'shopping', 'awaiting_approval', 'purchased', 'delivering'].includes(sheet.status) ? <Pressable disabled={resolving || !online} onPress={() => void pauseOrder()} accessibilityRole="button" style={{ minHeight: 44, borderRadius: 14, borderWidth: 1, borderStyle: 'dashed', borderColor: '#C98A2B', alignItems: 'center', justifyContent: 'center', opacity: resolving || !online ? 0.55 : 1 }}><Text style={{ color: '#F0CC83', fontSize: 13.5, fontWeight: '800' }}>⏸ إيقاف الطلب مؤقتاً</Text></Pressable> : null}
             </> : <Text style={{ color: color.muted, fontSize: 13, textAlign: 'right' }}>عم نحمّل تفاصيل البلاغ…</Text>}
           </View>}
-          {sheet.status === 'searching' && ((declines[sheet.id]?.length ?? 0) > 0 || (pending[sheet.id]?.length ?? 0) > 0) && <View style={[card, { gap: 6 }]}>
-            {(pending[sheet.id] ?? []).map((offer) => <Text key={offer.driver_id} style={{ color: '#F0CC83', fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>⏳ {nameOf(offer.driver_id)} · بانتظار رده</Text>)}
+          {sheet.status === 'searching' && ((declines[sheet.id]?.length ?? 0) > 0 || liveOffers(sheet.id).length > 0 || noResponse(sheet)) && <View style={[card, { gap: 6 }]}>
+            {noResponse(sheet) ? <Text style={{ color: '#F0CC83', fontSize: 13.5, fontWeight: '800', lineHeight: 21, textAlign: 'right' }}>⏰ ما حدا من السائقين رد خلال 10 دقايق. أعد الإرسال للكل أو أسنده لسائق محدد.</Text> : null}
+            {liveOffers(sheet.id).map((offer) => <Text key={offer.driver_id} style={{ color: '#F0CC83', fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>⏳ {nameOf(offer.driver_id)} · بانتظار رده</Text>)}
             {(declines[sheet.id] ?? []).map((id) => <Text key={id} style={{ color: '#FF8A8A', fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>⚠️ {nameOf(id)} · اعتذر</Text>)}
           </View>}
           <View style={[card, { gap: 8 }]}>
@@ -2476,7 +2489,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
       {loading ? [0, 1, 2].map((item) => <SkeletonCard key={item} style={{ gap: 12 }}><View style={[skRow, { justifyContent: 'space-between' }]}>{sk(90, 26, { borderRadius: 13 })}{sk(70, 12)}</View>{sk('90%', 12, { alignSelf: 'flex-end' })}{sk('60%', 12, { alignSelf: 'flex-end' })}<View style={[skRow, { justifyContent: 'space-between' }]}>{sk(110, 12)}{sk(80, 36, { borderRadius: 12 })}</View></SkeletonCard>)
         : list.length ? <>
           {list.slice(0, visible).map((order) => {
-            const tone = toneFor(order.status); const hasReport = !!openDisputes[order.id] || order.status === 'disputed'; const needs = groupOf(order) === 'action' && ['requested', 'quoted', 'searching'].includes(order.status); const declinedNames = (declines[order.id] ?? []).map((id) => nameOf(id)); const pendingOffers = pending[order.id] ?? [];
+            const tone = toneForOrder(order); const hasReport = !!openDisputes[order.id] || order.status === 'disputed'; const needs = groupOf(order) === 'action' && ['requested', 'quoted', 'searching'].includes(order.status); const declinedNames = (declines[order.id] ?? []).map((id) => nameOf(id)); const pendingOffers = liveOffers(order.id); const silent = noResponse(order);
             return <Pressable key={order.id} onPress={() => openSheet(order)} accessibilityRole="button" accessibilityLabel={`طلب ${order.category}، ${orderStatus[order.status] ?? order.status}`} style={{ backgroundColor: color.surface, borderColor: needs || hasReport ? '#C98A2B' : color.border, borderWidth: 1, borderRadius: 20, padding: 14, gap: 9 }}>
               <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <View style={{ backgroundColor: tone.bg, borderRadius: 12, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: tone.fg, fontSize: 12, fontWeight: '900' }}>{statusLabel(order)}</Text></View>
@@ -2498,6 +2511,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
               {order.driver_id ? <Text numberOfLines={1} style={{ color: adminStatusGroup(order.status) === 'done' ? color.accent : color.muted, fontSize: 12.5, fontWeight: adminStatusGroup(order.status) === 'done' ? '800' : '400', textAlign: 'right' }}>{adminStatusGroup(order.status) === 'done' ? `✅ سلّمه ${nameOf(order.driver_id)}${order.delivered_at ? ' · ' + timeAgo(order.delivered_at) : ''}${(cashCollected[order.id] ?? null) !== null ? ' · استلم ' + numberFormatter.format(cashCollected[order.id] as number) : ''}` : `🛵 ${nameOf(order.driver_id)}`}</Text> : null}
               {hasReport ? <View style={{ backgroundColor: 'rgba(240,204,131,0.12)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 }}><Text style={{ color: '#F0CC83', fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>⚠️ بلاغ مفتوح على هالطلب</Text></View> : null}
               {declinedNames.length ? <View style={{ backgroundColor: 'rgba(255,138,138,0.12)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 }}><Text style={{ color: '#FF8A8A', fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>⚠️ اعتذر {declinedNames.length} ({declinedNames.join('، ')})</Text></View> : null}
+              {silent ? <View style={{ backgroundColor: 'rgba(240,204,131,0.12)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 }}><Text style={{ color: '#F0CC83', fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>⏰ ما حدا من السائقين رد من {Math.floor((clock - Date.parse(order.delivery_quote_set_at ?? order.created_at)) / 60000)} دقيقة. أعد الإرسال للكل أو أسنده لسائق.</Text></View> : null}
               {order.status === 'searching' && pendingOffers.length ? <View style={{ backgroundColor: 'rgba(240,204,131,0.12)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 }}><Text style={{ color: '#F0CC83', fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>{pendingOffers.length === 1 ? `⏳ ${nameOf(pendingOffers[0].driver_id)} · باقي ${minutesLeft(pendingOffers[0].expires_at)} د للرد` : `⏳ بانتظار رد ${pendingOffers.length} سائقين`}</Text></View> : null}
               {needs ? <View style={{ minHeight: 42, borderRadius: 14, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 14, fontWeight: '900' }}>{order.status === 'searching' ? 'إعادة الإرسال أو إسناد سائق ←' : order.delivery_quote_set_at ? 'إرسال الطلب للسائقين ←' : 'تحديد الأجرة وإرسال ←'}</Text></View> : null}
             </Pressable>;
@@ -2694,10 +2708,17 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     setOrdersAreStale(false);
     void saveCustomerOrdersSnapshot(userId, rows).then((snapshot) => { if (snapshot) setOrdersSyncedAt(snapshot.syncedAt); }).catch(() => {});
   }, [userId]);
+  const lastFlagCheck = useRef(0);
   const fetchCustomerOrders = useCallback(async () => {
     if (!supabase || !online) return null;
+    // A customer with an order that has waited 15+ minutes also triggers the server-side check (fallback when
+    // pg_cron isn't available); at most once a minute.
     const { data, error } = await supabase.from('orders').select('id,status,category,request_text,delivery_fee_minor,delivery_quote_set_at,delivery_quote_approved_at,budget_ceiling_minor,purchase_amount_minor,purchase_approved_at,created_at,driver_id,delivered_at').order('created_at', { ascending: false }).limit(30);
-    return error ? null : data ?? [];
+    if (error) return null;
+    const rows = data ?? [];
+    const overdue = rows.some((order) => order.status === 'searching' && !!order.delivery_quote_set_at && Date.now() - Date.parse(order.delivery_quote_set_at) >= 15 * 60 * 1000);
+    if (overdue && Date.now() - lastFlagCheck.current > 60 * 1000) { lastFlagCheck.current = Date.now(); void supabase.rpc('flag_unanswered_orders').then(() => undefined, () => undefined); }
+    return rows;
   }, [online]);
   const ordersFetchedAt = useRef(0);
   const refreshOrdersRef = useRef<(() => void) | null>(null);
@@ -2871,6 +2892,10 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   const [ordersVisible, setOrdersVisible] = useState(10);
   // A manual refresh keeps the list on screen; only the refresh button dims while it runs.
   const [ordersRefreshing, setOrdersRefreshing] = useState(false);
+  // After 15 minutes without a driver the order card changes its message (the server also sends a notification).
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 60 * 1000); return () => clearInterval(timer); }, []);
+  const waitedLong = (order: { delivery_quote_set_at: string | null }) => !!order.delivery_quote_set_at && clock - Date.parse(order.delivery_quote_set_at) >= 15 * 60 * 1000;
   // Pull down on any customer screen to reload orders and notifications.
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const pullRefresh = async () => {
@@ -2947,6 +2972,10 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
             <View style={{ flex: 1 }}><Text numberOfLines={3} style={{ color: c.text, fontSize: 15, fontWeight: '800', lineHeight: 23, textAlign: 'right' }}>{ordersAreStale ? 'تفاصيل الطلب تظهر عند رجوع الاتصال.' : splitPickup(order.request_text).body}</Text><Text style={{ color: c.muted, fontSize: 12, marginTop: 2, textAlign: 'right' }}>{order.category}</Text></View>
           </View>
           {!cancelled && <OrderTrack status={order.status} />}
+          {order.status === 'searching' && <View style={{ backgroundColor: waitedLong(order) ? 'rgba(240,204,131,0.12)' : c.raised, borderColor: waitedLong(order) ? '#C98A2B' : c.border, borderWidth: 1, borderRadius: 14, padding: 11, gap: 3 }}>
+            <Text style={{ color: waitedLong(order) ? '#F0CC83' : c.text, fontSize: 13.5, fontWeight: '900', textAlign: 'right' }}>{waitedLong(order) ? 'لسا ما لقينا سائق' : 'عم ندور على سائق لطلبك'}</Text>
+            <Text style={{ color: c.muted, fontSize: 12.5, lineHeight: 20, textAlign: 'right' }}>{waitedLong(order) ? 'مرّ وقت وما لقينا سائق متاح. فيك تنتظر شوي أو تلغي الطلب، وفريقنا عم يتابعه.' : 'فيك تنتظر أو تلغي الطلب بأي وقت. رح يوصلك إشعار أول ما يقبله سائق.'}</Text>
+          </View>}
           {hasDriver && !ordersAreStale && <CustomerDriverRow orderId={order.id} status={order.status} />}
           <View style={{ flexDirection: 'row-reverse', gap: 8 }}>
             <View style={{ flex: 1, backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 14, paddingVertical: 7, paddingHorizontal: 11 }}><Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>أجرة التوصيل</Text><Text style={{ color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{ordersAreStale ? '—' : order.delivery_quote_set_at ? numberFormatter.format(order.delivery_fee_minor) + ' ل.س' : 'قيد التحديد'}</Text></View>
