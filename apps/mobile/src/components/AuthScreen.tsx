@@ -76,6 +76,7 @@ export function AuthScreen({ inviteToken, theme }: { inviteToken?: string; theme
   const codeRef = useRef<TextInputInstance>(null);
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
+  const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [code, setCode] = useState('');
@@ -104,11 +105,12 @@ export function AuthScreen({ inviteToken, theme }: { inviteToken?: string; theme
         setMessage(''); return;
       }
       if (mode === 'signup') {
+        if (fullName.trim().length < 2) { showMessage('اكتب اسمك حتى الإدارة والسائق يعرفوك.', 'error'); return; }
         if (password.length < 8) { showMessage('كلمة السر لازم تكون 8 أحرف على الأقل.', 'error'); return; }
         const baseUrl = Platform.OS === 'web' && typeof window !== 'undefined' ? new URL('/', window.location.origin).toString() : Linking.createURL('/');
         const separator = baseUrl.includes('?') ? '&' : '?';
         const emailRedirectTo = `${baseUrl}${inviteToken ? `${separator}invite=${encodeURIComponent(inviteToken)}` : ''}`;
-        const { data, error } = await supabase.auth.signUp({ email: normalized, password, options: { emailRedirectTo } });
+        const { data, error } = await supabase.auth.signUp({ email: normalized, password, options: { emailRedirectTo, data: { display_name: fullName.trim().slice(0, 120) } } });
         if (error) {
           const alreadyRegistered = /already registered|already been registered|user exists/i.test(error.message);
           showMessage(alreadyRegistered ? 'إيميلك مسجل من قبل. سجّل دخولك.' : 'ما قدرنا ننشئ الحساب. تأكد من البريد وجرب مرة ثانية.', 'error'); return;
@@ -158,6 +160,7 @@ export function AuthScreen({ inviteToken, theme }: { inviteToken?: string; theme
     <View style={s.topline}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={{width:58,height:54,borderRadius:12,backgroundColor:'#fff'}} contentFit="contain" accessibilityLabel="شعار لَبّيك"/><View style={s.brandCopy}><Text style={s.brand}>لَبّيك</Text><Text style={s.tag}>اطلب، والباقي علينا.</Text></View></View>
     <View style={s.hero}><View style={s.heroText}><Text style={s.eyebrow}>خدمة يومك تبدأ من هون</Text><Text style={s.heroTitle}>احتياجاتك،{'\n'}بطلب واحد.</Text><Text style={s.heroCopy}>اكتب طلبك وخلي علينا الباقي.</Text></View><View style={s.art} accessibilityElementsHidden><View style={s.artOrbit}><View style={s.artTile}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={s.artLogo} contentFit="contain" accessibilityLabel="شعار لَبّيك"/></View><View style={s.artPin}><Text style={s.artPinGlyph}>⌖</Text></View><View style={s.artSpark}/></View></View></View>
     <View style={s.formCard}><Text style={s.title}>{title}</Text><Text style={s.copy}>{mode === 'login' ? 'سجّل دخولك بالبريد وكلمة السر.' : mode === 'signup' ? 'أنشئ حسابك. رح نطلب رمز البريد مرة واحدة لتأكيده.' : mode === 'code' ? `أدخل الرمز اللي وصل إلى ${normalized}.` : mode === 'recovery-code' ? `أدخل رمز تغيير كلمة السر الذي وصل إلى ${normalized}.` : 'أدخل بريدك لنرسل لك رمز تغيير كلمة السر.'}</Text>
+    {mode === 'signup' && <><Text style={s.label}>الاسم</Text><TextInput value={fullName} onChangeText={setFullName} autoComplete="name" textContentType="name" maxLength={120} placeholder="اسمك الكامل" placeholderTextColor="#839188" style={s.input} accessibilityLabel="الاسم"/></>}
     {mode !== 'code' && <><Text style={s.label}>البريد الإلكتروني</Text><TextInput ref={emailRef} onFocus={() => onInputFocus(emailRef.current)} value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} textAlign="left" autoComplete="email" placeholder="name@example.com" placeholderTextColor="#839188" style={s.input} accessibilityLabel="البريد الإلكتروني"/></>}
     {(mode === 'login' || mode === 'signup') && <><Text style={s.label}>كلمة السر</Text><View style={s.passwordInputWrap}><TextInput ref={passwordRef} onFocus={() => onInputFocus(passwordRef.current)} onSubmitEditing={() => void submit()} returnKeyType="go" value={password} onChangeText={setPassword} secureTextEntry={!showPassword} autoCapitalize="none" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} placeholder="8 أحرف على الأقل" placeholderTextColor="#839188" style={[s.input,s.passwordInput]} accessibilityLabel="كلمة السر"/><Pressable accessibilityRole="button" accessibilityLabel={showPassword ? 'إخفاء كلمة السر' : 'إظهار كلمة السر'} accessibilityState={{ selected: showPassword }} onPress={() => setShowPassword((visible) => !visible)} style={s.passwordEye} hitSlop={8}><View style={s.eyeShape}><View style={s.eyePupil}/>{showPassword ? <View style={s.eyeSlash}/> : null}</View></Pressable></View></>}
     {(mode === 'code' || mode === 'recovery-code') && <><Text style={s.label}>{mode === 'code' ? 'رمز التأكيد' : 'رمز تغيير كلمة السر'}</Text><TextInput ref={codeRef} onFocus={() => onInputFocus(codeRef.current)} value={code} onChangeText={(value) => setCode(value.replace(/\D/g, '').slice(0, 8))} keyboardType="number-pad" textAlign="center" maxLength={8} placeholder="12345678" placeholderTextColor="#839188" style={s.input} accessibilityLabel={mode === 'code' ? 'رمز تأكيد البريد' : 'رمز تغيير كلمة السر'} accessibilityHint="أدخل الرمز المكوّن من 8 أرقام الذي وصلك بالبريد"/></>}
