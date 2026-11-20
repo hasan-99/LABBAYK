@@ -71,7 +71,8 @@
       "expo-secure-store",
       "expo-font",
       "expo-status-bar",
-      "expo-web-browser"
+      "expo-web-browser",
+      "./plugins/with-optional-android-features"
     ],
     "experiments": {
       "typedRoutes": true,
