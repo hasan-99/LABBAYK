@@ -923,17 +923,48 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     if (error) { setMessage('ما قدرنا نبدأ التوصيل. تأكد أن المشتريات مسجلة وموافق عليها.'); return; }
     patchOrder(orderId, { status: 'delivering' }); setMessage('بدأ التوصيل. اطلب من الزبون رمز التأكيد عند التسليم.'); void refreshNow();
   };
+  // Taking the photo sends the app to the background. On phones with little memory Android may close the
+  // app meanwhile; the photo is then waiting for us when the app opens again. We remember which order the
+  // photo is for, and recover it below, so the driver never ends up on a blank screen without the picture.
+  const pendingPhotoKey = `labbayk:pending-delivery-photo:${userId}`;
+  const showDeliveryPhoto = useCallback(async (orderId: string, asset: { uri: string; width?: number; height?: number; mimeType?: string | null }) => {
+    const target = activeOrders.find((order) => order.id === orderId);
+    setCollectDrafts((current) => ({ ...current, [orderId]: current[orderId] ?? String((target?.purchase_amount_minor ?? 0) + (target?.delivery_fee_minor ?? 0)) }));
+    setDeliveryNote('');
+    // Showing the photo comes first; resizing it must never block that (and gives up after 6 s).
+    setDeliveryDraft({ orderId, uri: asset.uri, mimeType: asset.mimeType ?? 'image/jpeg' });
+    const shrunk = await Promise.race([shrinkPhoto(asset, 1600, 0.7), new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000))]);
+    if (shrunk) setDeliveryDraft((current) => current && current.orderId === orderId ? { orderId, uri: shrunk.uri, mimeType: shrunk.mimeType } : current);
+  }, [activeOrders]);
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    let active = true;
+    void (async () => {
+      try {
+        const pending = await ImagePicker.getPendingResultAsync();
+        const orderId = await AsyncStorage.getItem(pendingPhotoKey);
+        if (!active || !orderId) return;
+        await AsyncStorage.removeItem(pendingPhotoKey);
+        const result = Array.isArray(pending) ? null : pending;
+        const asset = result && 'assets' in result && !result.canceled ? result.assets?.[0] : null;
+        if (asset) { setMessage('رجّعنا صورة التسليم اللي صوّرتها.'); void showDeliveryPhoto(orderId, asset); }
+      } catch { /* nothing to recover */ }
+    })();
+    return () => { active = false; };
+  }, [pendingPhotoKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const startDeliveryPhoto = async (orderId: string) => {
     if (!supabase || !online || operationsAreStale) { setMessage('هالإجراء يحتاج اتصالاً بالخادم. تأكد من الإنترنت وحدّث الصفحة.'); return; }
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (!permission.granted) { setMessage('نحتاج إذن الكاميرا حتى تصوّر تسليم الطلب. فعّله من إعدادات الجهاز.'); return; }
-    const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.6, allowsEditing: false });
-    if (result.canceled || !result.assets[0]) return;
-    const target = activeOrders.find((order) => order.id === orderId);
-    setCollectDrafts((current) => ({ ...current, [orderId]: String((target?.purchase_amount_minor ?? 0) + (target?.delivery_fee_minor ?? 0)) }));
-    setDeliveryNote('');
-    const shrunk = await shrinkPhoto(result.assets[0], 1600, 0.7);
-    setDeliveryDraft({ orderId, uri: shrunk?.uri ?? result.assets[0].uri, mimeType: shrunk?.mimeType ?? result.assets[0].mimeType ?? 'image/jpeg' });
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) { setMessage('نحتاج إذن الكاميرا حتى تصوّر تسليم الطلب. فعّله من إعدادات الجهاز.'); return; }
+      await AsyncStorage.setItem(pendingPhotoKey, orderId).catch(() => undefined);
+      const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.6, allowsEditing: false, exif: false });
+      await AsyncStorage.removeItem(pendingPhotoKey).catch(() => undefined);
+      if (result.canceled || !result.assets[0]) return;
+      await showDeliveryPhoto(orderId, result.assets[0]);
+    } catch {
+      setMessage('ما قدرنا نفتح الكاميرا أو نحفظ الصورة. جرّب مرة ثانية.');
+    }
   };
   const submitDelivery = async () => {
     if (!supabase || !deliveryDraft) return;
@@ -1524,7 +1555,7 @@ type AdminMobileDriver = Pick<Database['public']['Tables']['driver_profiles']['R
 const pickupPrefix = 'الشراء من: ';
 const composeRequest = (pickup: string, request: string) => pickup.trim() ? `${pickupPrefix}${pickup.trim()}\n${request.trim()}` : request.trim();
 const splitPickup = (text: string) => { const match = text.match(/^الشراء من: (.+)\n([\s\S]*)$/); return match ? { pickup: match[1].trim(), body: match[2].trim() } : { pickup: '', body: text }; };
-type AdminAddress = Pick<Database['public']['Tables']['addresses']['Row'], 'id' | 'street' | 'city' | 'neighborhood' | 'building' | 'landmark' | 'contact_phone'>;
+type AdminAddress = Pick<Database['public']['Tables']['addresses']['Row'], 'id' | 'label' | 'street' | 'city' | 'neighborhood' | 'building' | 'landmark' | 'contact_phone'>;
 type CachedImage = { path: string; url: string; key: string };
 /** Remote avatars get a stable cache key so the photo is downloaded once; local drafts don't. */
 const avatarSource = (uri: string, path: string | null) => path && !uri.startsWith('file:') && !uri.startsWith('blob:') && !uri.startsWith('data:') ? { uri, cacheKey: imageCacheKey('profile-avatars', path) } : { uri };
@@ -2194,7 +2225,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
         searchingIds.length ? supabase.from('order_events').select('order_id,actor_id').eq('event_type', 'driver_declined_offer').in('order_id', searchingIds) : Promise.resolve(null),
         searchingIds.length ? supabase.from('order_offers').select('order_id,driver_id,expires_at').eq('status', 'pending').in('order_id', searchingIds) : Promise.resolve(null),
         driverIds.length ? supabase.from('driver_profiles').select('user_id,phone_e164').in('user_id', driverIds) : Promise.resolve(null),
-        addressIds.length ? supabase.from('addresses').select('id,street,city,neighborhood,building,landmark,contact_phone').in('id', addressIds) : Promise.resolve(null),
+        addressIds.length ? supabase.from('addresses').select('id,label,street,city,neighborhood,building,landmark,contact_phone').in('id', addressIds) : Promise.resolve(null),
       ]);
       const declineMap: Record<string, string[]> = {};
       for (const row of declineResult?.data ?? []) if (row.actor_id) declineMap[row.order_id] = [...new Set([...(declineMap[row.order_id] ?? []), row.actor_id])];
@@ -2385,8 +2416,8 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
             <View style={{ flexDirection: 'row-reverse', gap: 9, alignItems: 'flex-start' }}>
               <Text style={{ fontSize: 16 }}>📍</Text>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: color.text, fontSize: 14.5, fontWeight: '800', lineHeight: 22, textAlign: 'right' }}>{address ? [address.neighborhood + '، ' + address.city, address.street].filter(Boolean).join(' · ') : '—'}</Text>
-                {address && (address.landmark || address.building) ? <Text style={{ color: color.muted, fontSize: 12.5, lineHeight: 19, textAlign: 'right' }}>{[address.landmark, address.building ? 'بناء ' + address.building : ''].filter(Boolean).join(' · ')}</Text> : null}
+                <Text style={{ color: color.text, fontSize: 14.5, fontWeight: '800', lineHeight: 22, textAlign: 'right' }}>{address ? [address.neighborhood, address.label].filter(Boolean).join(' · ') : '—'}</Text>
+                {address && [address.city, address.street, address.building ? 'بناء ' + address.building : '', address.landmark].some(Boolean) ? <Text style={{ color: color.muted, fontSize: 12.5, lineHeight: 19, textAlign: 'right' }}>{[address.city, address.street, address.building ? 'بناء ' + address.building : '', address.landmark].filter(Boolean).join(' · ')}</Text> : null}
               </View>
             </View>
           </View>
