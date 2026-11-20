@@ -1490,7 +1490,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
             <View style={s.homeGreeting}><Text style={s.homeGreetingTitle}>مرحباً {profile.name.trim().split(/\s+/)[0] || 'بالسائق'} 👋</Text><Text style={s.homeGreetingSub}>الرادار بيشتغل بس تكون متاح، وبنفتش لك على طلب.</Text></View>
           </>}
         </> : tab === 'orders' ? <>
-          <View style={s.driverPageIntro}><Text style={s.driverHeroEyebrow}>تشغيلك اليومي</Text><Text style={s.accountPageTitle}>الطلبات</Text><Text style={s.accountPageSubtitle}>العروض الجديدة والطلبات اللي عم توصلها.</Text></View>
+          <View style={s.driverPageIntro}><Text style={[s.accountPageTitle,{color:c.primary}]}>الطلبات</Text></View>
           {loading && <DriverOperationsSkeleton screen="orders"/>}
           {profileLoadError && <View style={[s.driverOnboardingCard,{marginTop:12}]}><Text style={s.driverOnboardingTitle}>ما قدرنا نحمّل بياناتك</Text><Text style={s.driverOnboardingCopy}>{profileLoadError}</Text><Pressable disabled={!online} onPress={() => { setLoading(true); setProfileRefreshKey((value) => value + 1); }} style={[s.driverOnboardingButton,!online&&s.disabled]} accessibilityRole="button"><Text style={s.driverOnboardingButtonText}>{online?'إعادة المحاولة':'بانتظار الاتصال'}</Text></Pressable></View>}
         </> : tab === 'profile' ? <>
