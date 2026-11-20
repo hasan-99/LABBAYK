@@ -25,6 +25,7 @@ import { SUPPORT_EMAIL } from '@/lib/legal-contact';
 import { ltrPhone, prettyPhone, useSupportContact, whatsappUrl } from '@/lib/support-contact';
 import { clearImageCaches, forgetOrderImages, imageCacheKey, listOrderImagePaths, peekOrderImagePaths, peekSignedImageUrl, signedImageUrl, signedImageUrls } from '@/lib/storage-cache';
 import { shrinkPhoto } from '@/lib/image-compress';
+import { uploadWithProgress } from '@/lib/storage-upload';
 import { cacheKey, clearUserCache, createRefreshScheduler, isFresh, readMemory, readPersisted, writeMemory, writePersisted } from '@/lib/data-cache';
 import { AppText as Text } from '@/components/AppText';
 import { ToastProvider, useAppToast, useToastMessage } from '@/components/Toast';
@@ -791,6 +792,10 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   const support = useSupportContact();
   const [collectDrafts, setCollectDrafts] = useState<Record<string, string>>({});
   const [deliveryDraft, setDeliveryDraft] = useState<{ orderId: string; uri: string; mimeType: string } | null>(null);
+  // The proof photo starts uploading as soon as it is taken, while the driver types the amount.
+  const [deliveryUpload, setDeliveryUpload] = useState<{ uri: string; status: 'uploading' | 'done' | 'error'; progress: number; attempt: number; path?: string } | null>(null);
+  const deliveryUploadRun = useRef(0);
+  const deliveryUploadPromise = useRef<Promise<string | null> | null>(null);
   const [deliveryNote, setDeliveryNote] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [balanceOpen, setBalanceOpen] = useState(false);
@@ -987,6 +992,39 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     if (error) { setMessage('ما قدرنا نبدأ التوصيل. تأكد أن المشتريات مسجلة وموافق عليها.'); return; }
     patchOrder(orderId, { status: 'delivering' }); setMessage('بدأ التوصيل. اطلب من الزبون رمز التأكيد عند التسليم.'); void refreshNow();
   };
+  const beginDeliveryUpload = (orderId: string, uri: string, mimeType: string): Promise<string | null> => {
+    const run = ++deliveryUploadRun.current;
+    const live = (update: Partial<NonNullable<typeof deliveryUpload>>) => { if (deliveryUploadRun.current === run) setDeliveryUpload((current) => current && current.uri === uri ? { ...current, ...update } : current); };
+    setDeliveryUpload({ uri, status: 'uploading', progress: 0, attempt: 1 });
+    const task = (async (): Promise<string | null> => {
+      try {
+        const body = await fetch(uri).then((response) => response.arrayBuffer());
+        if (body.byteLength > 5 * 1024 * 1024) { live({ status: 'error' }); return null; }
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          live({ status: 'uploading', progress: 0, attempt });
+          const path = `${orderId}/${Date.now()}.jpg`;
+          try {
+            // Attempts 1 and 2 report progress; the last attempt uses the plain upload as a safety net.
+            if (attempt < 3) await uploadWithProgress({ bucket: 'delivery-proofs', path, body, contentType: mimeType, onProgress: (fraction) => live({ progress: fraction }) });
+            else {
+              const plain = await supabase!.storage.from('delivery-proofs').upload(path, body, { contentType: mimeType, cacheControl: '3600', upsert: false });
+              if (plain.error) throw plain.error;
+            }
+            live({ status: 'done', progress: 1, path });
+            return path;
+          } catch {
+            if (deliveryUploadRun.current !== run) return null;
+            if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+          }
+        }
+      } catch { /* fall through to the error state */ }
+      live({ status: 'error' });
+      return null;
+    })();
+    deliveryUploadPromise.current = task;
+    return task;
+  };
+  const closeDeliveryDraft = () => { deliveryUploadRun.current += 1; deliveryUploadPromise.current = null; setDeliveryUpload(null); setDeliveryDraft(null); };
   const startDeliveryPhoto = async (orderId: string) => {
     if (!supabase || !online || operationsAreStale) { setMessage('هالإجراء يحتاج اتصالاً بالخادم. تأكد من الإنترنت وحدّث الصفحة.'); return; }
     const permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -996,8 +1034,11 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     const target = activeOrders.find((order) => order.id === orderId);
     setCollectDrafts((current) => ({ ...current, [orderId]: String((target?.purchase_amount_minor ?? 0) + (target?.delivery_fee_minor ?? 0)) }));
     setDeliveryNote('');
-    const shrunk = await shrinkPhoto(result.assets[0], 1600, 0.7);
-    setDeliveryDraft({ orderId, uri: shrunk?.uri ?? result.assets[0].uri, mimeType: shrunk?.mimeType ?? result.assets[0].mimeType ?? 'image/jpeg' });
+    // Proof of delivery does not need a large photo: a smaller one uploads quickly on a weak connection.
+    const shrunk = await shrinkPhoto(result.assets[0], 1024, 0.6);
+    const draft = { orderId, uri: shrunk?.uri ?? result.assets[0].uri, mimeType: shrunk?.mimeType ?? result.assets[0].mimeType ?? 'image/jpeg' };
+    setDeliveryDraft(draft);
+    if (online) void beginDeliveryUpload(draft.orderId, draft.uri, draft.mimeType);
   };
   const submitDelivery = async () => {
     if (!supabase || !deliveryDraft) return;
@@ -1007,12 +1048,14 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     if (!Number.isSafeInteger(collected) || collected < 0) { setMessage('اكتب المبلغ اللي استلمته من الزبون بالليرة السورية.'); return; }
     setBusy(true); setMessage('');
     try {
-      const body = await fetch(uri).then((response) => response.arrayBuffer());
-      if (body.byteLength > 5 * 1024 * 1024) { setBusy(false); setMessage('حجم الصورة أكبر من 5 ميغابايت. صوّر مرة ثانية.'); return; }
-      const path = `${orderId}/${Date.now()}.jpg`;
-      setPendingAction('delivery-upload');
-      const upload = await supabase.storage.from('delivery-proofs').upload(path, body, { contentType: mimeType, cacheControl: '3600', upsert: false });
-      if (upload.error) throw upload.error;
+      // Reuse the photo uploaded in the background; wait for it if it is still going, retry if it failed.
+      let path: string | null = deliveryUpload?.uri === uri && deliveryUpload.status === 'done' ? deliveryUpload.path ?? null : null;
+      if (!path) {
+        setPendingAction('delivery-upload');
+        path = deliveryUpload?.uri === uri && deliveryUpload.status === 'uploading' && deliveryUploadPromise.current ? await deliveryUploadPromise.current : null;
+        if (!path) path = await beginDeliveryUpload(orderId, uri, mimeType);
+      }
+      if (!path) { setBusy(false); setPendingAction(''); setMessage('ما قدرنا نرفع الصورة. تأكد من الإنترنت وجرّب مرة ثانية.'); return; }
       const missing = (error: { code?: string; message: string } | null) => !!error && /find the function|PGRST202/i.test(`${error.code ?? ''} ${error.message}`);
       const note = deliveryNote.trim() || null;
       setPendingAction('delivery-confirm');
@@ -1022,7 +1065,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       if (error) throw error;
       const finished = activeOrders.find((order) => order.id === orderId);
       if (finished) setDeliveredReceipt({ id: finished.id, createdAt: finished.created_at, deliveredAt: new Date().toISOString(), request: finished.request_text, address: finished.address ?? null, budget: finished.budget_ceiling_minor, purchase: finished.purchase_amount_minor, fee: finished.delivery_fee_minor, collected, note });
-      setBusy(false); setPendingAction(''); setDeliveryDraft(null); setActiveOrders((current) => current.filter((order) => order.id !== orderId)); setActiveOrdersCount((count) => Math.max(0, count - 1)); setMessage('تم تسليم الطلب وحُفظت صورة الإثبات.'); void refreshNow();
+      setBusy(false); setPendingAction(''); closeDeliveryDraft(); setActiveOrders((current) => current.filter((order) => order.id !== orderId)); setActiveOrdersCount((count) => Math.max(0, count - 1)); setMessage('تم تسليم الطلب وحُفظت صورة الإثبات.'); void refreshNow();
     } catch {
       setBusy(false); setPendingAction(''); setMessage('ما قدرنا نأكد التسليم. تأكد من الاتصال وجرّب مرة ثانية.');
     }
@@ -1245,15 +1288,22 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
         </ScrollView>
       </SafeAreaView>
     </Modal>}
-    {isActive&&<Modal visible={!!deliveryDraft} animationType="slide" onRequestClose={()=>{if(!busy)setDeliveryDraft(null)}}>
+    {isActive&&<Modal visible={!!deliveryDraft} animationType="slide" onRequestClose={()=>{if(!busy)closeDeliveryDraft()}}>
       <SafeAreaView style={[s.safe,{flex:1}]}><KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS==='ios'?'padding':undefined}>
         <View style={{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,paddingVertical:12,borderBottomWidth:1,borderBottomColor:c.border}}>
           <Text style={{color:c.text,fontSize:19,fontWeight:'900'}}>تأكيد تسليم الطلب</Text>
-          <Pressable disabled={busy} onPress={()=>setDeliveryDraft(null)} accessibilityRole="button" accessibilityLabel="إغلاق" style={{width:40,height:40,borderRadius:20,borderWidth:1,borderColor:c.border,alignItems:'center',justifyContent:'center'}}><SymbolView name={{ios:'xmark',android:'close',web:'close'}} tintColor={c.muted} size={16}/></Pressable>
+          <Pressable disabled={busy} onPress={closeDeliveryDraft} accessibilityRole="button" accessibilityLabel="إغلاق" style={{width:40,height:40,borderRadius:20,borderWidth:1,borderColor:c.border,alignItems:'center',justifyContent:'center'}}><SymbolView name={{ios:'xmark',android:'close',web:'close'}} tintColor={c.muted} size={16}/></Pressable>
         </View>
         <KeyboardScroll style={{flex:1}} contentContainerStyle={{padding:16,gap:12,paddingBottom:24}}>
           {deliveryDraft&&<Image source={{uri:deliveryDraft.uri}} contentFit="cover" style={{width:'100%',height:230,borderRadius:18,backgroundColor:c.raised}} accessibilityLabel="صورة التسليم"/>}
-          <Pressable disabled={busy} onPress={()=>{const id=deliveryDraft?.orderId;setDeliveryDraft(null);if(id)setTimeout(()=>void startDeliveryPhoto(id),450)}} accessibilityRole="button" style={{minHeight:44,borderRadius:14,borderWidth:1,borderColor:c.border,alignItems:'center',justifyContent:'center'}}><Text style={{color:c.primary,fontSize:13.5,fontWeight:'800'}}>📷 إعادة التصوير</Text></Pressable>
+          {deliveryDraft&&deliveryUpload&&deliveryUpload.uri===deliveryDraft.uri&&<View style={{gap:6}} accessibilityRole="progressbar" accessibilityLabel="رفع صورة الإثبات">
+            <View style={{flexDirection:'row-reverse',justifyContent:'space-between',alignItems:'center'}}>
+              <Text style={{color:deliveryUpload.status==='error'?c.danger:deliveryUpload.status==='done'?c.accent:c.muted,fontSize:12.5,fontWeight:'800'}}>{deliveryUpload.status==='done'?'✓ انرفعت الصورة':deliveryUpload.status==='error'?'ما انرفعت الصورة، رح نعيد المحاولة عند التأكيد':`عم نرفع الصورة… ${Math.round(deliveryUpload.progress*100)}%${deliveryUpload.attempt>1?` · محاولة ${deliveryUpload.attempt}/3`:''}`}</Text>
+              {deliveryUpload.status==='error'&&online?<Pressable onPress={()=>void beginDeliveryUpload(deliveryDraft.orderId,deliveryDraft.uri,deliveryDraft.mimeType)} accessibilityRole="button" hitSlop={8}><Text style={{color:c.primary,fontSize:12.5,fontWeight:'900'}}>إعادة المحاولة</Text></Pressable>:null}
+            </View>
+            <View style={{height:6,borderRadius:3,backgroundColor:c.raised,overflow:'hidden',flexDirection:'row-reverse'}}><View style={{width:`${Math.round((deliveryUpload.status==='done'?1:deliveryUpload.progress)*100)}%`,backgroundColor:deliveryUpload.status==='error'?c.danger:'#B7FF30',borderRadius:3}}/></View>
+          </View>}
+          <Pressable disabled={busy} onPress={()=>{const id=deliveryDraft?.orderId;closeDeliveryDraft();if(id)setTimeout(()=>void startDeliveryPhoto(id),450)}} accessibilityRole="button" style={{minHeight:44,borderRadius:14,borderWidth:1,borderColor:c.border,alignItems:'center',justifyContent:'center'}}><Text style={{color:c.primary,fontSize:13.5,fontWeight:'800'}}>📷 إعادة التصوير</Text></Pressable>
           <View style={{gap:6}}><Text style={{color:c.text,fontSize:13.5,fontWeight:'800',textAlign:'right'}}>المبلغ اللي استلمته من الزبون · ل.س</Text>
             <TextInput value={deliveryDraft?collectDrafts[deliveryDraft.orderId]??'':''} onChangeText={(value)=>{if(deliveryDraft)setCollectDrafts((current)=>({...current,[deliveryDraft.orderId]:value.replace(/\D/g,'')}))}} keyboardType="number-pad" textAlign="left" placeholder="مثال: 13000" placeholderTextColor="#839188" style={[s.field,{fontSize:22,fontWeight:'900',color:c.primary}]} accessibilityLabel="المبلغ المستلم من الزبون"/>
             <Text style={{color:c.muted,fontSize:12,textAlign:'right',lineHeight:19}}>معبّأ بالمبلغ المطلوب (المشتريات + الأجرة). عدّله إذا أعطاك الزبون زيادة (إكرامية) أو أقل.</Text></View>
@@ -1261,7 +1311,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
             <TextInput value={deliveryNote} onChangeText={(value)=>setDeliveryNote(value.slice(0,300))} multiline maxLength={300} textAlign="right" textAlignVertical="top" placeholder="مثال: الزبون أعطاني إكرامية، أو سلّمته للجار" placeholderTextColor="#839188" style={[s.field,{minHeight:84}]} accessibilityLabel="ملاحظة التسليم"/></View>
         </KeyboardScroll>
         <View style={{paddingHorizontal:16,paddingTop:8,paddingBottom:12,borderTopWidth:1,borderTopColor:c.border}}>
-          <Pressable disabled={busy||!online} onPress={()=>void submitDelivery()} accessibilityRole="button" style={{minHeight:56,borderRadius:18,backgroundColor:'#B7FF30',alignItems:'center',justifyContent:'center',opacity:busy||!online?0.55:1}}><Text style={{color:'#0B1411',fontSize:17,fontWeight:'900'}}>{pendingAction==='delivery-upload'?'عم نرفع صورة الإثبات…':pendingAction==='delivery-confirm'?'عم نأكد التسليم…':busy?'عم نحفظ…':'✅ تم تسليم الطلب'}</Text></Pressable>
+          <Pressable disabled={busy||!online} onPress={()=>void submitDelivery()} accessibilityRole="button" style={{minHeight:56,borderRadius:18,backgroundColor:'#B7FF30',alignItems:'center',justifyContent:'center',opacity:busy||!online?0.55:1}}><Text style={{color:'#0B1411',fontSize:17,fontWeight:'900'}}>{pendingAction==='delivery-upload'?`عم نرفع صورة الإثبات…${deliveryUpload&&deliveryUpload.status==='uploading'?' '+Math.round(deliveryUpload.progress*100)+'%':''}`:pendingAction==='delivery-confirm'?'عم نأكد التسليم…':busy?'عم نحفظ…':'✅ تم تسليم الطلب'}</Text></Pressable>
         </View>
       </KeyboardAvoidingView></SafeAreaView>
     </Modal>}
