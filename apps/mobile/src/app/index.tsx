@@ -2308,6 +2308,8 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   const [filter, setFilter] = useState<AdminFilter>('action');
   const [search, setSearch] = useState('');
   const [visible, setVisible] = useState(25);
+  // Settled and cancelled orders show as one compact row; tapping opens the full card (one at a time).
+  const [openFinished, setOpenFinished] = useState<string | null>(null);
   const [sheet, setSheet] = useState<AdminMobileOrder | null>(null);
   const [fee, setFee] = useState('');
   const [reason, setReason] = useState('');
@@ -2660,10 +2662,18 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
         : list.length ? <>
           {list.slice(0, visible).map((order) => {
             const tone = toneForOrder(order); const hasReport = !!openDisputes[order.id] || order.status === 'disputed'; const needs = groupOf(order) === 'action' && ['requested', 'quoted', 'searching'].includes(order.status); const declinedNames = (declines[order.id] ?? []).map((id) => nameOf(id)); const pendingOffers = liveOffers(order.id); const silent = noResponse(order);
+            const finished = (adminStatusGroup(order.status) === 'done' || order.status === 'cancelled') && !hasReport;
+            if (finished && openFinished !== order.id) return <Pressable key={order.id} onPress={() => setOpenFinished(order.id)} accessibilityRole="button" accessibilityState={{ expanded: false }} accessibilityLabel={`طلب #${order.id.slice(0, 6)}، ${statusLabel(order)}`} style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 16, paddingHorizontal: 14, minHeight: 52, flexDirection: 'row-reverse', alignItems: 'center', gap: 10 }}>
+              <View style={{ backgroundColor: tone.bg, borderRadius: 10, paddingHorizontal: 9, minHeight: 24, justifyContent: 'center' }}><Text style={{ color: tone.fg, fontSize: 11.5, fontWeight: '900' }}>{statusLabel(order)}</Text></View>
+              <Text numberOfLines={1} style={{ flex: 1, color: color.text, fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>{splitPickup(order.request_text).body}</Text>
+              <Text style={{ color: color.muted, fontSize: 11.5 }}>{timeAgo(order.created_at)}</Text>
+              <Text style={{ color: color.muted, fontSize: 14 }}>⌄</Text>
+            </Pressable>;
             return <Pressable key={order.id} onPress={() => openSheet(order)} accessibilityRole="button" accessibilityLabel={`طلب #${order.id.slice(0, 6)}، ${orderStatus[order.status] ?? order.status}`} style={{ backgroundColor: color.surface, borderColor: needs || hasReport ? '#C98A2B' : color.border, borderWidth: 1, borderRadius: 20, padding: 14, gap: 9 }}>
               <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <View style={{ backgroundColor: tone.bg, borderRadius: 12, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: tone.fg, fontSize: 12, fontWeight: '900' }}>{statusLabel(order)}</Text></View>
                 <Text style={{ color: color.muted, fontSize: 11.5 }}>{timeAgo(order.created_at)} · #{order.id.slice(0, 6)}</Text>
+                {finished ? <Pressable onPress={() => setOpenFinished(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel="طيّ الطلب"><Text style={{ color: color.muted, fontSize: 14 }}>⌃</Text></Pressable> : null}
               </View>
               <View style={{ flexDirection: 'row-reverse', gap: 11, alignItems: 'flex-start' }}>
                 <AdminOrderThumb orderId={order.id} bucket={adminStatusGroup(order.status) === 'done' ? 'delivery-proofs' : 'order-images'} />
