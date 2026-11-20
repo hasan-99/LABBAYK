@@ -22,6 +22,9 @@ import { AuthScreen, PasswordRecoveryScreen } from '@/components/AuthScreen';
 import { LegalLinksSection } from '@/components/LegalLinksSection';
 import { SUPPORT_EMAIL } from '@/lib/legal-contact';
 import { ltrPhone, prettyPhone, useSupportContact, whatsappUrl } from '@/lib/support-contact';
+import { clearImageCaches, imageCacheKey, listOrderImagePaths, peekOrderImagePaths, peekSignedImageUrl, signedImageUrl, signedImageUrls } from '@/lib/storage-cache';
+import { shrinkPhoto } from '@/lib/image-compress';
+import { cacheKey, clearUserCache, createRefreshScheduler, isFresh, readMemory, readPersisted, writeMemory, writePersisted } from '@/lib/data-cache';
 import { AppText as Text } from '@/components/AppText';
 import { ToastProvider, useAppToast, useToastMessage } from '@/components/Toast';
 
@@ -465,10 +468,12 @@ function NotificationInbox({ userId, refreshKey = 0, onOpenOrder, standalone = f
     void refreshRef.current();
     if (!supabase || !online) return;
     // Unique per subscription so route switches or reconnects cannot reuse a channel during asynchronous removal.
+    // "Mark all read" updates many rows at once; their events collapse into a single reload.
+    const scheduler = createRefreshScheduler(() => refreshRef.current(), 400);
     const channel = supabase.channel(`user-notifications-${userId}-${newRequestKey()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${userId}` }, () => { void refreshRef.current(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${userId}` }, () => scheduler.schedule())
       .subscribe();
-    return () => { void supabase?.removeChannel(channel); };
+    return () => { scheduler.cancel(); void supabase?.removeChannel(channel); };
   }, [online, userId]);
   const markRead=async(id:number)=>{
     if(!supabase)return
@@ -716,9 +721,10 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     seenOffers.current = ids;
   }, [offers, showOfferToast]);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSyncAt = useRef(0);
   const channelTopic = useRef(`driver-orders-${userId}-${newRequestKey()}`);
   const refresh = useCallback(async () => {
-    if (!supabase) { setOperationsAreStale(true); setLoadedScreens((current) => ({ ...current, [screen]: true })); setLoading(false); return; }
+    if (!supabase) { setOperationsAreStale(true); setLoadedScreens({ home: true, orders: true }); setLoading(false); return; }
     try {
     const cachedSnapshot = await loadDriverOrdersSnapshot(userId);
     if (cachedSnapshot) {
@@ -735,18 +741,17 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       if (!cachedSnapshot) setActiveOrders([]);
       setOperationsAreStale(true); setLoading(false); return;
     }
-    const [driver, wallet] = await Promise.all([
+    // Profile, wallet, offers and assigned orders are independent: one wave instead of two.
+    const [driver, wallet, offerRows, assigned] = await Promise.all([
       supabase.from('driver_profiles').select('is_online').eq('user_id', userId).single(),
       supabase.rpc('get_driver_wallet_balances'),
+      supabase.from('order_offers').select('id,order_id,expires_at').eq('driver_id', userId).eq('status', 'pending').gt('expires_at', new Date().toISOString()).order('expires_at'),
+      supabase.from('orders').select('id,status,category,request_text,delivery_fee_minor,budget_ceiling_minor,purchase_amount_minor,purchase_approved_at,created_at,address_id').eq('driver_id', userId).neq('status', 'delivered').neq('status', 'settled').neq('status', 'cancelled').order('created_at', { ascending: false }),
     ]);
     const { data: walletRows, error: walletError } = wallet;
     if (!walletError) { setWalletBalance(walletRows?.find((row) => row.driver_id === userId)?.balance_minor ?? 0); setWalletUnavailable(false); }
     else { setWalletBalance(null); setWalletUnavailable(true); }
     if (driver.data) setProfile(driver.data);
-    const [offerRows, assigned] = await Promise.all([
-      supabase.from('order_offers').select('id,order_id,expires_at').eq('driver_id', userId).eq('status', 'pending').gt('expires_at', new Date().toISOString()).order('expires_at'),
-      supabase.from('orders').select('id,status,category,request_text,delivery_fee_minor,budget_ceiling_minor,purchase_amount_minor,purchase_approved_at,created_at,address_id').eq('driver_id', userId).neq('status', 'delivered').neq('status', 'settled').neq('status', 'cancelled').order('created_at', { ascending: false }),
-    ]);
     const [addressResult, offerOrderResult] = await Promise.all([
       assigned.data?.length
         ? supabase.from('addresses').select('id,label,street,city,neighborhood,contact_phone,building,landmark').in('id', assigned.data.map((order) => order.address_id).filter((id): id is string => id !== null))
@@ -791,10 +796,12 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     } catch {
       setOperationsAreStale(true);
     } finally {
-      setLoadedScreens((current) => ({ ...current, [screen]: true }));
+      // Home and orders show the same data, so one load serves both screens.
+      lastSyncAt.current = Date.now();
+      setLoadedScreens({ home: true, orders: true });
       setLoading(false);
     }
-  }, [online, screen, userId, setMessage]);
+  }, [online, userId, setMessage]);
   const scheduleRefresh = useCallback(() => {
     if (refreshTimer.current) clearTimeout(refreshTimer.current);
     refreshTimer.current = setTimeout(() => { refreshTimer.current = null; void refresh(); }, 250);
@@ -802,20 +809,21 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   useEffect(() => () => { if (refreshTimer.current) clearTimeout(refreshTimer.current); }, []);
   // Initial load and realtime refresh are server synchronization, not derived render state.
   useEffect(() => { setLoading(true); void refresh(); }, [refresh]);
+  // Switching between home and orders reuses loaded data; realtime keeps it current.
+  // Only data older than 30 s is refreshed, quietly in the background.
+  useEffect(() => { if (lastSyncAt.current && Date.now() - lastSyncAt.current > 30 * 1000) scheduleRefresh(); }, [screen]); // eslint-disable-line react-hooks/exhaustive-deps
   const loadHistory = useCallback(async () => {
     if (!supabase || !online) return;
-    const { data, error } = await supabase.from('orders').select('id,category,request_text,status,delivery_fee_minor,purchase_amount_minor,budget_ceiling_minor,delivered_at,address_id').eq('driver_id', userId).in('status', ['delivered', 'settled']).order('delivered_at', { ascending: false }).limit(100);
+    // Cash and note columns come with the main query; addresses follow in one more request.
+    const { data, error } = await supabase.from('orders').select('id,category,request_text,status,delivery_fee_minor,purchase_amount_minor,budget_ceiling_minor,delivered_at,address_id,cash_collected_minor,delivery_note').eq('driver_id', userId).in('status', ['delivered', 'settled']).order('delivered_at', { ascending: false }).limit(100);
     if (error) { setMessage('ما قدرنا نحمّل سجل طلباتك. جرّب مرة ثانية.'); return; }
     const rows = data ?? [];
     setHistory(rows);
+    setHistoryExtra(Object.fromEntries(rows.map((row) => [row.id, { cash: row.cash_collected_minor, note: row.delivery_note }])));
     const addressIds = [...new Set(rows.flatMap((order) => order.address_id ? [order.address_id] : []))];
     if (addressIds.length) {
       const { data: addressRows } = await supabase.from('addresses').select('id,neighborhood,city,street,building,landmark').in('id', addressIds);
       setHistoryAddresses(Object.fromEntries((addressRows ?? []).map((row) => [row.id, row])));
-    }
-    if (rows.length) {
-      const { data: extraRows, error: extraError } = await supabase.from('orders').select('id,cash_collected_minor,delivery_note').in('id', rows.map((order) => order.id));
-      if (!extraError) setHistoryExtra(Object.fromEntries((extraRows ?? []).map((row) => [row.id, { cash: row.cash_collected_minor, note: row.delivery_note }])));
     }
   }, [online, userId, setMessage]);
   useEffect(() => { if (orderSection === 'history' && history === null) void loadHistory(); }, [orderSection, history, loadHistory]);
@@ -913,7 +921,8 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     const target = activeOrders.find((order) => order.id === orderId);
     setCollectDrafts((current) => ({ ...current, [orderId]: String((target?.purchase_amount_minor ?? 0) + (target?.delivery_fee_minor ?? 0)) }));
     setDeliveryNote('');
-    setDeliveryDraft({ orderId, uri: result.assets[0].uri, mimeType: result.assets[0].mimeType ?? 'image/jpeg' });
+    const shrunk = await shrinkPhoto(result.assets[0], 1600, 0.7);
+    setDeliveryDraft({ orderId, uri: shrunk?.uri ?? result.assets[0].uri, mimeType: shrunk?.mimeType ?? result.assets[0].mimeType ?? 'image/jpeg' });
   };
   const submitDelivery = async () => {
     if (!supabase || !deliveryDraft) return;
@@ -1245,10 +1254,11 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
       if (active && !error) setNotificationCount(count ?? 0);
     };
     void refreshUnreadCount();
+    const countScheduler = createRefreshScheduler(async () => { await refreshUnreadCount(); }, 400);
     const channel = supabase.channel(`driver-notification-count-${userId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${userId}` }, () => { void refreshUnreadCount(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${userId}` }, () => countScheduler.schedule())
       .subscribe();
-    return () => { active = false; void supabase?.removeChannel(channel); };
+    return () => { active = false; countScheduler.cancel(); void supabase?.removeChannel(channel); };
   }, [online, userId]);
   useEffect(() => {
     if (!supabase) { setLoading(false); setProfileLoadError('تعذر الاتصال بالخادم.'); return; }
@@ -1272,14 +1282,14 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
       if (!active) return;
       if (account.error || driver.error) throw account.error ?? driver.error;
       const avatarPath = account.data?.avatar_path ?? null;
-      const avatar = avatarPath ? await supabase!.storage.from('profile-avatars').createSignedUrl(avatarPath, 60 * 60 * 24 * 30) : null;
+      const avatar = avatarPath ? await signedImageUrl('profile-avatars', avatarPath) : null;
       if (!active) return;
       const loaded: DriverProfileDraft = {
         name: account.data?.display_name ?? '',
         phone: (driver.data?.phone_e164 ?? '').replace(/^\+963/, ''),
         age: driver.data?.age == null ? '' : String(driver.data.age),
         avatarPath,
-        avatarUrl: avatar?.data?.signedUrl ?? null,
+        avatarUrl: avatar,
         avatarDraft: null,
       };
       setProfile(loaded); setName(loaded.name); setPhone(loaded.phone); setAge(loaded.age);
@@ -1297,7 +1307,10 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
   const choosePhoto = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.78, exif: false });
     if (result.canceled || !result.assets[0]) return;
-    const asset = result.assets[0];
+    const picked = result.assets[0];
+    // A profile photo is shown at most ~120 px wide: 512 px keeps it sharp at a fraction of the size.
+    const shrunk = await shrinkPhoto(picked, 512, 0.8);
+    const asset = shrunk ? { ...picked, uri: shrunk.uri, mimeType: shrunk.mimeType, fileSize: undefined } : picked;
     if (asset.fileSize && asset.fileSize > 5 * 1024 * 1024) { setMessage('حجم الصورة أكبر من 5 ميغابايت. اختار صورة أصغر.'); return; }
     const mimeType = asset.mimeType?.toLowerCase() ?? 'image/jpeg';
     const extension = ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic', 'image/heif': 'heif' } as Record<string, string>)[mimeType];
@@ -1331,20 +1344,20 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
     if (driverError) { setBusy(false); setMessage('انحفظ الاسم والصورة، بس ما قدرنا نحفظ رقم الهاتف والعمر. أعد المحاولة.'); return; }
     let avatarUrl = profile.avatarUrl;
     if (uploadedAvatarPath) {
-      const { data } = await supabase.storage.from('profile-avatars').createSignedUrl(uploadedAvatarPath, 60 * 60 * 24 * 30);
-      avatarUrl = data?.signedUrl ?? null;
+      avatarUrl = await signedImageUrl('profile-avatars', uploadedAvatarPath);
       if (profile.avatarPath) await supabase.storage.from('profile-avatars').remove([profile.avatarPath]);
     }
     const saved = { name: name.trim(), phone: normalizedPhone, age: String(parsedAge), avatarPath: uploadedAvatarPath ?? profile.avatarPath, avatarUrl, avatarDraft: null };
     setProfile(saved); setPhone(normalizedPhone); setAge(String(parsedAge)); setAvatarDraft(null); setBusy(false); setMessage('تم حفظ تعديلات ملفك.'); setEditingProfile(false);
   };
   const avatar = avatarDraft?.uri ?? profile.avatarUrl;
+  const avatarImage = avatar ? avatarSource(avatar, avatarDraft ? null : profile.avatarPath) : null;
   const initial = (profile.name.trim()[0] ?? email[0] ?? 'س').toLocaleUpperCase('ar');
   return <SafeAreaView style={s.safe}>
     <View accessibilityRole="main" style={{ flex: 1 }}>
       <View style={s.header}>
         <Pressable onPress={() => goTab('profile')} accessibilityRole="button" accessibilityLabel="فتح الملف الشخصي للسائق" style={s.driverHeaderProfile}>
-          <View style={s.driverHeaderAvatar}>{avatar ? <Image source={{ uri: avatar }} cachePolicy="none" style={s.avatarImage} contentFit="cover"/> : <Text style={s.accountAvatarLargeText}>{initial}</Text>}</View>
+          <View style={s.driverHeaderAvatar}>{avatarImage ? <Image source={avatarImage} cachePolicy="memory-disk" style={s.avatarImage} contentFit="cover"/> : <Text style={s.accountAvatarLargeText}>{initial}</Text>}</View>
           <Text style={s.driverHeaderHint}>حسابي</Text>
         </Pressable>
         <View style={s.brand}><View style={s.brandMark}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={s.brandLogo} contentFit="contain" accessibilityLabel="شعار لَبّيك"/></View><View><Text style={s.brandName}>لَبّيك</Text><Text style={s.brandTag}>مساحة السائق</Text></View></View>
@@ -1372,7 +1385,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
             {loading ? <View accessibilityRole="progressbar" accessibilityLabel="تحميل الملف الشخصي" style={{gap:15,paddingVertical:8}}><SkeletonBlock width={94} height={94} style={{alignSelf:'center',borderRadius:47}}/><SkeletonBlock width="37%" height={13}/><SkeletonBlock width="100%" height={48} style={{alignSelf:'auto',borderRadius:12}}/><SkeletonBlock width="31%" height={13}/><SkeletonBlock width="100%" height={48} style={{alignSelf:'auto',borderRadius:12}}/><SkeletonBlock width="100%" height={48} style={{alignSelf:'auto',borderRadius:12}}/></View> : profileLoadError ? <View><Text style={s.driverIdentityName}>ما قدرنا نحمّل ملفك</Text><Text style={[s.driverOnboardingCopy,{marginTop:8}]}>{profileLoadError}</Text><Pressable disabled={!online} onPress={() => { setLoading(true); setProfileRefreshKey((value) => value + 1); }} style={[s.driverOnboardingButton,{marginTop:14},!online&&s.disabled]} accessibilityRole="button"><Text style={s.driverOnboardingButtonText}>{online?'إعادة المحاولة':'بانتظار الاتصال'}</Text></Pressable></View> : editingProfile ? <>
               <Pressable onPress={() => { setName(profile.name); setPhone(profile.phone); setAge(profile.age); setAvatarDraft(null); setEditingProfile(false); }} style={s.backNavigation} accessibilityRole="button"><Text style={s.backNavigationText}>→ العودة إلى الملف الشخصي</Text></Pressable>
               <Text style={s.profileSectionTitle}>تعديل ملف السائق</Text>
-              <View style={s.driverPhotoRing}>{avatar ? <Image source={{ uri: avatar }} cachePolicy="none" style={s.driverPhotoImage} contentFit="cover" accessibilityLabel="صورة السائق"/> : <Text style={s.driverPhotoInitial}>{initial}</Text>}</View>
+              <View style={s.driverPhotoRing}>{avatarImage ? <Image source={avatarImage} cachePolicy="memory-disk" style={s.driverPhotoImage} contentFit="cover" accessibilityLabel="صورة السائق"/> : <Text style={s.driverPhotoInitial}>{initial}</Text>}</View>
               <Pressable onPress={() => void choosePhoto()} disabled={busy} style={s.driverPhotoButton} accessibilityRole="button"><SymbolView name={{ ios: 'camera.fill', android: 'photo_camera', web: 'photo_camera' }} tintColor={c.primary} size={16}/><Text style={s.driverPhotoButtonText}>{avatar ? 'تغيير الصورة' : 'إضافة صورة شخصية'}</Text></Pressable>
               <Text style={[s.label,s.driverRightText]}>الاسم الكامل</Text><TextInput value={name} onChangeText={setName} maxLength={120} textAlign="right" placeholder="الاسم كما يظهر للزبائن" placeholderTextColor={c.muted} style={s.driverInput} accessibilityLabel="الاسم الكامل للسائق"/>
               <Text style={[s.label,s.driverRightText]}>البريد الإلكتروني</Text><View style={[s.driverReadOnlyField,s.driverRightContent]}><Text selectable style={s.driverEmailText}>{email}</Text><Text style={s.driverFieldHint}>بريد تسجيل الدخول · غير قابل للتعديل</Text></View>
@@ -1381,7 +1394,7 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
               <Pressable disabled={busy || loading} onPress={() => void save()} style={[s.driverSaveButton, (busy || loading) && s.disabled]} accessibilityRole="button"><Text style={s.driverSaveButtonText}>{busy ? 'عم نحفظ بياناتك…' : 'حفظ التعديلات'}</Text></Pressable>
             </> : <>
               <View style={s.driverIdentityRow}>
-                <View style={s.driverIdentityAvatar}>{avatar ? <Image source={{ uri: avatar }} cachePolicy="none" style={s.driverPhotoImage} contentFit="cover" accessibilityLabel="صورة السائق"/> : <Text style={s.driverPhotoInitial}>{initial}</Text>}</View>
+                <View style={s.driverIdentityAvatar}>{avatarImage ? <Image source={avatarImage} cachePolicy="memory-disk" style={s.driverPhotoImage} contentFit="cover" accessibilityLabel="صورة السائق"/> : <Text style={s.driverPhotoInitial}>{initial}</Text>}</View>
                 <View style={s.driverIdentityCopy}><View style={s.driverRoleTag}><Text style={s.driverRoleTagText}>سائق توصيل</Text></View><Text style={s.driverIdentityName} numberOfLines={2}>{profile.name || 'أضف اسمك'}</Text><Text selectable style={s.driverIdentityEmail}>{email}</Text></View>
               </View>
               <View style={s.driverIdentityFacts}><View style={s.driverIdentityFact}><Text style={s.driverIdentityFactLabel}>رقم الهاتف</Text><Text style={[s.driverIdentityFactValue,{writingDirection:'ltr'}]}>{profile.phone ? `+963 ${formatSyrianMobile(profile.phone)}` : 'غير مضاف'}</Text></View><View style={s.driverIdentityFact}><Text style={s.driverIdentityFactLabel}>العمر</Text><Text style={s.driverIdentityFactValue}>{profile.age ? `${profile.age} سنة` : 'غير مضاف'}</Text></View></View>
@@ -1458,55 +1471,60 @@ function SignedInHome({ userId, email, inviteToken, openOrderId, onSignOut, them
   return <DriverWorkspace userId={userId} email={email} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
 }
 
-type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'customer_id'|'address_id'|'delivered_at'|'purchase_amount_minor'|'category'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'budget_ceiling_minor'|'created_at'>;
+type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'customer_id'|'address_id'|'delivered_at'|'purchase_amount_minor'|'category'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'budget_ceiling_minor'|'created_at'|'cash_collected_minor'|'delivery_note'>;
 type AdminMobileDriver = Pick<Database['public']['Tables']['driver_profiles']['Row'], 'user_id'|'vehicle_description'>;
 
 const pickupPrefix = 'الشراء من: ';
 const composeRequest = (pickup: string, request: string) => pickup.trim() ? `${pickupPrefix}${pickup.trim()}\n${request.trim()}` : request.trim();
 const splitPickup = (text: string) => { const match = text.match(/^الشراء من: (.+)\n([\s\S]*)$/); return match ? { pickup: match[1].trim(), body: match[2].trim() } : { pickup: '', body: text }; };
 type AdminAddress = Pick<Database['public']['Tables']['addresses']['Row'], 'id' | 'street' | 'city' | 'neighborhood' | 'building' | 'landmark' | 'contact_phone'>;
-const thumbCache = new Map<string, { url: string | null; count: number }>();
+type CachedImage = { path: string; url: string; key: string };
+/** Remote avatars get a stable cache key so the photo is downloaded once; local drafts don't. */
+const avatarSource = (uri: string, path: string | null) => path && !uri.startsWith('file:') && !uri.startsWith('blob:') && !uri.startsWith('data:') ? { uri, cacheKey: imageCacheKey('profile-avatars', path) } : { uri };
+/** Order photos with cached listing + signed URLs; renders instantly when this order was seen before. */
+function useOrderImages(bucket: 'order-images' | 'delivery-proofs', orderId: string, enabled = true) {
+  const online = useInternetAvailable();
+  const fromCache = () => {
+    const paths = peekOrderImagePaths(bucket, orderId);
+    if (!paths) return null;
+    const images = paths.flatMap((path) => { const url = peekSignedImageUrl(bucket, path); return url ? [{ path, url, key: imageCacheKey(bucket, path) }] : []; });
+    return images.length === paths.length ? images : null;
+  };
+  const [images, setImages] = useState<CachedImage[] | null>(fromCache);
+  useEffect(() => {
+    if (!enabled || !online) return;
+    let active = true;
+    void (async () => {
+      const paths = await listOrderImagePaths(bucket, orderId);
+      if (!active) return;
+      if (!paths) { setImages((current) => current ?? []); return; }
+      const urls = paths.length ? await signedImageUrls(bucket, paths) : {};
+      if (active) setImages(paths.flatMap((path) => urls[path] ? [{ path, url: urls[path], key: imageCacheKey(bucket, path) }] : []));
+    })().catch(() => { if (active) setImages((current) => current ?? []); });
+    return () => { active = false; };
+  }, [bucket, enabled, online, orderId]);
+  return images;
+}
+
 function AdminOrderThumb({ orderId, bucket = 'order-images' }: { orderId: string; bucket?: 'order-images' | 'delivery-proofs' }) {
   const { colors: c } = useMobileTheme();
-  const [info, setInfo] = useState<{ url: string | null; count: number } | null>(() => thumbCache.get(`${bucket}:${orderId}`) ?? null);
-  useEffect(() => {
-    if (info || !supabase) return;
-    let active = true;
-    void supabase.storage.from(bucket).list(orderId, { limit: 3, sortBy: { column: 'name', order: 'asc' } }).then(async ({ data, error }) => {
-      if (error || !data?.length) { thumbCache.set(`${bucket}:${orderId}`, { url: null, count: 0 }); if (active) setInfo({ url: null, count: 0 }); return; }
-      const { data: signed } = await supabase!.storage.from(bucket).createSignedUrls([`${orderId}/${data[0].name}`], 600);
-      const result = { url: signed?.[0]?.signedUrl ?? null, count: data.length };
-      thumbCache.set(`${bucket}:${orderId}`, result); if (active) setInfo(result);
-    }).catch(() => undefined);
-    return () => { active = false; };
-  }, [bucket, info, orderId]);
-  if (!info?.count) return null;
+  const images = useOrderImages(bucket, orderId);
+  if (!images?.length) return null;
   return <View style={{ width: 68, height: 68 }}>
-    {info.url ? <Image source={{ uri: info.url }} style={{ width: 68, height: 68, borderRadius: 15, backgroundColor: c.raised }} contentFit="cover" cachePolicy="memory-disk" /> : <View style={{ width: 68, height: 68, borderRadius: 15, backgroundColor: c.raised }} />}
-    {info.count > 1 && <View style={{ position: 'absolute', bottom: -5, left: -5, backgroundColor: c.primary, borderRadius: 9, paddingHorizontal: 6, minHeight: 18, justifyContent: 'center' }}><Text style={{ color: c.background, fontSize: 10.5, fontWeight: '900' }}>{info.count}</Text></View>}
+    <Image source={{ uri: images[0].url, cacheKey: images[0].key }} style={{ width: 68, height: 68, borderRadius: 15, backgroundColor: c.raised }} contentFit="cover" cachePolicy="memory-disk" recyclingKey={images[0].key} transition={120} />
+    {images.length > 1 && <View style={{ position: 'absolute', bottom: -5, left: -5, backgroundColor: c.primary, borderRadius: 9, paddingHorizontal: 6, minHeight: 18, justifyContent: 'center' }}><Text style={{ color: c.background, fontSize: 10.5, fontWeight: '900' }}>{images.length}</Text></View>}
   </View>;
 }
 
 function AdminImageStrip({ orderId, bucket = 'order-images', size = 64, emptyText }: { orderId: string; bucket?: 'order-images' | 'delivery-proofs'; size?: number; emptyText?: string }) {
   const { colors: c } = useMobileTheme();
-  const online = useInternetAvailable();
-  const [urls, setUrls] = useState<string[] | null>(null);
-  const [open, setOpen] = useState<string | null>(null);
-  useEffect(() => {
-    if (!supabase || !online) return;
-    let active = true;
-    void supabase.storage.from(bucket).list(orderId, { limit: 3, sortBy: { column: 'name', order: 'asc' } }).then(async ({ data, error }) => {
-      if (error || !data?.length) { if (active) setUrls([]); return; }
-      const { data: signed } = await supabase!.storage.from(bucket).createSignedUrls(data.map((file) => `${orderId}/${file.name}`), 600);
-      if (active) setUrls((signed ?? []).flatMap((item) => item.signedUrl ? [item.signedUrl] : []));
-    }).catch(() => { if (active) setUrls([]); });
-    return () => { active = false; };
-  }, [bucket, online, orderId]);
-  if (urls === null) return <View style={{ flexDirection: 'row-reverse' }}><SkeletonBlock width={size} height={size} style={{ alignSelf: 'auto', borderRadius: 12 }} /></View>;
-  if (!urls.length) return emptyText ? <Text style={{ color: c.muted, fontSize: 12.5, textAlign: 'right' }}>{emptyText}</Text> : null;
+  const images = useOrderImages(bucket, orderId);
+  const [open, setOpen] = useState<CachedImage | null>(null);
+  if (images === null) return <View style={{ flexDirection: 'row-reverse' }}><SkeletonBlock width={size} height={size} style={{ alignSelf: 'auto', borderRadius: 12 }} /></View>;
+  if (!images.length) return emptyText ? <Text style={{ color: c.muted, fontSize: 12.5, textAlign: 'right' }}>{emptyText}</Text> : null;
   return <View style={{ flexDirection: 'row-reverse', gap: 7 }}>
-    {urls.map((uri) => <Pressable key={uri} onPress={() => setOpen(uri)} accessibilityRole="button" accessibilityLabel="تكبير الصورة"><Image source={{ uri }} cachePolicy="none" style={{ width: size, height: size, borderRadius: 12, backgroundColor: c.raised }} contentFit="cover" /></Pressable>)}
-    <Modal visible={open !== null} transparent animationType="fade" onRequestClose={() => setOpen(null)}><Pressable onPress={() => setOpen(null)} style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 18, backgroundColor: 'rgba(0,0,0,0.94)' }}>{open ? <Image source={{ uri: open }} cachePolicy="none" style={{ width: '100%', height: '80%' }} contentFit="contain" /> : null}</Pressable></Modal>
+    {images.map((image) => <Pressable key={image.key} onPress={() => setOpen(image)} accessibilityRole="button" accessibilityLabel="تكبير الصورة"><Image source={{ uri: image.url, cacheKey: image.key }} cachePolicy="memory-disk" transition={120} style={{ width: size, height: size, borderRadius: 12, backgroundColor: c.raised }} contentFit="cover" /></Pressable>)}
+    <Modal visible={open !== null} transparent animationType="fade" onRequestClose={() => setOpen(null)}><Pressable onPress={() => setOpen(null)} style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 18, backgroundColor: 'rgba(0,0,0,0.94)' }}>{open ? <Image source={{ uri: open.url, cacheKey: open.key }} cachePolicy="memory-disk" style={{ width: '100%', height: '80%' }} contentFit="contain" /> : null}</Pressable></Modal>
   </View>;
 }
 
@@ -1578,11 +1596,43 @@ type AdminTabKey = 'orders' | 'drivers' | 'money' | 'reports' | 'more';
 type AdminBadgeSetter = (key: AdminTabKey, count: number) => void;
 const adminTone = { ok: { bg: 'rgba(82,213,160,0.16)', fg: '#52D5A0' }, warn: { bg: '#3A2D18', fg: '#F0CC83' }, bad: { bg: '#451E21', fg: '#FF8A8A' }, info: { bg: '#1C2F3A', fg: '#80CAFF' } } as const;
 
-async function loadAdminNames(): Promise<Record<string, string>> {
+// admin_list_users returns every account, so it is the heaviest admin request. All admin tabs
+// share one copy for 5 minutes and concurrent callers share one in-flight request.
+let adminNamesCache: { names: Record<string, string>; at: number } | null = null;
+let adminNamesRequest: Promise<Record<string, string>> | null = null;
+async function loadAdminNames(force = false): Promise<Record<string, string>> {
   if (!supabase) return {};
-  const { data, error } = await supabase.rpc('admin_list_users');
-  if (error) return {};
-  return Object.fromEntries((data ?? []).map((user) => [user.user_id, user.display_name || user.email]));
+  if (!force && adminNamesCache && Date.now() - adminNamesCache.at < 5 * 60 * 1000) return adminNamesCache.names;
+  adminNamesRequest ??= (async () => {
+    try {
+      const { data, error } = await supabase!.rpc('admin_list_users');
+      if (error) return adminNamesCache?.names ?? {};
+      const names = Object.fromEntries((data ?? []).map((user) => [user.user_id, user.display_name || user.email]));
+      adminNamesCache = { names, at: Date.now() };
+      return names;
+    } finally { adminNamesRequest = null; }
+  })();
+  return adminNamesRequest;
+}
+
+/**
+ * Refresh policy for an admin tab: load on first open, refresh again on return only when the data
+ * is older than 30 s or something changed meanwhile, and collapse realtime bursts into one request.
+ * Realtime events while the tab is hidden only mark it dirty instead of downloading in the background.
+ */
+function useAdminTabRefresh(active: boolean, refresh: () => Promise<void>, memoryKey: string) {
+  const online = useInternetAvailable();
+  const scheduler = useMemo(() => createRefreshScheduler(refresh, 700), [refresh]);
+  const activeRef = useRef(active);
+  const dirty = useRef(false);
+  useEffect(() => { activeRef.current = active; }, [active]);
+  useEffect(() => () => scheduler.cancel(), [scheduler]);
+  useEffect(() => {
+    if (!active || !online) return;
+    if (dirty.current || !isFresh(memoryKey, 30 * 1000)) { dirty.current = false; void scheduler.now(); }
+  }, [active, online, memoryKey, scheduler]);
+  const onRealtime = useCallback(() => { if (activeRef.current) scheduler.schedule(); else dirty.current = true; }, [scheduler]);
+  return { onRealtime, refreshNow: scheduler.now };
 }
 
 function AdminTopBar({ right }: { right?: ReactNode }) {
@@ -1626,52 +1676,57 @@ function AdminEmpty({ title, hint }: { title: string; hint: string }) {
 }
 
 type AdminDriverRow = Pick<Database['public']['Tables']['driver_profiles']['Row'], 'user_id' | 'review_status' | 'vehicle_description' | 'created_at' | 'is_online'>;
-function AdminDriversTab({ active, onBadge }: { active: boolean; onBadge: AdminBadgeSetter }) {
+type AdminInviteRow = { id: string; expires_at: string; redeemed_at: string | null; revoked_at: string | null; created_at: string };
+type AdminDriversData = { rows: AdminDriverRow[]; names: Record<string, string>; busyDrivers: Record<string, boolean>; invites: AdminInviteRow[] };
+function AdminDriversTab({ userId, active, onBadge }: { userId: string; active: boolean; onBadge: AdminBadgeSetter }) {
   const { colors: color } = useMobileTheme();
   const online = useInternetAvailable();
   const [, setMessage] = useToastMessage();
-  const [rows, setRows] = useState<AdminDriverRow[]>([]);
-  const [names, setNames] = useState<Record<string, string>>({});
-  const [busyDrivers, setBusyDrivers] = useState<Record<string, boolean>>({});
-  const [loading, setLoading] = useState(true);
+  const memoryKey = cacheKey(userId, 'admin-drivers');
+  const [cached] = useState(() => readMemory<AdminDriversData>(memoryKey)?.value ?? null);
+  const [rows, setRows] = useState<AdminDriverRow[]>(cached?.rows ?? []);
+  const [names, setNames] = useState<Record<string, string>>(cached?.names ?? {});
+  const [busyDrivers, setBusyDrivers] = useState<Record<string, boolean>>(cached?.busyDrivers ?? {});
+  const [loading, setLoading] = useState(!cached);
   const [refreshing, setRefreshing] = useState(false);
   const [working, setWorking] = useState('');
   const [segment, setSegment] = useState<'all' | 'on'>('all');
-  const [invites, setInvites] = useState<{ id: string; expires_at: string; redeemed_at: string | null; revoked_at: string | null; created_at: string }[]>([]);
+  const [invites, setInvites] = useState<AdminInviteRow[]>(cached?.invites ?? []);
   const [newInvite, setNewInvite] = useState<{ webLink: string; appLink: string; token: string } | null>(null);
   const [creating, setCreating] = useState(false);
   const channelKey = useRef(newRequestKey());
   const refresh = useCallback(async () => {
     if (!supabase) return;
-    const inviteResult = await supabase.from('driver_invites').select('id,expires_at,redeemed_at,revoked_at,created_at').order('created_at', { ascending: false }).limit(30);
-    if (!inviteResult.error) setInvites(inviteResult.data ?? []);
-    const [driverResult, orderResult, nameMap] = await Promise.all([
+    const [inviteResult, driverResult, orderResult, nameMap] = await Promise.all([
+      supabase.from('driver_invites').select('id,expires_at,redeemed_at,revoked_at,created_at').order('created_at', { ascending: false }).limit(30),
       supabase.from('driver_profiles').select('user_id,review_status,vehicle_description,created_at,is_online').order('created_at', { ascending: false }),
       supabase.from('orders').select('driver_id').in('status', ['accepted', 'assigned', 'shopping', 'awaiting_approval', 'purchased', 'delivering']),
       loadAdminNames(),
     ]);
+    const previous = readMemory<AdminDriversData>(memoryKey)?.value;
+    const next: AdminDriversData = { rows: previous?.rows ?? [], names: nameMap, busyDrivers: previous?.busyDrivers ?? {}, invites: inviteResult.error ? previous?.invites ?? [] : inviteResult.data ?? [] };
     if (driverResult.error) setMessage('ما قدرنا نحمّل بيانات السائقين.');
     else {
-      setRows(driverResult.data ?? []);
+      next.rows = driverResult.data ?? [];
       const busyMap: Record<string, boolean> = {};
       for (const row of orderResult.data ?? []) if (row.driver_id) busyMap[row.driver_id] = true;
-      setBusyDrivers(busyMap);
+      next.busyDrivers = busyMap;
+      writeMemory(memoryKey, next);
     }
-    setNames(nameMap); setLoading(false);
-  }, [setMessage]);
-  useEffect(() => { if (online) void refresh(); }, [online, refresh]);
-  useEffect(() => { if (active && online) void refresh(); }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+    setRows(next.rows); setBusyDrivers(next.busyDrivers); setInvites(next.invites); setNames(nameMap); setLoading(false);
+  }, [setMessage, memoryKey]);
+  const { onRealtime, refreshNow } = useAdminTabRefresh(active, refresh, memoryKey);
   useEffect(() => {
-    if (!supabase) return;
-    const channel = supabase.channel(`admin-mobile-drivers-${channelKey.current}`).on('postgres_changes', { event: '*', schema: 'public', table: 'driver_profiles' }, () => void refresh()).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => void refresh()).subscribe();
+    if (!supabase || !online) return;
+    const channel = supabase.channel(`admin-mobile-drivers-${channelKey.current}`).on('postgres_changes', { event: '*', schema: 'public', table: 'driver_profiles' }, onRealtime).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, onRealtime).subscribe();
     return () => { void supabase?.removeChannel(channel); };
-  }, [refresh]);
+  }, [online, onRealtime]);
   const pending = rows.filter((row) => row.review_status === 'pending');
   useEffect(() => { onBadge('drivers', pending.length); }, [pending.length, onBadge]);
   const nameOf = (id: string) => names[id] ?? '#' + id.slice(0, 6);
   const team = rows.filter((row) => row.review_status !== 'pending' && (segment === 'all' || (row.review_status === 'approved' && row.is_online)));
   const onlineCount = rows.filter((row) => row.review_status === 'approved' && row.is_online).length;
-  const manualRefresh = async () => { if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setRefreshing(true); await refresh(); setRefreshing(false); };
+  const manualRefresh = async () => { if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setRefreshing(true); await loadAdminNames(true); await refreshNow(); setRefreshing(false); };
   const review = async (id: string, approved: boolean) => {
     if (!supabase) return;
     if (!approved && !(await confirmAction('رفض طلب الانضمام؟', `رح يتم رفض طلب ${nameOf(id)}.`, 'رفض الطلب'))) return;
@@ -1679,9 +1734,11 @@ function AdminDriversTab({ active, onBadge }: { active: boolean; onBadge: AdminB
     const { error } = await supabase.rpc('review_driver_application', { p_user_id: id, p_approved: approved });
     setWorking('');
     if (error) { setMessage('ما قدرنا نحفظ قرار المراجعة.'); return; }
-    setMessage(approved ? 'تم اعتماد السائق.' : 'تم رفض الطلب.'); await refresh();
+    setMessage(approved ? 'تم اعتماد السائق.' : 'تم رفض الطلب.'); await refreshNow();
   };
-  const activeInvites = invites.filter((invite) => !invite.redeemed_at && !invite.revoked_at && Date.parse(invite.expires_at) > Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 60 * 1000); return () => clearInterval(timer); }, []);
+  const activeInvites = invites.filter((invite) => !invite.redeemed_at && !invite.revoked_at && Date.parse(invite.expires_at) > now);
   const createInvite = async () => {
     if (!supabase || creating) return;
     setCreating(true);
@@ -1690,7 +1747,7 @@ function AdminDriversTab({ active, onBadge }: { active: boolean; onBadge: AdminB
     if (error || !data) { setMessage('ما قدرنا ننشئ الدعوة. جرّب مرة ثانية.'); return; }
     const base = (process.env.EXPO_PUBLIC_APP_URL?.trim() || 'https://labbayk.expo.app').replace(/\/+$/, '');
     setNewInvite({ token: data, webLink: `${base}/?invite=${data}`, appLink: `labbayk:///?invite=${data}` });
-    await refresh();
+    await refreshNow();
   };
   const shareInvite = async () => {
     if (!newInvite) return;
@@ -1701,7 +1758,7 @@ function AdminDriversTab({ active, onBadge }: { active: boolean; onBadge: AdminB
     if (!(await confirmAction('إلغاء الدعوة؟', 'الرابط ما رح يشتغل بعد هلأ.', 'إلغاء الدعوة'))) return;
     const { error } = await supabase.from('driver_invites').update({ revoked_at: new Date().toISOString() }).eq('id', id);
     if (error) { setMessage('ما قدرنا نلغي الدعوة.'); return; }
-    setMessage('تم إلغاء رابط الدعوة.'); await refresh();
+    setMessage('تم إلغاء رابط الدعوة.'); await refreshNow();
   };
   const statusOf = (row: AdminDriverRow): { label: string; tone: keyof typeof adminTone | 'mute' } => row.review_status === 'suspended' ? { label: 'موقوف مؤقتاً', tone: 'bad' } : row.review_status === 'rejected' ? { label: 'مرفوض', tone: 'mute' } : !row.is_online ? { label: 'غير متصل', tone: 'mute' } : busyDrivers[row.user_id] ? { label: 'عنده طلب', tone: 'warn' } : { label: 'متاح', tone: 'ok' };
   const avatar = (id: string) => <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: color.raised, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 16, fontWeight: '900' }}>{nameOf(id).slice(0, 1)}</Text></View>;
@@ -1709,7 +1766,7 @@ function AdminDriversTab({ active, onBadge }: { active: boolean; onBadge: AdminB
     <Pressable disabled={creating || !online} onPress={() => void createInvite()} accessibilityRole="button" style={{ minHeight: 52, borderRadius: 16, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', opacity: creating || !online ? 0.55 : 1 }}><Text style={{ color: color.background, fontSize: 15.5, fontWeight: '900' }}>{creating ? 'لحظة…' : '＋ دعوة سائق جديد'}</Text></Pressable>
     {activeInvites.length ? <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12, gap: 8 }}>
       <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>دعوات فعّالة · {activeInvites.length}</Text>
-      {activeInvites.map((invite) => <View key={invite.id} style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}><Text style={{ color: color.text, fontSize: 13.5, textAlign: 'right', flex: 1 }}>أُنشئت {timeAgo(invite.created_at)} · بتنتهي بعد {Math.max(1, Math.ceil((Date.parse(invite.expires_at) - Date.now()) / 86400000))} يوم</Text><Pressable onPress={() => void revokeInvite(invite.id)} accessibilityRole="button" accessibilityLabel="إلغاء الدعوة" style={{ minHeight: 36, paddingHorizontal: 12, borderRadius: 11, borderWidth: 1, borderColor: adminTone.bad.fg, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: adminTone.bad.fg, fontSize: 12.5, fontWeight: '900' }}>إلغاء</Text></Pressable></View>)}
+      {activeInvites.map((invite) => <View key={invite.id} style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}><Text style={{ color: color.text, fontSize: 13.5, textAlign: 'right', flex: 1 }}>أُنشئت {timeAgo(invite.created_at)} · بتنتهي بعد {Math.max(1, Math.ceil((Date.parse(invite.expires_at) - now) / 86400000))} يوم</Text><Pressable onPress={() => void revokeInvite(invite.id)} accessibilityRole="button" accessibilityLabel="إلغاء الدعوة" style={{ minHeight: 36, paddingHorizontal: 12, borderRadius: 11, borderWidth: 1, borderColor: adminTone.bad.fg, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: adminTone.bad.fg, fontSize: 12.5, fontWeight: '900' }}>إلغاء</Text></Pressable></View>)}
     </View> : null}
     {loading ? <ActivityIndicator color={color.primary} style={{ margin: 24 }} /> : <>
       {pending.length ? <>
@@ -1745,15 +1802,18 @@ function AdminDriversTab({ active, onBadge }: { active: boolean; onBadge: AdminB
 }
 
 type AdminCashOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id' | 'driver_id' | 'category' | 'purchase_amount_minor' | 'delivery_fee_minor' | 'cash_collected_minor' | 'created_at'>;
-function AdminMoneyTab({ active, onBadge }: { active: boolean; onBadge: AdminBadgeSetter }) {
+type AdminMoneyData = { orders: AdminCashOrder[]; balances: Record<string, number>; drivers: string[]; names: Record<string, string> };
+function AdminMoneyTab({ userId, active, onBadge }: { userId: string; active: boolean; onBadge: AdminBadgeSetter }) {
   const { colors: color } = useMobileTheme();
   const online = useInternetAvailable();
   const [, setMessage] = useToastMessage();
-  const [orders, setOrders] = useState<AdminCashOrder[]>([]);
-  const [balances, setBalances] = useState<Record<string, number>>({});
-  const [drivers, setDrivers] = useState<string[]>([]);
-  const [names, setNames] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(true);
+  const memoryKey = cacheKey(userId, 'admin-money');
+  const [cached] = useState(() => readMemory<AdminMoneyData>(memoryKey)?.value ?? null);
+  const [orders, setOrders] = useState<AdminCashOrder[]>(cached?.orders ?? []);
+  const [balances, setBalances] = useState<Record<string, number>>(cached?.balances ?? {});
+  const [drivers, setDrivers] = useState<string[]>(cached?.drivers ?? []);
+  const [names, setNames] = useState<Record<string, string>>(cached?.names ?? {});
+  const [loading, setLoading] = useState(!cached);
   const [refreshing, setRefreshing] = useState(false);
   const [segment, setSegment] = useState<'ready' | 'wallets'>('ready');
   const [working, setWorking] = useState('');
@@ -1772,25 +1832,25 @@ function AdminMoneyTab({ active, onBadge }: { active: boolean; onBadge: AdminBad
     ]);
     if (orderResult.error || balanceResult.error || driverResult.error) setMessage('ما قدرنا نحمّل بيانات المال. جرّب التحديث.');
     else {
-      setOrders(orderResult.data ?? []);
       const map: Record<string, number> = {};
       for (const row of balanceResult.data ?? []) map[row.driver_id] = row.balance_minor;
-      setBalances(map); setDrivers((driverResult.data ?? []).map((row) => row.user_id));
+      const next: AdminMoneyData = { orders: orderResult.data ?? [], balances: map, drivers: (driverResult.data ?? []).map((row) => row.user_id), names: nameMap };
+      setOrders(next.orders); setBalances(next.balances); setDrivers(next.drivers);
+      writeMemory(memoryKey, next);
     }
     setNames(nameMap); setLoading(false);
-  }, [setMessage]);
-  useEffect(() => { if (online) void refresh(); }, [online, refresh]);
-  useEffect(() => { if (active && online) void refresh(); }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [setMessage, memoryKey]);
+  const { onRealtime, refreshNow } = useAdminTabRefresh(active, refresh, memoryKey);
   useEffect(() => {
-    if (!supabase) return;
-    const channel = supabase.channel(`admin-mobile-money-${channelKey.current}`).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => void refresh()).on('postgres_changes', { event: '*', schema: 'public', table: 'driver_wallet_ledger' }, () => void refresh()).subscribe();
+    if (!supabase || !online) return;
+    const channel = supabase.channel(`admin-mobile-money-${channelKey.current}`).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, onRealtime).on('postgres_changes', { event: '*', schema: 'public', table: 'driver_wallet_ledger' }, onRealtime).subscribe();
     return () => { void supabase?.removeChannel(channel); };
-  }, [refresh]);
+  }, [online, onRealtime]);
   useEffect(() => { onBadge('money', orders.length); }, [orders.length, onBadge]);
   const nameOf = (id: string | null) => id ? (names[id] ?? '#' + id.slice(0, 6)) : '—';
   const walletIds = useMemo(() => [...new Set([...drivers, ...Object.keys(balances)])], [drivers, balances]);
   const dueTotal = walletIds.reduce((sum, id) => sum + Math.max(0, -(balances[id] ?? 0)), 0);
-  const manualRefresh = async () => { if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setRefreshing(true); await refresh(); setRefreshing(false); };
+  const manualRefresh = async () => { if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setRefreshing(true); await loadAdminNames(true); await refreshNow(); setRefreshing(false); };
   const settle = async (order: AdminCashOrder) => {
     if (!supabase) return;
     const expected = (order.purchase_amount_minor ?? 0) + order.delivery_fee_minor;
@@ -1800,7 +1860,7 @@ function AdminMoneyTab({ active, onBadge }: { active: boolean; onBadge: AdminBad
     const { error } = await supabase.rpc('settle_cash_order', { p_order_id: order.id, p_idempotency_key: keys.current[order.id] });
     setWorking('');
     if (error) { setMessage('ما تمت التسوية. تحقق من اكتمال التوصيل وقيمة المشتريات.'); return; }
-    delete keys.current[order.id]; setMessage('تمت التسوية وتوثيق النقد والعمولة وأرباح السائق.'); await refresh();
+    delete keys.current[order.id]; setMessage('تمت التسوية وتوثيق النقد والعمولة وأرباح السائق.'); await refreshNow();
   };
   const submitTopUp = async () => {
     if (!supabase || !topUp) return;
@@ -1814,7 +1874,7 @@ function AdminMoneyTab({ active, onBadge }: { active: boolean; onBadge: AdminBad
     setWorking('');
     if (error) { setMessage('ما انضاف المبلغ. أعد المحاولة بنفس البيانات حتى ما تتكرر الدفعة.'); return; }
     delete keys.current['topup-fp']; delete keys.current['topup'];
-    setTopUp(null); setAmount(''); setReason(''); setMessage('تم تسجيل دفعة العمولة وتحديث المستحقات.'); await refresh();
+    setTopUp(null); setAmount(''); setReason(''); setMessage('تم تسجيل دفعة العمولة وتحديث المستحقات.'); await refreshNow();
   };
   const line = (label: string, value: string, tint?: string) => <View key={label} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5 }}>{label}</Text><Text style={{ color: tint ?? color.text, fontSize: 13.5, fontWeight: '900' }}>{value}</Text></View>;
   const input = { minHeight: 50, paddingHorizontal: 14, borderRadius: 14, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, color: color.text, textAlign: 'right', fontSize: 15 } as const;
@@ -1865,14 +1925,17 @@ function AdminMoneyTab({ active, onBadge }: { active: boolean; onBadge: AdminBad
 
 type AdminReport = Database['public']['Tables']['order_disputes']['Row'];
 type AdminReportOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id' | 'category' | 'customer_id' | 'driver_id'>;
-function AdminReportsTab({ active, onBadge, onOpenOrder }: { active: boolean; onBadge: AdminBadgeSetter; onOpenOrder: (id: string) => void }) {
+type AdminReportsData = { reports: AdminReport[]; orderMap: Record<string, AdminReportOrder>; names: Record<string, string> };
+function AdminReportsTab({ userId, active, onBadge, onOpenOrder }: { userId: string; active: boolean; onBadge: AdminBadgeSetter; onOpenOrder: (id: string) => void }) {
   const { colors: color } = useMobileTheme();
   const online = useInternetAvailable();
   const [, setMessage] = useToastMessage();
-  const [reports, setReports] = useState<AdminReport[]>([]);
-  const [orderMap, setOrderMap] = useState<Record<string, AdminReportOrder>>({});
-  const [names, setNames] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(true);
+  const memoryKey = cacheKey(userId, 'admin-reports');
+  const [cached] = useState(() => readMemory<AdminReportsData>(memoryKey)?.value ?? null);
+  const [reports, setReports] = useState<AdminReport[]>(cached?.reports ?? []);
+  const [orderMap, setOrderMap] = useState<Record<string, AdminReportOrder>>(cached?.orderMap ?? {});
+  const [names, setNames] = useState<Record<string, string>>(cached?.names ?? {});
+  const [loading, setLoading] = useState(!cached);
   const [refreshing, setRefreshing] = useState(false);
   const [segment, setSegment] = useState<'open' | 'done'>('open');
   const channelKey = useRef(newRequestKey());
@@ -1881,24 +1944,27 @@ function AdminReportsTab({ active, onBadge, onOpenOrder }: { active: boolean; on
     const [reportResult, nameMap] = await Promise.all([supabase.from('order_disputes').select('*').order('created_at', { ascending: false }).limit(100), loadAdminNames()]);
     if (reportResult.error) setMessage('ما قدرنا نحمّل البلاغات.');
     else {
-      const rows = reportResult.data ?? []; setReports(rows);
+      const rows = reportResult.data ?? [];
       const ids = [...new Set(rows.map((row) => row.order_id))];
-      if (ids.length) { const { data } = await supabase.from('orders').select('id,category,customer_id,driver_id').in('id', ids); setOrderMap(Object.fromEntries((data ?? []).map((order) => [order.id, order]))); }
+      const previous = readMemory<AdminReportsData>(memoryKey)?.value.orderMap ?? {};
+      const orderResult = ids.length ? await supabase.from('orders').select('id,category,customer_id,driver_id').in('id', ids) : null;
+      const nextOrders = orderResult && !orderResult.error ? Object.fromEntries((orderResult.data ?? []).map((order) => [order.id, order])) : previous;
+      setReports(rows); setOrderMap(nextOrders);
+      writeMemory(memoryKey, { reports: rows, orderMap: nextOrders, names: nameMap });
     }
     setNames(nameMap); setLoading(false);
-  }, [setMessage]);
-  useEffect(() => { if (online) void refresh(); }, [online, refresh]);
-  useEffect(() => { if (active && online) void refresh(); }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [setMessage, memoryKey]);
+  const { onRealtime, refreshNow } = useAdminTabRefresh(active, refresh, memoryKey);
   useEffect(() => {
-    if (!supabase) return;
-    const channel = supabase.channel(`admin-mobile-reports-${channelKey.current}`).on('postgres_changes', { event: '*', schema: 'public', table: 'order_disputes' }, () => void refresh()).subscribe();
+    if (!supabase || !online) return;
+    const channel = supabase.channel(`admin-mobile-reports-${channelKey.current}`).on('postgres_changes', { event: '*', schema: 'public', table: 'order_disputes' }, onRealtime).subscribe();
     return () => { void supabase?.removeChannel(channel); };
-  }, [refresh]);
+  }, [online, onRealtime]);
   const openCount = reports.filter((row) => !row.resolved_at).length;
   useEffect(() => { onBadge('reports', openCount); }, [openCount, onBadge]);
   const list = reports.filter((row) => segment === 'open' ? !row.resolved_at : !!row.resolved_at);
   const nameOf = (id: string | null) => id ? (names[id] ?? '#' + id.slice(0, 6)) : '—';
-  const manualRefresh = async () => { if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setRefreshing(true); await refresh(); setRefreshing(false); };
+  const manualRefresh = async () => { if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setRefreshing(true); await loadAdminNames(true); await refreshNow(); setRefreshing(false); };
   return <AdminTabShell title="البلاغات" subtitle="مشاكل العملاء والسائقين على الطلبات" onRefresh={() => void manualRefresh()} refreshing={refreshing}>
     <AdminSegment items={[{ key: 'open', label: `مفتوحة · ${openCount}` }, { key: 'done', label: `محلولة · ${reports.length - openCount}` }]} value={segment} onChange={setSegment} />
     {loading ? <ActivityIndicator color={color.primary} style={{ margin: 24 }} /> : list.length ? list.map((report) => {
@@ -1944,6 +2010,29 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
   const [focusOrderId, setFocusOrderId] = useState<string | null>(null);
   const setBadge = useCallback<AdminBadgeSetter>((key, count) => setBadges((current) => current[key] === count ? current : { ...current, [key]: count }), []);
   const clearFocus = useCallback(() => setFocusOrderId(null), []);
+  // Tabs mount on first visit only, so opening the app downloads the orders screen alone.
+  const [visited, setVisited] = useState<Record<AdminTabKey, boolean>>({ orders: true, drivers: false, money: false, reports: false, more: false });
+  const openTab = useCallback((key: AdminTabKey) => { setTab(key); setVisited((current) => current[key] ? current : { ...current, [key]: true }); }, []);
+  const online = useInternetAvailable();
+  // Badges for tabs not opened yet come from three tiny count-only requests (no rows are downloaded).
+  useEffect(() => {
+    if (!supabase || !online) return;
+    let active = true;
+    const loadCounts = async () => {
+      const [pendingDrivers, toSettle, openReports] = await Promise.all([
+        supabase!.from('driver_profiles').select('user_id', { count: 'exact', head: true }).eq('review_status', 'pending'),
+        supabase!.from('orders').select('id', { count: 'exact', head: true }).eq('status', 'delivered'),
+        supabase!.from('order_disputes').select('id', { count: 'exact', head: true }).is('resolved_at', null),
+      ]);
+      if (!active) return;
+      if (!pendingDrivers.error) setBadge('drivers', pendingDrivers.count ?? 0);
+      if (!toSettle.error) setBadge('money', toSettle.count ?? 0);
+      if (!openReports.error) setBadge('reports', openReports.count ?? 0);
+    };
+    void loadCounts();
+    const subscription = AppState.addEventListener('change', (state) => { if (state === 'active') void loadCounts(); });
+    return () => { active = false; subscription.remove(); };
+  }, [online, setBadge]);
   const tabs: { key: AdminTabKey; label: string; symbol: { ios: SFSymbol; android: AndroidSymbol; web: AndroidSymbol } }[] = [
     { key: 'orders', label: 'الطلبات', symbol: { ios: 'list.bullet', android: 'list', web: 'list' } },
     { key: 'drivers', label: 'السائقون', symbol: { ios: 'person.2', android: 'group', web: 'group' } },
@@ -1954,13 +2043,13 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
   const pane = (key: AdminTabKey) => ({ flex: 1, display: tab === key ? 'flex' : 'none' } as const);
   return <View style={{ flex: 1, backgroundColor: color.background }}>
     <View style={pane('orders')}><AdminOrdersTab userId={userId} onBadge={setBadge} onDetail={setInDetail} focusOrderId={focusOrderId} onFocusHandled={clearFocus} /></View>
-    <View style={pane('drivers')}><AdminDriversTab active={tab === 'drivers'} onBadge={setBadge} /></View>
-    <View style={pane('money')}><AdminMoneyTab active={tab === 'money'} onBadge={setBadge} /></View>
-    <View style={pane('reports')}><AdminReportsTab active={tab === 'reports'} onBadge={setBadge} onOpenOrder={(id) => { setFocusOrderId(id); setTab('orders'); }} /></View>
-    <View style={pane('more')}><AdminMoreTab email={email} theme={theme} onToggleTheme={onToggleTheme} onSignOut={onSignOut} /></View>
+    {visited.drivers ? <View style={pane('drivers')}><AdminDriversTab userId={userId} active={tab === 'drivers'} onBadge={setBadge} /></View> : null}
+    {visited.money ? <View style={pane('money')}><AdminMoneyTab userId={userId} active={tab === 'money'} onBadge={setBadge} /></View> : null}
+    {visited.reports ? <View style={pane('reports')}><AdminReportsTab userId={userId} active={tab === 'reports'} onBadge={setBadge} onOpenOrder={(id) => { setFocusOrderId(id); openTab('orders'); }} /></View> : null}
+    {visited.more ? <View style={pane('more')}><AdminMoreTab email={email} theme={theme} onToggleTheme={onToggleTheme} onSignOut={onSignOut} /></View> : null}
     {!(tab === 'orders' && inDetail) ? <SafeAreaView edges={['bottom']} style={{ backgroundColor: color.surface, borderTopWidth: 1, borderTopColor: color.border }}>
       <View style={{ flexDirection: 'row-reverse', paddingHorizontal: 6, paddingTop: 6, paddingBottom: 4 }}>
-        {tabs.map((item) => { const on = tab === item.key; const count = badges[item.key] ?? 0; return <Pressable key={item.key} onPress={() => setTab(item.key)} accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={count ? `${item.label}، ${count}` : item.label} style={{ flex: 1, minHeight: 56, alignItems: 'center', justifyContent: 'center', gap: 3 }}>
+        {tabs.map((item) => { const on = tab === item.key; const count = badges[item.key] ?? 0; return <Pressable key={item.key} onPress={() => openTab(item.key)} accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={count ? `${item.label}، ${count}` : item.label} style={{ flex: 1, minHeight: 56, alignItems: 'center', justifyContent: 'center', gap: 3 }}>
           <View style={{ width: 52, height: 30, borderRadius: 15, backgroundColor: on ? color.primary : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
             <SymbolView name={item.symbol} tintColor={on ? color.background : color.muted} size={22} />
             {count ? <View style={{ position: 'absolute', top: -5, right: -2, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: '#F0CC83', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 }}><Text style={{ color: '#0B1411', fontSize: 11, fontWeight: '900' }}>{count}</Text></View> : null}
@@ -2010,68 +2099,99 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   const [pricingOpen, setPricingOpen] = useState(false);
   const initialised = useRef(false);
 
+  // Last known screen data: shown instantly on open (also after an app restart), then refreshed.
+  type AdminOrdersSnapshot = { orders: AdminMobileOrder[]; drivers: AdminMobileDriver[]; names: Record<string, string>; addresses: Record<string, AdminAddress>; driverPhones: Record<string, string>; declines: Record<string, string[]>; pending: Record<string, { driver_id: string; expires_at: string }[]>; openDisputes: Record<string, boolean> };
+  const snapshotKey = cacheKey(userId, 'admin-orders');
+  const hasServerData = useRef(false);
+  const applySnapshot = useCallback((snapshot: AdminOrdersSnapshot) => {
+    setOrders(snapshot.orders); setDrivers(snapshot.drivers); setNames(snapshot.names); namesRef.current = snapshot.names;
+    setAddresses(snapshot.addresses); setDriverPhones(snapshot.driverPhones); setDeclines(snapshot.declines); setPending(snapshot.pending); setOpenDisputes(snapshot.openDisputes);
+    setCashCollected(Object.fromEntries(snapshot.orders.map((order) => [order.id, order.cash_collected_minor])));
+    setDeliveryNotes(Object.fromEntries(snapshot.orders.flatMap((order) => order.delivery_note ? [[order.id, order.delivery_note]] : [])));
+  }, []);
+  useEffect(() => {
+    let active = true;
+    void readPersisted<AdminOrdersSnapshot>(snapshotKey, 3 * 24 * 60 * 60 * 1000).then((entry) => {
+      if (!active || !entry || hasServerData.current) return;
+      applySnapshot(entry.value);
+      previousStatuses.current = Object.fromEntries(entry.value.orders.map((order) => [order.id, order.status]));
+      setLoading(false);
+    });
+    return () => { active = false; };
+  }, [snapshotKey, applySnapshot]);
+
+  // Two waves instead of six sequential round trips: on a slow connection each wave costs seconds.
   const refresh = useCallback(async () => {
     if (!supabase) return;
-    const [orderResult, driverResult, userResult] = await Promise.all([
-      supabase.from('orders').select('id,customer_id,address_id,delivered_at,purchase_amount_minor,category,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,budget_ceiling_minor,created_at').order('created_at', { ascending: false }).limit(150),
-      supabase.from('driver_profiles').select('user_id,vehicle_description').eq('review_status', 'approved').eq('is_online', true).order('created_at'),
-      supabase.rpc('admin_list_users'),
-    ]);
-    if (orderResult.error || driverResult.error) setMessage('تعذر تحميل الطلبات أو السائقين. حدّث الصفحة عند عودة الاتصال.');
-    else {
+    try {
+      const [orderResult, driverResult, disputeResult, nameMap] = await Promise.all([
+        supabase.from('orders').select('id,customer_id,address_id,delivered_at,purchase_amount_minor,category,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,budget_ceiling_minor,created_at,cash_collected_minor,delivery_note').order('created_at', { ascending: false }).limit(150),
+        supabase.from('driver_profiles').select('user_id,vehicle_description').eq('review_status', 'approved').eq('is_online', true).order('created_at'),
+        supabase.from('order_disputes').select('order_id').is('resolved_at', null),
+        loadAdminNames(),
+      ]);
+      if (orderResult.error || driverResult.error) { setMessage('تعذر تحميل الطلبات أو السائقين. حدّث الصفحة عند عودة الاتصال.'); return; }
       const rows = orderResult.data ?? [];
-      setOrders(rows); setDrivers(driverResult.data ?? []);
-      const { data: disputeRows, error: disputeError } = await supabase.from('order_disputes').select('order_id').is('resolved_at', null);
-      if (!disputeError) setOpenDisputes(Object.fromEntries((disputeRows ?? []).map((row) => [row.order_id, true])));
-      const doneIds = rows.filter((order) => ['delivered', 'settled'].includes(order.status)).map((order) => order.id);
-      if (doneIds.length) {
-        const { data: cashRows, error: cashError } = await supabase.from('orders').select('id,cash_collected_minor,delivery_note').in('id', doneIds);
-        if (!cashError) { setCashCollected(Object.fromEntries((cashRows ?? []).map((row) => [row.id, row.cash_collected_minor]))); setDeliveryNotes(Object.fromEntries((cashRows ?? []).flatMap((row) => row.delivery_note ? [[row.id, row.delivery_note]] : []))); }
-      }
       const searchingIds = rows.filter((order) => order.status === 'searching').map((order) => order.id);
-      if (searchingIds.length) {
-        const [declineResult, offerResult] = await Promise.all([
-          supabase.from('order_events').select('order_id,actor_id').eq('event_type', 'driver_declined_offer').in('order_id', searchingIds),
-          supabase.from('order_offers').select('order_id,driver_id,expires_at').eq('status', 'pending').in('order_id', searchingIds),
-        ]);
-        const declineMap: Record<string, string[]> = {};
-        for (const row of declineResult.data ?? []) if (row.actor_id) declineMap[row.order_id] = [...new Set([...(declineMap[row.order_id] ?? []), row.actor_id])];
-        const pendingMap: Record<string, { driver_id: string; expires_at: string }[]> = {};
-        for (const row of offerResult.data ?? []) pendingMap[row.order_id] = [...(pendingMap[row.order_id] ?? []), { driver_id: row.driver_id, expires_at: row.expires_at }];
-        setDeclines(declineMap); setPending(pendingMap);
-      } else { setDeclines({}); setPending({}); }
+      const driverIds = [...new Set(rows.flatMap((order) => order.driver_id ? [order.driver_id] : []))];
+      const addressIds = [...new Set(rows.flatMap((order) => order.address_id ? [order.address_id] : []))];
+      const [declineResult, offerResult, phoneResult, addressResult] = await Promise.all([
+        searchingIds.length ? supabase.from('order_events').select('order_id,actor_id').eq('event_type', 'driver_declined_offer').in('order_id', searchingIds) : Promise.resolve(null),
+        searchingIds.length ? supabase.from('order_offers').select('order_id,driver_id,expires_at').eq('status', 'pending').in('order_id', searchingIds) : Promise.resolve(null),
+        driverIds.length ? supabase.from('driver_profiles').select('user_id,phone_e164').in('user_id', driverIds) : Promise.resolve(null),
+        addressIds.length ? supabase.from('addresses').select('id,street,city,neighborhood,building,landmark,contact_phone').in('id', addressIds) : Promise.resolve(null),
+      ]);
+      const declineMap: Record<string, string[]> = {};
+      for (const row of declineResult?.data ?? []) if (row.actor_id) declineMap[row.order_id] = [...new Set([...(declineMap[row.order_id] ?? []), row.actor_id])];
+      const pendingMap: Record<string, { driver_id: string; expires_at: string }[]> = {};
+      for (const row of offerResult?.data ?? []) pendingMap[row.order_id] = [...(pendingMap[row.order_id] ?? []), { driver_id: row.driver_id, expires_at: row.expires_at }];
       for (const order of rows) {
         const before = previousStatuses.current[order.id];
-        if (before === 'searching' && ['accepted', 'assigned'].includes(order.status) && order.driver_id) showToast(`قبل ${namesRef.current[order.driver_id] ?? 'سائق'} الطلب #${order.id.slice(0, 6)}`, 'success');
+        if (before === 'searching' && ['accepted', 'assigned'].includes(order.status) && order.driver_id) showToast(`قبل ${nameMap[order.driver_id] ?? 'سائق'} الطلب #${order.id.slice(0, 6)}`, 'success');
       }
       previousStatuses.current = Object.fromEntries(rows.map((order) => [order.id, order.status]));
-      const driverIds = [...new Set(rows.flatMap((order) => order.driver_id ? [order.driver_id] : []))];
-      if (driverIds.length) {
-        const { data: phoneRows } = await supabase.from('driver_profiles').select('user_id,phone_e164').in('user_id', driverIds);
-        setDriverPhones(Object.fromEntries((phoneRows ?? []).flatMap((row) => row.phone_e164 ? [[row.user_id, row.phone_e164]] : [])));
-      }
-      const addressIds = [...new Set(rows.flatMap((order) => order.address_id ? [order.address_id] : []))];
-      if (addressIds.length) {
-        const { data: addressRows } = await supabase.from('addresses').select('id,street,city,neighborhood,building,landmark,contact_phone').in('id', addressIds);
-        setAddresses(Object.fromEntries((addressRows ?? []).map((address) => [address.id, address])));
-      }
+      const snapshot: AdminOrdersSnapshot = {
+        orders: rows,
+        drivers: driverResult.data ?? [],
+        names: nameMap,
+        // Keep the previous values when a secondary request fails so the screen never loses data.
+        addresses: addressResult?.error ? readMemory<AdminOrdersSnapshot>(snapshotKey)?.value.addresses ?? {} : Object.fromEntries((addressResult?.data ?? []).map((address) => [address.id, address])),
+        driverPhones: phoneResult?.error ? readMemory<AdminOrdersSnapshot>(snapshotKey)?.value.driverPhones ?? {} : Object.fromEntries((phoneResult?.data ?? []).flatMap((row) => row.phone_e164 ? [[row.user_id, row.phone_e164]] : [])),
+        declines: declineMap,
+        pending: pendingMap,
+        openDisputes: disputeResult.error ? readMemory<AdminOrdersSnapshot>(snapshotKey)?.value.openDisputes ?? {} : Object.fromEntries((disputeResult.data ?? []).map((row) => [row.order_id, true])),
+      };
+      hasServerData.current = true;
+      applySnapshot(snapshot);
+      writePersisted(snapshotKey, snapshot);
       if (!initialised.current) { initialised.current = true; if (!rows.some((order) => adminStatusGroup(order.status) === 'action' || (order.status === 'searching'))) setFilter('all'); }
+    } catch {
+      setMessage('تعذر تحميل الطلبات. حدّث الصفحة عند عودة الاتصال.');
+    } finally {
+      setLoading(false);
     }
-    if (!userResult.error) { const nameMap = Object.fromEntries((userResult.data ?? []).map((user) => [user.user_id, user.display_name || user.email])); namesRef.current = nameMap; setNames(nameMap); }
-    setLoading(false);
-  }, [setMessage, showToast]);
+  }, [setMessage, showToast, snapshotKey, applySnapshot]);
+  // Realtime bursts (one order change fires several events) collapse into one refresh.
+  const schedulerRef = useRef<ReturnType<typeof createRefreshScheduler> | null>(null);
+  useEffect(() => { const scheduler = createRefreshScheduler(refresh, 700); schedulerRef.current = scheduler; return () => scheduler.cancel(); }, [refresh]);
+  const scheduleRefresh = useCallback(() => { schedulerRef.current?.schedule(); }, []);
+  const refreshNow = useCallback(() => schedulerRef.current?.now() ?? refresh(), [refresh]);
 
-  useEffect(() => { if (online) void refresh(); }, [online, refresh]);
+  useEffect(() => { if (online) void refreshNow(); }, [online, refreshNow]);
   useEffect(() => {
-    if (!supabase) return;
-    const channel = supabase.channel(`admin-mobile-orders-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => void refresh()).on('postgres_changes', { event: '*', schema: 'public', table: 'driver_profiles' }, () => void refresh()).on('postgres_changes', { event: '*', schema: 'public', table: 'order_offers' }, () => void refresh()).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_events' }, (payload) => { const row = payload.new as { event_type?: string; order_id?: string; actor_id?: string | null }; if (row.event_type === 'driver_declined_offer') { showToast(`اعتذر ${row.actor_id ? namesRef.current[row.actor_id] ?? 'سائق' : 'سائق'} عن الطلب #${(row.order_id ?? '').slice(0, 6)}. ما زال عند باقي السائقين.`, 'warning'); void refresh(); } }).subscribe();
+    if (!supabase || !online) return;
+    const channel = supabase.channel(`admin-mobile-orders-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleRefresh).on('postgres_changes', { event: '*', schema: 'public', table: 'driver_profiles' }, scheduleRefresh).on('postgres_changes', { event: '*', schema: 'public', table: 'order_offers' }, scheduleRefresh).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_events' }, (payload) => { const row = payload.new as { event_type?: string; order_id?: string; actor_id?: string | null }; if (row.event_type === 'driver_declined_offer') { showToast(`اعتذر ${row.actor_id ? namesRef.current[row.actor_id] ?? 'سائق' : 'سائق'} عن الطلب #${(row.order_id ?? '').slice(0, 6)}. ما زال عند باقي السائقين.`, 'warning'); scheduleRefresh(); } }).subscribe();
     return () => { void supabase?.removeChannel(channel); };
-  }, [refresh, showToast, userId]);
+  }, [online, scheduleRefresh, showToast, userId]);
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => { if (state === 'active') scheduleRefresh(); });
+    return () => subscription.remove();
+  }, [scheduleRefresh]);
 
   const manualRefresh = async () => {
     if (refreshing) return;
     if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; }
-    setRefreshing(true); await refresh(); setRefreshing(false); setMessage('تم تحديث الطلبات.');
+    setRefreshing(true); await loadAdminNames(true); await refreshNow(); setRefreshing(false); setMessage('تم تحديث الطلبات.');
   };
   const groupOf = (order: AdminMobileOrder) => openDisputes[order.id] ? 'action' : order.status === 'searching' && (declines[order.id]?.length ?? 0) > 0 ? 'action' : adminStatusGroup(order.status);
   const statusLabel = (order: AdminMobileOrder) => order.status === 'searching' && (pending[order.id]?.length ?? 0) === 1 ? 'بانتظار رد السائق' : (orderStatus[order.status] ?? order.status);
@@ -2120,7 +2240,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
     const { error } = await supabase.rpc('cancel_admin_order', { p_order_id: sheet.id, p_reason: cancelReason.trim() });
     setCancelling(false);
     if (error) { setMessage('ما قدرنا نلغي الطلب. إذا السائق اشترى الأغراض لازم يكون في بلاغ مفتوح على الطلب.'); return; }
-    setCancelReason(''); setSheet(null); await refresh(); setMessage('تم إلغاء الطلب.');
+    setCancelReason(''); setSheet(null); await refreshNow(); setMessage('تم إلغاء الطلب.');
   };
   const pauseOrder = async () => {
     if (!supabase || !dispute) return;
@@ -2129,7 +2249,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
     const { error } = await supabase.rpc('admin_pause_order', { p_dispute_id: dispute.id });
     setResolving(false);
     if (error) { setMessage('ما قدرنا نوقف الطلب. تأكد أنه ما زال جارياً وجرّب مرة ثانية.'); return; }
-    setSheet(null); await refresh(); setMessage('تم إيقاف الطلب مؤقتاً.');
+    setSheet(null); await refreshNow(); setMessage('تم إيقاف الطلب مؤقتاً.');
   };
   useEffect(() => {
     setTimeline(null);
@@ -2145,7 +2265,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
     const { error } = await supabase.rpc('resolve_order_dispute', { p_dispute_id: dispute.id, p_resolution: resolution.trim() });
     setResolving(false);
     if (error) { setMessage('ما قدرنا نسجل الحل. جرّب مرة ثانية.'); return; }
-    setSheet(null); await refresh(); setMessage('تم حل البلاغ.');
+    setSheet(null); await refreshNow(); setMessage('تم حل البلاغ.');
   };
   const actionable = !!sheet && ['requested', 'quoted', 'searching'].includes(sheet.status) && !sheet.driver_id;
   const priceAndRoute = async () => {
@@ -2157,7 +2277,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
     const { data, error } = await supabase.rpc('admin_price_and_dispatch_order', { p_order_id: sheet.id, p_fee_minor: amount, p_driver_id: mode === 'driver' ? driverId : null, p_reason: reason.trim() });
     setBusy(false);
     if (error) { setMessage('ما قدرنا نحفظ الأجرة أو نرسل الطلب. تأكد من توفر السائق وحاول مرة ثانية.'); return; }
-    setSheet(null); setPricingOpen(false); await refresh();
+    setSheet(null); setPricingOpen(false); await refreshNow();
     setMessage(mode === 'driver' ? 'تم تحديد الأجرة وإرسال الطلب للسائق المحدد، بانتظار رده.' : data ? `تم إرسال العرض إلى ${data} سائق متاح؛ أول من يقبل يحصل على الطلب.` : 'تم حفظ الأجرة، ولا يوجد سائق متاح حالياً. أعد الإرسال عند توفر سائق.');
   };
 
@@ -2426,13 +2546,19 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     }, 250);
     return () => clearTimeout(timeout);
   }, [userId, draftReady, request, category, budgetCeiling, addressId, pendingOrderId, orderImages]);
+  // The delivery address is re-read when coming back from the address book, otherwise at most once a minute.
+  const addressesFetchedAt = useRef(0);
+  const addressesDirty = useRef(true);
+  useEffect(() => { if (tab === 'addresses') addressesDirty.current = true; }, [tab]);
   useEffect(() => {
     if (!draftReady || tab !== 'home' || !supabase || !online) return;
+    if (!addressesDirty.current && Date.now() - addressesFetchedAt.current < 60 * 1000) return;
     let active = true;
     void supabase.from('addresses').select('id,label,city,neighborhood,is_default,street,contact_phone,building,landmark').eq('user_id', userId).order('is_default', { ascending: false }).order('updated_at', { ascending: false })
       .then(({ data, error }) => {
         if (!active) return;
         if (error) { setRequestMessage('ما قدرنا نحمّل عنوان التوصيل. العنوان المحفوظ ما تغيّر؛ جرّب تحدّث الصفحة.'); return; }
+        addressesDirty.current = false; addressesFetchedAt.current = Date.now();
         const rows = data ?? [];
         const currentAddressId = addressIdRef.current;
         const address = rows.find((row) => row.id === currentAddressId) ?? rows[0];
@@ -2454,15 +2580,18 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       const avatarPath = data?.avatar_path ?? null;
       setProfileName(name); setProfileNameDraft(name); setProfileAvatarPath(avatarPath);
       if (!avatarPath) { setProfileAvatarUrl(null); return; }
-      const { data: signedAvatar } = await supabase!.storage.from('profile-avatars').createSignedUrl(avatarPath, 60 * 60 * 24 * 30);
-      if (active) setProfileAvatarUrl(signedAvatar?.signedUrl ?? null);
+      const signedAvatar = await signedImageUrl('profile-avatars', avatarPath);
+      if (active) setProfileAvatarUrl(signedAvatar);
     });
     return () => { active = false; };
   }, [userId]);
   const pickProfileAvatar = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.78, exif: false });
     if (result.canceled || !result.assets[0]) return;
-    const asset = result.assets[0];
+    const picked = result.assets[0];
+    // A profile photo is shown at most ~120 px wide: 512 px keeps it sharp at a fraction of the size.
+    const shrunk = await shrinkPhoto(picked, 512, 0.8);
+    const asset = shrunk ? { ...picked, uri: shrunk.uri, mimeType: shrunk.mimeType, fileSize: undefined } : picked;
     if (asset.fileSize && asset.fileSize > 5 * 1024 * 1024) { setProfileMessage('حجم الصورة أكبر من 5 ميغابايت. اختار صورة أصغر.'); return; }
     const mimeType = asset.mimeType?.toLowerCase() ?? 'image/jpeg';
     const extension = ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic', 'image/heif': 'heif' } as Record<string, string>)[mimeType];
@@ -2494,8 +2623,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     const previousAvatarPath = profileAvatarPath;
     setProfileName(data.display_name); setProfileNameDraft(data.display_name); setProfileAvatarPath(data.avatar_path); setProfileAvatarDraft(null);
     if (uploadedAvatarPath && data.avatar_path) {
-      const { data: signedAvatar } = await supabase.storage.from('profile-avatars').createSignedUrl(data.avatar_path, 60 * 60 * 24 * 30);
-      setProfileAvatarUrl(signedAvatar?.signedUrl ?? null);
+      setProfileAvatarUrl(await signedImageUrl('profile-avatars', data.avatar_path));
       if (previousAvatarPath && previousAvatarPath !== data.avatar_path) await supabase.storage.from('profile-avatars').remove([previousAvatarPath]);
     }
     setProfileBusy(false); setProfileMessage('تم حفظ تعديلات الحساب.'); goBack();
@@ -2510,6 +2638,8 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     const { data, error } = await supabase.from('orders').select('id,status,category,request_text,delivery_fee_minor,delivery_quote_set_at,delivery_quote_approved_at,budget_ceiling_minor,purchase_amount_minor,purchase_approved_at,created_at,driver_id,delivered_at').order('created_at', { ascending: false }).limit(30);
     return error ? null : data ?? [];
   }, [online]);
+  const ordersFetchedAt = useRef(0);
+  const refreshOrdersRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     let active = true;
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2529,7 +2659,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     });
     const refresh = async () => {
       const rows = await fetchCustomerOrders();
-      if (active && rows) { hasServerOrders = true; ordersLoaded.current = true; applyCustomerOrders(rows); }
+      if (active && rows) { hasServerOrders = true; ordersLoaded.current = true; ordersFetchedAt.current = Date.now(); applyCustomerOrders(rows); }
       else if (active) setOrdersAreStale(true);
       if (active && online) setOrdersLoading(false);
     };
@@ -2537,15 +2667,19 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     if (!online || !supabase) return () => { active = false; };
     const scheduleRefresh = () => {
       if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => { refreshTimer = null; void refresh(); }, 250);
+      refreshTimer = setTimeout(() => { refreshTimer = null; void refresh(); }, 400);
     };
+    refreshOrdersRef.current = scheduleRefresh;
     const channel = supabase.channel(`customer-orders-${userId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_events' }, scheduleRefresh)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${userId}` }, scheduleRefresh)
       .subscribe();
     const appStateSubscription = AppState.addEventListener('change', (state) => { if (state === 'active') scheduleRefresh(); });
-    return () => { active = false; appStateSubscription.remove(); if (refreshTimer) clearTimeout(refreshTimer); void supabase?.removeChannel(channel); };
-  }, [online, tab, userId, fetchCustomerOrders, applyCustomerOrders]);
+    return () => { active = false; refreshOrdersRef.current = null; appStateSubscription.remove(); if (refreshTimer) clearTimeout(refreshTimer); void supabase?.removeChannel(channel); };
+  }, [online, userId, fetchCustomerOrders, applyCustomerOrders]);
+  // Changing tabs no longer reloads orders and re-opens the realtime connection; realtime keeps
+  // the list current, and a tab switch only refreshes data older than 30 s.
+  useEffect(() => { if ((tab === 'home' || tab === 'orders') && ordersFetchedAt.current && Date.now() - ordersFetchedAt.current > 30 * 1000) refreshOrdersRef.current?.(); }, [tab]);
   const activeCustomerOrders = orders.filter((order) => customerGroup(order.status) === 'live');
   const bannerLabels: Record<string, string> = { requested: 'عم نجهّز طلبك', quoted: 'عم نفتش على سائق لطلبك', searching: 'عم نفتش على سائق لطلبك', accepted: 'قبل السائق طلبك', assigned: 'قبل السائق طلبك', shopping: 'السائق عم يجهّز طلبك', awaiting_approval: 'السائق عم يجهّز طلبك', purchased: 'طلبك جاهز للتوصيل', delivering: '🛵 طلبك بالطريق لعندك', disputed: 'طلبك قيد مراجعة الدعم' };
   const submitOrder = async () => {
@@ -2609,13 +2743,18 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     }
     setSending(false);
     await clearCustomerOrderDraft(userId);
+    refreshOrdersRef.current?.();
     requestKey.current = newRequestKey(); setRequest(''); setPickup(''); setCategory(''); setBudgetCeiling(''); setOrderImages([]); setPendingOrderId(''); setRequestMessage('وصلنا طلبك! الإدارة رح تحدد أجرة التوصيل وتتابع إسناده لسائق.'); navigate('orders');
   };
   const pickOrderImages = async () => {
     if (sending) return;
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, selectionLimit: 3 - orderImages.length, quality: 0.65, exif: false });
     if (result.canceled) return;
-    const accepted = result.assets.flatMap((asset) => {
+    const assets = await Promise.all(result.assets.map(async (picked) => {
+      const shrunk = await shrinkPhoto(picked, 1600, 0.7);
+      return shrunk ? { ...picked, uri: shrunk.uri, mimeType: shrunk.mimeType, fileSize: undefined } : picked;
+    }));
+    const accepted = assets.flatMap((asset) => {
       const mimeType = asset.mimeType?.toLowerCase() ?? 'image/jpeg';
       const extension = ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic', 'image/heif': 'heif' } as Record<string, string>)[mimeType];
       return extension && (asset.fileSize === undefined || asset.fileSize <= 5 * 1024 * 1024) ? [{ id: newRequestKey(), uri: asset.uri, mimeType, extension, uploaded: false }] : [];
@@ -2628,7 +2767,9 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     if (sending) return;
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: false, quality: 0.65, exif: false });
     if (result.canceled || !result.assets[0]) return;
-    const asset = result.assets[0];
+    const picked = result.assets[0];
+    const shrunk = await shrinkPhoto(picked, 1600, 0.7);
+    const asset = shrunk ? { ...picked, uri: shrunk.uri, mimeType: shrunk.mimeType, fileSize: undefined } : picked;
     const mimeType = asset.mimeType?.toLowerCase() ?? 'image/jpeg';
     const extension = ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic', 'image/heif': 'heif' } as Record<string, string>)[mimeType];
     if (!extension) { setRequestMessage('اختار صورة JPEG أو PNG أو WebP أو HEIC.'); return; }
@@ -2739,7 +2880,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
         <Text style={s.pageDescription}>حدّث اسمك وصورتك. بريدك الإلكتروني للعرض فقط.</Text>
         <View style={s.profileCard}>
           <View style={s.profileEditPhotoWrap}>
-            {profileAvatarDraft ? <Image source={{ uri: profileAvatarDraft.uri }} cachePolicy="none" style={s.profileEditPhoto} contentFit="cover" accessibilityLabel="معاينة الصورة الجديدة"/> : profileAvatarUrl ? <Image source={{ uri: profileAvatarUrl }} cachePolicy="none" style={s.profileEditPhoto} contentFit="cover" accessibilityLabel="صورة الحساب"/> : <Text style={s.profileEditInitial}>{accountInitial}</Text>}
+            {profileAvatarDraft ? <Image source={{ uri: profileAvatarDraft.uri }} cachePolicy="none" style={s.profileEditPhoto} contentFit="cover" accessibilityLabel="معاينة الصورة الجديدة"/> : profileAvatarUrl ? <Image source={avatarSource(profileAvatarUrl, profileAvatarPath)} cachePolicy="memory-disk" style={s.profileEditPhoto} contentFit="cover" accessibilityLabel="صورة الحساب"/> : <Text style={s.profileEditInitial}>{accountInitial}</Text>}
           </View>
           <Pressable onPress={() => void pickProfileAvatar()} disabled={profileBusy} style={[s.profilePhotoButton, profileBusy && s.disabled]} accessibilityRole="button"><Text style={s.profilePhotoButtonText}>{profileAvatarDraft || profileAvatarPath ? 'تغيير الصورة' : 'اختيار صورة'}</Text></Pressable>
           <View style={s.accountRoleTag}><Text style={s.accountRoleTagText}>{showDriverFlow ? 'متقدم لمساحة السائق' : 'حساب عميل'}</Text></View>
@@ -2754,7 +2895,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
         <View style={s.profileSectionCard}>
           <View style={s.profileSectionHeading}><View style={s.profileHeadingIcon}><SymbolView name={{ ios: 'person.crop.circle.fill', android: 'account_circle', web: 'account_circle' }} tintColor={c.primary} size={21}/></View><Text style={s.profileSectionTitle}>الملف الشخصي</Text></View>
           <View style={s.profileIdentityRow}>
-            <View style={s.customerIdentityAvatar}>{profileAvatarUrl ? <Image source={{ uri: profileAvatarUrl }} cachePolicy="none" style={s.avatarImage} contentFit="cover" accessibilityLabel="صورة الحساب"/> : <Text style={s.accountAvatarLargeText}>{accountInitial}</Text>}</View>
+            <View style={s.customerIdentityAvatar}>{profileAvatarUrl ? <Image source={avatarSource(profileAvatarUrl, profileAvatarPath)} cachePolicy="memory-disk" style={s.avatarImage} contentFit="cover" accessibilityLabel="صورة الحساب"/> : <Text style={s.accountAvatarLargeText}>{accountInitial}</Text>}</View>
             <View style={s.profileIdentityCopy}><View style={s.accountRoleTag}><Text style={s.accountRoleTagText}>{showDriverFlow ? 'متقدم لمساحة السائق' : 'حساب عميل'}</Text></View><Text style={s.profileIdentityName} numberOfLines={2}>{profileName || 'حساب لَبّيك'}</Text><Text style={s.profileEmail} numberOfLines={1}>{email}</Text></View>
           </View>
           <Pressable onPress={() => { setProfileNameDraft(profileName); setProfileAvatarDraft(null); navigate('profile-edit'); }} style={[s.profileSectionAction,s.profileSectionActionPrimary]} accessibilityRole="button"><Text style={[s.profileSectionActionText,s.profileSectionActionTextPrimary]}>تعديل الملف الشخصي</Text><SymbolView name={{ ios: 'pencil', android: 'edit', web: 'edit' }} tintColor={theme === 'light' ? '#17210F' : c.background} size={17}/></Pressable>
@@ -2800,30 +2941,17 @@ function useInternetAvailable() {
 function OrderImageGallery({ orderId, bucket = 'order-images', label = 'صور الطلب', defaultOpen = false }: { orderId: string; bucket?: 'order-images' | 'delivery-proofs'; label?: string; defaultOpen?: boolean }) {
   const { colors: tc, styles: s } = useMobileTheme();
   const online = useInternetAvailable();
-  const [urls, setUrls] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(defaultOpen);
-  const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!expanded || !supabase || !online) return;
-    let active = true;
-    setLoading(true);
-    void supabase.storage.from(bucket).list(orderId, { limit: 3, sortBy: { column: 'name', order: 'asc' } }).then(async ({ data, error }) => {
-      if (error || !data?.length) { if (active) { setUrls([]); setLoading(false); } return; }
-      const { data: signed, error: signedError } = await supabase!.storage.from(bucket).createSignedUrls(data.map((file) => `${orderId}/${file.name}`), 600);
-      if (active) {
-        setUrls(signedError ? [] : (signed ?? []).flatMap((item) => item.signedUrl ? [item.signedUrl] : []));
-        setLoading(false);
-      }
-    }).catch(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [bucket, expanded, online, orderId]);
+  const [selected, setSelected] = useState<CachedImage | null>(null);
+  const images = useOrderImages(bucket, orderId, expanded);
+  const loading = expanded && images === null && online;
+  const urls = images ?? [];
   return <View style={s.orderGallery}>
     <Pressable onPress={() => setExpanded((current) => !current)} accessibilityRole="button" accessibilityState={{ expanded }} style={{ minHeight: 46, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 13, borderRadius: 15, borderWidth: 1.5, borderColor: tc.border, backgroundColor: tc.surface }}>
       <Text style={{ color: tc.text, fontSize: 13.5, fontWeight: '800' }}>📷 {label}</Text><Text style={{ color: tc.primary, fontSize: 12.5, fontWeight: '900' }}>{expanded ? 'إخفاء ⌃' : 'عرض ⌄'}</Text>
     </Pressable>
-    {expanded && (loading ? <ActivityIndicator color={c.primary}/> : urls.length ? <View style={s.uploadedPhotoList}>{urls.map((uri) => <Pressable key={uri} onPress={() => setSelectedUrl(uri)} accessibilityRole="button" accessibilityLabel="فتح صورة الطلب"><Image source={{ uri }} cachePolicy="none" style={s.orderGalleryImage} contentFit="cover" accessibilityLabel="صورة من الطلب"/></Pressable>)}</View> : <Text style={s.orderGalleryTitle}>{online ? 'ما في صور مرفقة بهالطلب.' : 'الاتصال مطلوب لعرض الصور.'}</Text>)}
-    <Modal visible={selectedUrl !== null} transparent animationType="fade" onRequestClose={() => setSelectedUrl(null)}><Pressable onPress={() => setSelectedUrl(null)} style={{flex:1,alignItems:'center',justifyContent:'center',padding:18,backgroundColor:'rgba(0,0,0,0.94)'}}><Text style={{position:'absolute',top:54,right:20,color:'#fff',fontSize:16,fontWeight:'800'}}>إغلاق ✕</Text>{selectedUrl?<Image source={{uri:selectedUrl}} cachePolicy="none" style={{width:'100%',height:'82%'}} contentFit="contain" accessibilityLabel="صورة الطلب بالحجم الكامل"/>:null}</Pressable></Modal>
+    {expanded && (loading ? <ActivityIndicator color={c.primary}/> : urls.length ? <View style={s.uploadedPhotoList}>{urls.map((image) => <Pressable key={image.key} onPress={() => setSelected(image)} accessibilityRole="button" accessibilityLabel="فتح صورة الطلب"><Image source={{ uri: image.url, cacheKey: image.key }} cachePolicy="memory-disk" transition={120} style={s.orderGalleryImage} contentFit="cover" accessibilityLabel="صورة من الطلب"/></Pressable>)}</View> : <Text style={s.orderGalleryTitle}>{online ? 'ما في صور مرفقة بهالطلب.' : 'الاتصال مطلوب لعرض الصور.'}</Text>)}
+    <Modal visible={selected !== null} transparent animationType="fade" onRequestClose={() => setSelected(null)}><Pressable onPress={() => setSelected(null)} style={{flex:1,alignItems:'center',justifyContent:'center',padding:18,backgroundColor:'rgba(0,0,0,0.94)'}}><Text style={{position:'absolute',top:54,right:20,color:'#fff',fontSize:16,fontWeight:'800'}}>إغلاق ✕</Text>{selected?<Image source={{uri:selected.url,cacheKey:selected.key}} cachePolicy="memory-disk" style={{width:'100%',height:'82%'}} contentFit="contain" accessibilityLabel="صورة الطلب بالحجم الكامل"/>:null}</Pressable></Modal>
   </View>;
 }
 
@@ -2897,7 +3025,7 @@ export default function HomeScreen() {
         ? <PasswordRecoveryScreen onDone={() => setPasswordRecovery(false)} theme={theme} />
       : !session
         ? <AuthScreen inviteToken={inviteToken || undefined} theme={theme} />
-        : <SignedInHome userId={session.user.id} email={session.user.email ?? ''} inviteToken={inviteToken || undefined} openOrderId={openOrderId} onSignOut={async () => { await Promise.allSettled([clearCustomerOrderDraft(session.user.id), clearCustomerOrdersSnapshot(session.user.id), clearDriverOrdersSnapshot(session.user.id), unregisterPushNotifications(session.user.id), Image.clearDiskCache()]); await supabase?.auth.signOut(); }} theme={theme} onToggleTheme={() => applyTheme(theme === 'dark' ? 'light' : 'dark')} />;
+        : <SignedInHome userId={session.user.id} email={session.user.email ?? ''} inviteToken={inviteToken || undefined} openOrderId={openOrderId} onSignOut={async () => { await Promise.allSettled([clearCustomerOrderDraft(session.user.id), clearCustomerOrdersSnapshot(session.user.id), clearDriverOrdersSnapshot(session.user.id), unregisterPushNotifications(session.user.id), Image.clearDiskCache(), Image.clearMemoryCache(), clearUserCache(session.user.id)]); clearImageCaches(); await supabase?.auth.signOut(); }} theme={theme} onToggleTheme={() => applyTheme(theme === 'dark' ? 'light' : 'dark')} />;
   return <MobileThemeContext.Provider value={themeContext}><ToastProvider theme={theme}><View style={{ flex: 1, backgroundColor: colors.background }}><NetworkStatusBanner />{screen}</View></ToastProvider></MobileThemeContext.Provider>;
 }
 
