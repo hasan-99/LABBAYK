@@ -669,7 +669,7 @@ export type Database = {
           address_id: string | null
           base_fee_minor: number
           budget_ceiling_minor: number
-          category: string
+          category: string | null
           commission_policy_version: number | null
           commission_rate_basis_points: number | null
           created_at: string
@@ -704,7 +704,7 @@ export type Database = {
           address_id: string | null
           base_fee_minor?: number
           budget_ceiling_minor?: number
-          category: string
+          category?: string | null
           commission_policy_version?: number | null
           commission_rate_basis_points?: number | null
           created_at?: string
@@ -739,7 +739,7 @@ export type Database = {
           address_id?: string
           base_fee_minor?: number
           budget_ceiling_minor?: number
-          category?: string
+          category?: string | null
           commission_policy_version?: number | null
           commission_rate_basis_points?: number | null
           created_at?: string
@@ -954,7 +954,6 @@ export type Database = {
         Args: {
           p_address_id: string
           p_budget_ceiling_minor: number
-          p_category: string
           p_idempotency_key: string
           p_request_text: string
         }
