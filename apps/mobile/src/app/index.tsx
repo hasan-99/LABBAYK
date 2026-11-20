@@ -1508,9 +1508,8 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
             </> : <>
               <View style={s.driverIdentityRow}>
                 <View style={s.driverIdentityAvatar}>{avatarImage ? <Image source={avatarImage} cachePolicy="memory-disk" style={s.driverPhotoImage} contentFit="cover" accessibilityLabel="صورة السائق"/> : <Text style={s.driverPhotoInitial}>{initial}</Text>}</View>
-                <View style={s.driverIdentityCopy}><View style={s.driverRoleTag}><Text style={s.driverRoleTagText}>سائق توصيل</Text></View><Text style={s.driverIdentityName} numberOfLines={2}>{profile.name || 'أضف اسمك'}</Text><Text selectable style={s.driverIdentityEmail}>{email}</Text></View>
+                <View style={s.driverIdentityCopy}><View style={s.driverRoleTag}><Text style={s.driverRoleTagText}>سائق توصيل</Text></View><Text style={s.driverIdentityName} numberOfLines={2}>{profile.name || 'أضف اسمك'}</Text><Text selectable style={[s.driverIdentityEmail,{writingDirection:'ltr'}]}>{profile.phone ? `+963 ${formatSyrianMobile(profile.phone)}` : 'غير مضاف'}</Text></View>
               </View>
-              <View style={s.driverIdentityFacts}><View style={s.driverIdentityFact}><Text style={s.driverIdentityFactLabel}>رقم الهاتف</Text><Text style={[s.driverIdentityFactValue,{writingDirection:'ltr'}]}>{profile.phone ? `+963 ${formatSyrianMobile(profile.phone)}` : 'غير مضاف'}</Text></View><View style={s.driverIdentityFact}><Text style={s.driverIdentityFactLabel}>العمر</Text><Text style={s.driverIdentityFactValue}>{profile.age ? `${profile.age} سنة` : 'غير مضاف'}</Text></View></View>
               <Pressable onPress={() => { setName(profile.name); setPhone(profile.phone); setAge(profile.age); setAvatarDraft(null); setEditingProfile(true); }} style={[s.profileSectionAction,s.profileSectionActionPrimary]} accessibilityRole="button"><Text style={[s.profileSectionActionText,s.profileSectionActionTextPrimary]}>تعديل الملف الشخصي</Text><SymbolView name={{ ios: 'pencil', android: 'edit', web: 'edit' }} tintColor={theme === 'light' ? '#17210F' : c.background} size={17}/></Pressable>
             </>}
           </View>
