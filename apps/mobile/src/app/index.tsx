@@ -2078,6 +2078,7 @@ function AdminMoneyTab({ userId, active, onBadge, onOpenOrder }: { userId: strin
                 {detail?.rate != null ? line('نسبة العمولة', numberFormatter.format(detail.rate / 100) + '%') : null}
                 {line('العمولة', numberFormatter.format(Math.abs(row.amount_minor)) + ' ل.س', adminTone.bad.fg)}
                 {detail?.collected != null ? line('المبلغ اللي استلمه من الزبون', numberFormatter.format(detail.collected) + ' ل.س') : null}
+                {detail?.collected != null && detail.purchase != null && detail.fee != null && detail.collected > detail.purchase + detail.fee ? line('إكرامية', numberFormatter.format(detail.collected - detail.purchase - detail.fee) + ' ل.س') : null}
                 {row.order_id ? <Pressable onPress={() => onOpenOrder(row.order_id as string)} accessibilityRole="button" style={{ minHeight: 42, borderRadius: 13, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 13.5, fontWeight: '800' }}>فتح الطلب</Text></Pressable> : null}
               </> : <>
                 {line('السبب', row.reason || '—')}
