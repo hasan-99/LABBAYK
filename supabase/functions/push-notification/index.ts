@@ -125,6 +125,8 @@ Deno.serve(async (request) => {
     }
 
     console.log(JSON.stringify({ event: "push_test", stage: "token-selected", user_id: userId, platform: tokenRow.platform, token_fingerprint: await tokenFingerprint(tokenRow.expo_push_token) }));
+    console.log(JSON.stringify({ event: "push_test", stage: "waiting-for-app-background", user_id: userId, delay_ms: 5000 }));
+    await new Promise((resolve) => setTimeout(resolve, 5000));
     console.log(JSON.stringify({ event: "push_test", stage: "expo-request-started", user_id: userId }));
     try {
       const expoResponse = await fetch("https://exp.host/--/api/v2/push/send", {
