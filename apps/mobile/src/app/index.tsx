@@ -769,13 +769,14 @@ function DriverOperationsSkeleton({ screen }: { screen: 'home' | 'orders' }) {
 
 // Last successful driver sync per account (kept outside React so the refresh callback stays pure).
 const driverLastSync = new Map<string, number>();
-function DriverOperations({ userId, screen = 'orders', isActive = true, profileComplete = true, onCompleteProfile = () => {}, onOpenOrders = () => {}, onRegisterRefresh }: { onRegisterRefresh?: (refresh: () => Promise<void>) => void; isActive?: boolean; userId: string; screen?: 'home' | 'orders'; profileComplete?: boolean; onCompleteProfile?: () => void; onOpenOrders?: () => void }) {
+function DriverOperations({ userId, screen = 'orders', isActive = true, profileComplete = true, onCompleteProfile = () => {}, onOpenOrders = () => {}, onRegisterRefresh }: { onRegisterRefresh?: (refresh: (forceNetwork?: boolean) => Promise<void>) => void; isActive?: boolean; userId: string; screen?: 'home' | 'orders'; profileComplete?: boolean; onCompleteProfile?: () => void; onOpenOrders?: () => void }) {
   const { colors: c, styles: s } = useMobileTheme();
   const online = useInternetAvailable();
   const [profile, setProfile] = useState<{ is_online: boolean }>({ is_online: false });
   const [offers, setOffers] = useState<DriverOfferCard[]>([]);
   const showOfferToast = useAppToast();
   const seenOffers = useRef<Set<string> | null>(null);
+  const forceNetworkRefresh = useRef(false);
   const [activeOrders, setActiveOrders] = useState<DriverActiveOrder[]>([]);
   const [deliveredReceipt, setDeliveredReceipt] = useState<ReceiptData | null>(null);
   const [offersCount, setOffersCount] = useState(0);
@@ -824,7 +825,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     try {
     // The local snapshot is only needed offline (or as a fallback); reading it no longer delays the network.
     const snapshotPromise = loadDriverOrdersSnapshot(userId);
-    if (!online) {
+    if (!online && !forceNetworkRefresh.current) {
       const cachedSnapshot = await snapshotPromise;
       if (cachedSnapshot) {
         // The cache has hidden values (zero amounts, no address), so it is shown only when offline.
@@ -884,7 +885,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   // Only data older than 30 s is refreshed, quietly in the background.
   useEffect(() => { const last = driverLastSync.get(userId) ?? 0; if (last && Date.now() - last > 30 * 1000) scheduleRefresh(); }, [screen]); // eslint-disable-line react-hooks/exhaustive-deps
   const loadHistory = useCallback(async () => {
-    if (!supabase || !online) return;
+    if (!supabase || (!online && !forceNetworkRefresh.current)) return;
     // Cash and note columns come with the main query; addresses follow in one more request.
     const { data, error } = await supabase.from('orders').select('id,request_text,status,delivery_fee_minor,purchase_amount_minor,budget_ceiling_minor,delivered_at,created_at,address_id,cash_collected_minor,delivery_note').eq('driver_id', userId).in('status', ['delivered', 'settled']).order('delivered_at', { ascending: false }).limit(100);
     if (error) { setMessage('ما قدرنا نحمّل سجل طلباتك. جرّب مرة ثانية.'); return; }
@@ -911,7 +912,11 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   };
   // Lets the screen's pull-to-refresh gesture reload this data (history included when it's open).
   useEffect(() => {
-    onRegisterRefresh?.(async () => { await refreshNow(); if (orderSection === 'history') await loadHistory(); });
+    onRegisterRefresh?.(async (forceNetwork = false) => {
+      forceNetworkRefresh.current = forceNetwork;
+      try { await refreshNow(); if (orderSection === 'history') await loadHistory(); }
+      finally { forceNetworkRefresh.current = false; }
+    });
   }, [onRegisterRefresh, refreshNow, orderSection, loadHistory]);
   useEffect(() => {
     if (!refreshToastPending || loading || refreshing) return;
@@ -1386,14 +1391,26 @@ function DriverWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { u
   const [profileRefreshKey, setProfileRefreshKey] = useState(0);
   // Pull down to reload: work screens (offers/orders/history), profile and unread count together.
   const [pullRefreshing, setPullRefreshing] = useState(false);
-  const operationsRefresh = useRef<(() => Promise<void>) | null>(null);
-  const registerRefresh = useCallback((refresh: () => Promise<void>) => { operationsRefresh.current = refresh; }, []);
+  const operationsRefresh = useRef<((forceNetwork?: boolean) => Promise<void>) | null>(null);
+  const registerRefresh = useCallback((refresh: (forceNetwork?: boolean) => Promise<void>) => { operationsRefresh.current = refresh; }, []);
   const pullRefresh = async () => {
     if (pullRefreshing) return;
-    if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; }
     setPullRefreshing(true);
-    setProfileRefreshKey((value) => value + 1);
-    try { await operationsRefresh.current?.(); } finally { setPullRefreshing(false); }
+    let probeTimeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      let forceNetwork = false;
+      if (!online) {
+        if (!supabase) { setMessage('ما قدرنا نوصل للخدمة. جرّب التحديث مرة ثانية.'); return; }
+        const reachable = await Promise.race([
+          supabase.auth.getUser().then(() => ['reachable', 'degraded'].includes(getBackendHealth())).catch(() => false),
+          new Promise<boolean>((resolve) => { probeTimeout = setTimeout(() => resolve(false), 8000); }),
+        ]);
+        if (!reachable) { setMessage('ما قدرنا نوصل للخدمة. تأكد من الإنترنت وحاول التحديث.'); return; }
+        forceNetwork = true;
+      }
+      setProfileRefreshKey((value) => value + 1);
+      await operationsRefresh.current?.(forceNetwork);
+    } finally { if (probeTimeout) clearTimeout(probeTimeout); setPullRefreshing(false); }
   };
   const [, setMessage] = useToastMessage();
   const [tabScale] = useState(() => new Animated.Value(1));
@@ -3506,8 +3523,13 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
 
 function useInternetAvailable() {
   const network = useNetworkState();
+  const [backendHealth, setBackendHealth] = useState<BackendHealth>(getBackendHealth);
+  useEffect(() => subscribeBackendHealth(setBackendHealth), []);
   // While the network state is still resolving (undefined) assume online so pages don't flash an offline warning.
-  return network.isConnected !== false && network.isInternetReachable !== false;
+  // A successful Supabase response is stronger evidence than Android's occasionally stale reachability flag.
+  return (network.isConnected !== false && network.isInternetReachable !== false)
+    || backendHealth === 'reachable'
+    || backendHealth === 'degraded';
 }
 
 function OrderImageGallery({ orderId, bucket = 'order-images', label = 'صور الطلب', defaultOpen = false }: { orderId: string; bucket?: 'order-images' | 'delivery-proofs'; label?: string; defaultOpen?: boolean }) {
