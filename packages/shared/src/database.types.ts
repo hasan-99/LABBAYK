@@ -969,6 +969,16 @@ export type Database = {
       }
       decline_order_offer: { Args: { p_offer_id: string }; Returns: undefined }
       dispatch_order: { Args: { p_order_id: string }; Returns: number }
+      get_driver_cancelled_orders: {
+        Args: never
+        Returns: {
+          cancelled_at: string | null
+          created_at: string
+          delivery_fee_minor: number
+          id: string
+          request_text: string
+        }[]
+      }
       get_driver_wallet_balances: {
         Args: never
         Returns: {

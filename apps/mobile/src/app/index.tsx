@@ -782,6 +782,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   const [activeOrdersCount, setActiveOrdersCount] = useState(0);
   const [orderSection, setOrderSection] = useState<'offers' | 'active' | 'history'>('offers');
   const [history, setHistory] = useState<HistoryOrder[] | null>(null);
+  const [historyCancelled, setHistoryCancelled] = useState<DriverCancelledOrder[]>([]);
   const [historyPeriod, setHistoryPeriod] = useState<HistoryPeriod>('today');
   const [historyVisible, setHistoryVisible] = useState(20);
   const [historyOpen, setHistoryOpen] = useState<string | null>(null);
@@ -888,6 +889,9 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     const { data, error } = await supabase.from('orders').select('id,request_text,status,delivery_fee_minor,purchase_amount_minor,budget_ceiling_minor,delivered_at,created_at,address_id,cash_collected_minor,delivery_note').eq('driver_id', userId).in('status', ['delivered', 'settled']).order('delivered_at', { ascending: false }).limit(100);
     if (error) { setMessage('ما قدرنا نحمّل سجل طلباتك. جرّب مرة ثانية.'); return; }
     const rows = data ?? [];
+    // Cancelled orders are detached from the driver, so they come from their own call (older databases just return nothing).
+    const cancelledResult = await supabase.rpc('get_driver_cancelled_orders');
+    setHistoryCancelled(cancelledResult.error ? [] : cancelledResult.data ?? []);
     setHistory(rows);
     setHistoryExtra(Object.fromEntries(rows.map((row) => [row.id, { cash: row.cash_collected_minor, note: row.delivery_note }])));
     const addressIds = [...new Set(rows.flatMap((order) => order.address_id ? [order.address_id] : []))];
@@ -1078,9 +1082,10 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     const fees = rows.reduce((sum, order) => sum + order.delivery_fee_minor, 0);
     const knownCash = rows.filter((order) => historyExtra[order.id]?.cash != null);
     const cashTotal = knownCash.reduce((sum, order) => sum + (historyExtra[order.id]?.cash ?? 0), 0);
-    const groups: { label: string; items: HistoryOrder[] }[] = [];
+    const entries = [...rows.map((order) => ({ order, cancelled: null as DriverCancelledOrder | null, at: order.delivered_at as string })), ...historyCancelled.map((cancelled) => ({ order: null as HistoryOrder | null, cancelled, at: cancelled.cancelled_at ?? cancelled.created_at })).filter((entry) => new Date(entry.at).getTime() >= cutoff)].sort((x, y) => new Date(y.at).getTime() - new Date(x.at).getTime());
+    const groups: { label: string; items: typeof entries }[] = [];
     // Up to 100 delivered orders: render 20 at a time (each row loads a proof thumbnail).
-    for (const order of rows.slice(0, historyVisible)) { const label = dayLabel(order.delivered_at as string); const last = groups[groups.length - 1]; if (last && last.label === label) last.items.push(order); else groups.push({ label, items: [order] }); }
+    for (const entry of entries.slice(0, historyVisible)) { const label = dayLabel(entry.at); const last = groups[groups.length - 1]; if (last && last.label === label) last.items.push(entry); else groups.push({ label, items: [entry] }); }
     return <View style={{ gap: 10, marginTop: 4 }}>
       <View style={{ backgroundColor: c.surface, borderColor: '#3F6A2E', borderWidth: 1, borderRadius: 20, padding: 12, gap: 9 }}>
         <Text style={{ color: c.muted, fontSize: 13, fontWeight: '800', textAlign: 'right' }}>{historyPeriod === 'today' ? '📅 اليوم' : historyPeriod === 'week' ? '📅 آخر 7 أيام' : '📅 كل الطلبات'}</Text>
@@ -1091,9 +1096,12 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       <View style={{ flexDirection: 'row-reverse', gap: 7 }}>
         {([['today', 'اليوم'], ['week', 'هذا الأسبوع'], ['all', 'الكل']] as const).map(([key, label]) => { const on = historyPeriod === key; return <Pressable key={key} onPress={() => { setHistoryPeriod(key); setHistoryVisible(20); }} accessibilityRole="button" accessibilityState={{ selected: on }} style={{ minHeight: 36, paddingHorizontal: 14, borderRadius: 18, borderWidth: 1, borderColor: on ? '#B7FF30' : c.border, backgroundColor: on ? '#B7FF30' : c.surface, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: on ? '#0B1411' : c.muted, fontSize: 12.5, fontWeight: '800' }}>{label}</Text></Pressable>; })}
       </View>
-      {!rows.length ? <View style={s.noOffers}><View style={s.emptyIconWrap}><SymbolView name={{ ios: 'clock.arrow.circlepath', android: 'history', web: 'history' }} tintColor={c.primary} size={26}/></View><Text style={s.noOffersTitle}>ما في طلبات منتهية</Text><Text style={s.noOffersCopy}>{historyPeriod === 'all' ? 'لما تنهي أول طلب بيظهر هون.' : 'جرّب فترة أطول من الأزرار فوق.'}</Text></View> : groups.map((group) => <View key={group.label} style={{ gap: 9 }}>
+      {!entries.length ? <View style={s.noOffers}><View style={s.emptyIconWrap}><SymbolView name={{ ios: 'clock.arrow.circlepath', android: 'history', web: 'history' }} tintColor={c.primary} size={26}/></View><Text style={s.noOffersTitle}>ما في طلبات منتهية</Text><Text style={s.noOffersCopy}>{historyPeriod === 'all' ? 'لما تنهي أول طلب بيظهر هون.' : 'جرّب فترة أطول من الأزرار فوق.'}</Text></View> : groups.map((group) => <View key={group.label} style={{ gap: 9 }}>
         <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', marginHorizontal: 2, marginTop: 4 }}><Text style={{ color: c.muted, fontSize: 12.5, fontWeight: '800' }}>{group.label}</Text><Text style={{ color: c.muted, fontSize: 12.5 }}>{group.items.length} طلب</Text></View>
-        {group.items.map((order) => { const open = historyOpen === order.id; const extra = historyExtra[order.id]; const addr = order.address_id ? historyAddresses[order.address_id] : undefined; const { body } = splitPickup(order.request_text); return <Pressable key={order.id} onPress={() => setHistoryOpen(open ? null : order.id)} accessibilityRole="button" accessibilityState={{ expanded: open }} style={{ backgroundColor: c.surface, borderColor: open ? c.primary : c.border, borderWidth: 1, borderRadius: 20, padding: 11, gap: 10 }}>
+        {group.items.map((entry) => { if (entry.cancelled) { const gone = entry.cancelled; return <View key={'x' + gone.id} style={{ backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 20, padding: 11, flexDirection: 'row-reverse', alignItems: 'center', gap: 11 }}>
+          <View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={{ color: c.text, fontSize: 14.5, fontWeight: '900', textAlign: 'right' }}>{splitPickup(gone.request_text).body}</Text><Text numberOfLines={1} style={{ color: c.muted, fontSize: 12, textAlign: 'right', marginTop: 1 }}>{notificationTimeFormatter.format(new Date(entry.at))} · #{gone.id.slice(0, 6)}</Text></View>
+          <View style={{ backgroundColor: '#451E21', borderRadius: 11, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: '#FF8A8A', fontSize: 12, fontWeight: '900' }}>🚫 ملغي</Text></View>
+        </View>; } const order = entry.order as HistoryOrder; const open = historyOpen === order.id; const extra = historyExtra[order.id]; const addr = order.address_id ? historyAddresses[order.address_id] : undefined; const { body } = splitPickup(order.request_text); return <Pressable key={order.id} onPress={() => setHistoryOpen(open ? null : order.id)} accessibilityRole="button" accessibilityState={{ expanded: open }} style={{ backgroundColor: c.surface, borderColor: open ? c.primary : c.border, borderWidth: 1, borderRadius: 20, padding: 11, gap: 10 }}>
           <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11 }}>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text numberOfLines={1} style={{ color: c.text, fontSize: 14.5, fontWeight: '900', textAlign: 'right' }}>{body}</Text>
@@ -1105,7 +1113,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
           {open && <OrderReceipt data={{ id: order.id, createdAt: order.created_at, deliveredAt: order.delivered_at, request: order.request_text, address: addr ?? null, budget: order.budget_ceiling_minor, purchase: order.purchase_amount_minor, fee: order.delivery_fee_minor, collected: extra?.cash ?? null, note: extra?.note ?? null }} />}
         </Pressable>; })}
       </View>)}
-      {rows.length > historyVisible ? <Pressable onPress={() => setHistoryVisible((count) => count + 20)} accessibilityRole="button" style={{ minHeight: 44, borderRadius: 14, borderWidth: 1, borderColor: c.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: c.primary, fontSize: 13.5, fontWeight: '800' }}>عرض المزيد ({rows.length - historyVisible})</Text></Pressable> : null}
+      {entries.length > historyVisible ? <Pressable onPress={() => setHistoryVisible((count) => count + 20)} accessibilityRole="button" style={{ minHeight: 44, borderRadius: 14, borderWidth: 1, borderColor: c.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: c.primary, fontSize: 13.5, fontWeight: '800' }}>عرض المزيد ({entries.length - historyVisible})</Text></Pressable> : null}
     </View>;
   };
   const activeLabels: Record<string, string> = { accepted: 'بانتظار بدء التسوق', assigned: 'بانتظار بدء التسوق', shopping: 'مرحلة التسوق', awaiting_approval: 'بانتظار موافقة العميل', purchased: 'جاهز للتوصيل', delivering: 'قيد التوصيل', disputed: 'متوقف مؤقتاً' };
@@ -1843,6 +1851,7 @@ function CustomerDriverRow({ orderId, status }: { orderId: string; status: strin
   </View>;
 }
 
+type DriverCancelledOrder = { id: string; request_text: string; delivery_fee_minor: number; created_at: string; cancelled_at: string | null };
 type HistoryOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'  | 'request_text' | 'status' | 'delivery_fee_minor' | 'purchase_amount_minor' | 'budget_ceiling_minor' | 'delivered_at' | 'created_at' | 'address_id'>;
 type HistoryPeriod = 'today' | 'week' | 'all';
 function historyCutoff(period: HistoryPeriod) {
