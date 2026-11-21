@@ -668,7 +668,7 @@ export type Database = {
           customer_wait_alerted_at: string | null
           address_id: string | null
           base_fee_minor: number
-          budget_ceiling_minor: number
+          budget_ceiling_minor: number | null
           is_urgent: boolean
           category: string | null
           commission_policy_version: number | null
@@ -956,7 +956,7 @@ export type Database = {
       create_customer_order: {
         Args: {
           p_address_id: string
-          p_budget_ceiling_minor: number
+          p_budget_ceiling_minor?: number
           p_idempotency_key: string
           p_is_urgent?: boolean
           p_request_text: string

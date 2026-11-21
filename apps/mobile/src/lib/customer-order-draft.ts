@@ -6,14 +6,13 @@ export type CustomerOrderDraft = {
   schemaVersion: 1;
   savedAt: string;
   request: string;
-  budgetCeiling: string;
   addressId: string;
   idempotencyKey: string;
   pendingOrderId?: string;
   images?: CustomerOrderImageDraft[];
 };
 
-type OrderSummary = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'budget_ceiling_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'>;
+type OrderSummary = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'>;
 export type CustomerOrderSnapshot = { schemaVersion: 1; orders: OrderSummary[]; syncedAt: string };
 
 const storageKey = (userId: string) => `labbayk:customer-order-draft:${userId}`;
@@ -37,7 +36,7 @@ export const loadCustomerOrderDraft = (userId: string) => enqueue(async (): Prom
     const savedAt = typeof draft.savedAt === 'string' ? Date.parse(draft.savedAt) : legacyDraft ? Date.now() : NaN;
     if ((!legacyDraft && draft.schemaVersion !== 1) || !Number.isFinite(savedAt) || Date.now() - savedAt > 7 * 24 * 60 * 60 * 1000 ||
         typeof draft.request !== 'string' || draft.request.length > 4000 || typeof draft.addressId !== 'string' ||
-        typeof draft.budgetCeiling !== 'string' || draft.budgetCeiling.length > 24 || typeof draft.idempotencyKey !== 'string' ||
+        typeof draft.idempotencyKey !== 'string' ||
         !/^[a-f0-9-]{36}$/i.test(draft.idempotencyKey)) { await removeOfflineItem(storageKey(userId)); return null; }
     const validImages = draft.images === undefined || (Array.isArray(draft.images) && draft.images.length <= 3 && draft.images.every((image) => !!image && typeof image === 'object'
       && typeof image.id === 'string' && /^[a-f0-9-]{36}$/i.test(image.id)
@@ -47,7 +46,7 @@ export const loadCustomerOrderDraft = (userId: string) => enqueue(async (): Prom
     if (!validImages) { await removeOfflineItem(storageKey(userId)); return null; }
     const images = (draft.images ?? []) as CustomerOrderImageDraft[];
     const pendingOrderId = typeof draft.pendingOrderId === 'string' && /^[a-f0-9-]{36}$/i.test(draft.pendingOrderId) ? draft.pendingOrderId : undefined;
-    return { schemaVersion: 1, savedAt: new Date(savedAt).toISOString(), request: draft.request, budgetCeiling: draft.budgetCeiling, addressId: draft.addressId, idempotencyKey: draft.idempotencyKey, pendingOrderId, images };
+    return { schemaVersion: 1, savedAt: new Date(savedAt).toISOString(), request: draft.request, addressId: draft.addressId, idempotencyKey: draft.idempotencyKey, pendingOrderId, images };
   } catch {
     await removeOfflineItem(storageKey(userId)).catch(() => {});
     return null;
@@ -65,7 +64,7 @@ export const clearCustomerOrderDraft = (userId: string) => enqueue(async () => {
 });
 
 const activeOrderStatuses = new Set(['requested','quoted','searching','accepted','assigned','shopping','awaiting_approval','purchased','delivering','delivered','disputed']);
-const summaryFields: (keyof OrderSummary)[] = ['id','status','delivery_fee_minor','delivery_quote_set_at','delivery_quote_approved_at','budget_ceiling_minor','purchase_amount_minor','purchase_approved_at','created_at'];
+const summaryFields: (keyof OrderSummary)[] = ['id','status','delivery_fee_minor','delivery_quote_set_at','delivery_quote_approved_at','purchase_amount_minor','purchase_approved_at','created_at'];
 
 export const saveCustomerOrdersSnapshot = (userId: string, orders: OrderSummary[]) => enqueue(async () => {
   const snapshot: CustomerOrderSnapshot = {
@@ -92,7 +91,7 @@ export const loadCustomerOrdersSnapshot = (userId: string) => enqueue(async (): 
       && typeof order.id === 'string' && /^[a-f0-9-]{36}$/i.test(order.id)
       && typeof order.status === 'string' && activeOrderStatuses.has(order.status)
       && typeof order.created_at === 'string'
-      && Number.isSafeInteger(order.delivery_fee_minor) && Number.isSafeInteger(order.budget_ceiling_minor)
+      && Number.isSafeInteger(order.delivery_fee_minor)
       && (order.purchase_amount_minor === null || Number.isSafeInteger(order.purchase_amount_minor))
       && (order.delivery_quote_set_at === null || typeof order.delivery_quote_set_at === 'string')
       && (order.delivery_quote_approved_at === null || typeof order.delivery_quote_approved_at === 'string')
