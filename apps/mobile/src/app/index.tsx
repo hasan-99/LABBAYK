@@ -2643,6 +2643,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
     const matchesStatus = (order: AdminMobileOrder) => { const group = groupOf(order); return filter === 'all' || (filter === 'action' ? group === 'action' : filter === 'active' ? group === 'active' || group === 'searching' : filter === 'done' ? adminStatusGroup(order.status) === 'done' : order.status === 'cancelled'); };
     return orders.filter((order) => matchesStatus(order) && (!filterDriver || order.driver_id === filterDriver) && inAdminPeriod(order.created_at, filterPeriod) && (!term || order.id.toLowerCase().includes(term) || order.request_text.toLowerCase().includes(term) || (names[order.customer_id ?? ''] ?? '').toLowerCase().includes(term)));
   }, [orders, filter, filterDriver, filterPeriod, search, names, declines, pending, clock]);
+  const driverCounts = useMemo(() => { const map: Record<string, number> = {}; for (const order of orders) if (order.driver_id) map[order.driver_id] = (map[order.driver_id] ?? 0) + 1; return map; }, [orders]);
   const isFinished = (order: AdminMobileOrder) => (adminStatusGroup(order.status) === 'done' || order.status === 'cancelled') && !openDisputes[order.id] && order.status !== 'disputed';
   const activeList = useMemo(() => list.filter((order) => !isFinished(order)), [list, openDisputes]);
   const finishedList = useMemo(() => list.filter((order) => isFinished(order)), [list, openDisputes]);
@@ -2828,7 +2829,6 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
       </KeyboardAvoidingView>
     </SafeAreaView>;
   }
-  const driverCounts = useMemo(() => { const map: Record<string, number> = {}; for (const order of orders) if (order.driver_id) map[order.driver_id] = (map[order.driver_id] ?? 0) + 1; return map; }, [orders]);
   const cancelledCount = orders.filter((order) => order.status === 'cancelled').length;
   const filtersOn = !!filterDriver || filterPeriod !== 'all' || filter !== 'all';
   const clearFilters = () => { setFilter('all'); setFilterDriver(''); setFilterPeriod('all'); setVisible(25); setFinishedShown(12); };
