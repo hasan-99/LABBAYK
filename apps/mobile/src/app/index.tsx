@@ -1689,6 +1689,26 @@ function CustomerHomeSkeleton() {
   </View>;
 }
 
+function FilterSheet({ title, options, value, onSelect, onClose }: { title: string; options: { key: string; label: string; sub?: string; initial?: string }[]; value: string; onSelect: (key: string) => void; onClose: () => void }) {
+  const { colors: color } = useMobileTheme();
+  return <Modal visible transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={onClose}>
+    <Pressable style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.55)' }} onPress={onClose} accessibilityLabel="إغلاق">
+      <Pressable onPress={() => {}} style={{ backgroundColor: color.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, borderTopWidth: 1, borderColor: color.border, paddingHorizontal: 18, paddingTop: 12, paddingBottom: 26, maxHeight: '75%' }}>
+        <View style={{ alignSelf: 'center', width: 44, height: 5, borderRadius: 3, backgroundColor: color.border, marginBottom: 8 }} />
+        <Text style={{ color: color.text, fontSize: 20, fontWeight: '900', textAlign: 'right', marginBottom: 6 }}>{title}</Text>
+        <ScrollView>
+          {options.map((option, index) => { const on = option.key === value; return <Pressable key={option.key} onPress={() => { onSelect(option.key); onClose(); }} accessibilityRole="radio" accessibilityState={{ selected: on }} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 12, minHeight: 54, borderTopWidth: index ? 1 : 0, borderTopColor: color.border }}>
+            <View style={{ width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: on ? color.primary : color.border, alignItems: 'center', justifyContent: 'center' }}>{on ? <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: color.primary }} /> : null}</View>
+            {option.initial ? <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: color.raised, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 14, fontWeight: '900' }}>{option.initial}</Text></View> : null}
+            <Text numberOfLines={1} style={{ flex: 1, color: on ? color.primary : color.text, fontSize: 16, fontWeight: on ? '900' : '700', textAlign: 'right' }}>{option.label}</Text>
+            {option.sub ? <Text style={{ color: color.muted, fontSize: 13, fontWeight: '700' }}>{option.sub}</Text> : null}
+          </Pressable>; })}
+        </ScrollView>
+      </Pressable>
+    </Pressable>
+  </Modal>;
+}
+
 function CancelReasonSheet({ target, busy, warning, onClose, onConfirm }: { target: { id: string; label: string } | null; busy: boolean; warning?: string; onClose: () => void; onConfirm: (reason: string) => void }) {
   const [reason, setReason] = useState('');
   const [focused, setFocused] = useState(false);
@@ -1871,7 +1891,18 @@ function dayLabel(iso: string) {
 const eventLabels: Record<string, string> = { order_requested: 'أُرسل الطلب', delivery_quote_set: 'حُددت الأجرة', offers_dispatched: 'أُرسل للسائقين', driver_assigned: 'عُيّن سائق', order_accepted: 'قبل السائق الطلب', driver_declined_offer: 'اعتذر سائق', shopping_started: 'بدأ التسوق', purchase_amount_proposed_within_budget: 'سُجل مبلغ المشتريات', purchase_completed: 'تأكد الشراء', delivery_started: 'بدأ التوصيل', delivery_confirmed: 'تم تأكيد التسليم', order_disputed: 'وصل بلاغ', dispute_resolved: 'حُل البلاغ', order_paused_by_admin: 'أوقفه الأدمن مؤقتاً', admin_cancelled: 'ألغاه الأدمن', customer_cancelled: 'ألغاه العميل', cash_settled: 'تمت التسوية' };
 
 const adminStatusGroup = (status: string) => ['requested', 'quoted', 'disputed'].includes(status) ? 'action' : status === 'searching' ? 'searching' : ['accepted', 'assigned', 'shopping', 'awaiting_approval', 'purchased', 'delivering'].includes(status) ? 'active' : ['delivered', 'settled'].includes(status) ? 'done' : 'other';
-type AdminFilter = 'action' | 'searching' | 'active' | 'done' | 'all';
+type AdminFilter = 'action' | 'active' | 'done' | 'cancelled' | 'all';
+type AdminPeriod = 'all' | 'today' | 'yesterday' | 'week' | 'month';
+const adminPeriodLabels: Record<AdminPeriod, string> = { all: 'كل الفترات', today: 'اليوم', yesterday: 'أمس', week: 'آخر 7 أيام', month: 'هذا الشهر' };
+const adminStatusLabels: Record<AdminFilter, string> = { all: 'كل الحالات', action: 'تحتاج إجراء', active: 'جارية', done: 'منتهية', cancelled: 'ملغية' };
+function inAdminPeriod(iso: string, period: AdminPeriod) {
+  if (period === 'all') return true;
+  const now = new Date(); const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime(); const at = new Date(iso).getTime();
+  if (period === 'today') return at >= startOfDay;
+  if (period === 'yesterday') return at >= startOfDay - 86400000 && at < startOfDay;
+  if (period === 'week') return at >= startOfDay - 6 * 86400000;
+  return at >= new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+}
 const adminStages = ['تسعير', 'إسناد', 'شراء', 'توصيل', 'تسليم'];
 const adminDoneSteps: Record<string, number> = { requested: 0, quoted: 1, searching: 1, accepted: 2, assigned: 2, shopping: 2, awaiting_approval: 2, purchased: 3, delivering: 3, delivered: 5, settled: 5, disputed: 3 };
 function minutesLeft(iso: string) { return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 60000)); }
@@ -2469,8 +2500,10 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   const [filter, setFilter] = useState<AdminFilter>('all');
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
-  const [finishedHidden, setFinishedHidden] = useState(false);
-  const [finishedShown, setFinishedShown] = useState(5);
+  const [finishedShown, setFinishedShown] = useState(12);
+  const [filterDriver, setFilterDriver] = useState('');
+  const [filterPeriod, setFilterPeriod] = useState<AdminPeriod>('all');
+  const [openFilter, setOpenFilter] = useState<'driver' | 'period' | 'status' | null>(null);
   const [visible, setVisible] = useState(25);
   // Settled and cancelled orders show as one compact row; tapping opens the full card (one at a time).
   const [openFinished, setOpenFinished] = useState<string | null>(null);
@@ -2607,8 +2640,9 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   }, [orders, declines, pending, openDisputes, clock]);
   const list = useMemo(() => {
     const term = search.trim().toLowerCase();
-    return orders.filter((order) => (filter === 'all' || groupOf(order) === filter) && (!term || order.id.toLowerCase().includes(term) || order.request_text.toLowerCase().includes(term) || (names[order.customer_id ?? ''] ?? '').toLowerCase().includes(term)));
-  }, [orders, filter, search, names, declines, pending, clock]);
+    const matchesStatus = (order: AdminMobileOrder) => { const group = groupOf(order); return filter === 'all' || (filter === 'action' ? group === 'action' : filter === 'active' ? group === 'active' || group === 'searching' : filter === 'done' ? adminStatusGroup(order.status) === 'done' : order.status === 'cancelled'); };
+    return orders.filter((order) => matchesStatus(order) && (!filterDriver || order.driver_id === filterDriver) && inAdminPeriod(order.created_at, filterPeriod) && (!term || order.id.toLowerCase().includes(term) || order.request_text.toLowerCase().includes(term) || (names[order.customer_id ?? ''] ?? '').toLowerCase().includes(term)));
+  }, [orders, filter, filterDriver, filterPeriod, search, names, declines, pending, clock]);
   const isFinished = (order: AdminMobileOrder) => (adminStatusGroup(order.status) === 'done' || order.status === 'cancelled') && !openDisputes[order.id] && order.status !== 'disputed';
   const activeList = useMemo(() => list.filter((order) => !isFinished(order)), [list, openDisputes]);
   const finishedList = useMemo(() => list.filter((order) => isFinished(order)), [list, openDisputes]);
@@ -2794,14 +2828,22 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
       </KeyboardAvoidingView>
     </SafeAreaView>;
   }
-  const renderFinished = (order: AdminMobileOrder) => {
+  const driverCounts = useMemo(() => { const map: Record<string, number> = {}; for (const order of orders) if (order.driver_id) map[order.driver_id] = (map[order.driver_id] ?? 0) + 1; return map; }, [orders]);
+  const cancelledCount = orders.filter((order) => order.status === 'cancelled').length;
+  const filtersOn = !!filterDriver || filterPeriod !== 'all' || filter !== 'all';
+  const clearFilters = () => { setFilter('all'); setFilterDriver(''); setFilterPeriod('all'); setVisible(25); setFinishedShown(12); };
+  const filterPill = (key: 'driver' | 'period' | 'status', label: string, on: boolean) => <Pressable key={key} onPress={() => setOpenFilter(key)} accessibilityRole="button" accessibilityLabel={label} style={{ flex: 1, minWidth: 0, minHeight: 42, borderRadius: 21, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? 'rgba(183,255,48,0.14)' : color.surface, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: 8 }}>
+    <Text numberOfLines={1} ellipsizeMode="tail" style={{ flexShrink: 1, color: on ? color.primary : color.text, fontSize: 14, fontWeight: on ? '900' : '700' }}>{label}</Text>
+    <Text style={{ color: on ? color.primary : color.muted, fontSize: 10 }}>⌄</Text>
+  </Pressable>;
+  const renderFinished = (order: AdminMobileOrder, index: number) => {
     const tone = toneForOrder(order); const cancelled = order.status === 'cancelled'; const open = openFinished === order.id;
     const purchase = order.purchase_amount_minor ?? 0; const collected = cashCollected[order.id] ?? order.cash_collected_minor ?? null;
     const total = cancelled ? null : collected ?? purchase + order.delivery_fee_minor;
     const barColor = cancelled ? adminTone.bad.fg : order.status === 'settled' ? color.primary : adminTone.ok.fg;
     const parsed = splitPickup(order.request_text);
     const row = (label: string, value: string, tint?: string) => <View key={label} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', paddingVertical: 6 }}><Text style={{ color: color.muted, fontSize: 14 }}>{label}</Text><Text style={{ color: tint ?? color.text, fontSize: 14, fontWeight: '900' }}>{value}</Text></View>;
-    return <View key={order.id} style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, overflow: 'hidden' }}>
+    return <View key={order.id} style={{ borderTopWidth: index ? 1 : 0, borderTopColor: color.border }}>
       <Pressable onPress={() => setOpenFinished(open ? null : order.id)} accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityLabel={`طلب #${order.id.slice(0, 6)}، ${statusLabel(order)}`} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 12, padding: 13 }}>
         <View style={{ width: 5, alignSelf: 'stretch', borderRadius: 3, backgroundColor: barColor }} />
         <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
@@ -2847,6 +2889,15 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
         </View>
       </View>
       {searchOpen || search ? <TextInput value={search} autoFocus={searchOpen && !search} onChangeText={(value) => { setSearch(value); setVisible(25); }} placeholder="ابحث برقم الطلب أو النص أو اسم العميل" placeholderTextColor={color.muted} style={input} accessibilityLabel="بحث في الطلبات" /> : null}
+      <View style={{ flexDirection: 'row-reverse', gap: 8 }}>
+        {filterPill('driver', filterDriver ? nameOf(filterDriver).split(' ')[0] : 'السائق', !!filterDriver)}
+        {filterPill('period', filterPeriod === 'all' ? 'الفترة' : adminPeriodLabels[filterPeriod], filterPeriod !== 'all')}
+        {filterPill('status', filter === 'all' ? 'الحالة' : adminStatusLabels[filter], filter !== 'all')}
+      </View>
+      {filtersOn ? <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13 }}><Text style={{ color: color.text, fontWeight: '900' }}>{list.length}</Text> طلب</Text><Pressable onPress={clearFilters} hitSlop={8} accessibilityRole="button"><Text style={{ color: color.primary, fontSize: 13, fontWeight: '900' }}>مسح الفلاتر</Text></Pressable></View> : null}
+      {openFilter === 'driver' ? <FilterSheet title="السائق" value={filterDriver} options={[{ key: '', label: 'كل السائقين', sub: String(orders.filter((order) => order.driver_id).length) }, ...Object.keys(driverCounts).map((id) => ({ key: id, label: nameOf(id), sub: String(driverCounts[id]), initial: nameOf(id).slice(0, 1) }))]} onSelect={(key) => { setFilterDriver(key); setVisible(25); setFinishedShown(12); }} onClose={() => setOpenFilter(null)} /> : null}
+      {openFilter === 'period' ? <FilterSheet title="الفترة" value={filterPeriod} options={(Object.keys(adminPeriodLabels) as AdminPeriod[]).map((key) => ({ key, label: adminPeriodLabels[key] }))} onSelect={(key) => { setFilterPeriod(key as AdminPeriod); setVisible(25); setFinishedShown(12); }} onClose={() => setOpenFilter(null)} /> : null}
+      {openFilter === 'status' ? <FilterSheet title="الحالة" value={filter} options={[{ key: 'all', label: adminStatusLabels.all, sub: String(orders.length) }, { key: 'action', label: adminStatusLabels.action, sub: String(counts.action) }, { key: 'active', label: adminStatusLabels.active, sub: String(counts.active + counts.searching) }, { key: 'done', label: adminStatusLabels.done, sub: String(counts.done) }, { key: 'cancelled', label: adminStatusLabels.cancelled, sub: String(cancelledCount) }]} onSelect={(key) => { setFilter(key as AdminFilter); setVisible(25); setFinishedShown(12); }} onClose={() => setOpenFilter(null)} /> : null}
       {counts.action > 0 && !search ? <Pressable onPress={() => { setFilter(filter === 'action' ? 'all' : 'action'); setVisible(25); }} accessibilityRole="button" style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10, backgroundColor: adminTone.warn.bg, borderColor: adminTone.warn.fg, borderWidth: 1, borderRadius: 16, paddingHorizontal: 14, minHeight: 50 }}>
         <View style={{ backgroundColor: adminTone.warn.fg, borderRadius: 12, minWidth: 26, paddingHorizontal: 8, minHeight: 24, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 13.5, fontWeight: '900' }}>{counts.action}</Text></View>
         <Text style={{ flex: 1, color: adminTone.warn.fg, fontSize: 15, fontWeight: '900', textAlign: 'right' }}>{counts.action === 1 ? 'طلب يحتاج إجراءك' : 'طلبات تحتاج إجراءك'}</Text>
@@ -2885,9 +2936,11 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
             </Pressable>;
           })}
           {finishedList.length ? <>
-            <Pressable onPress={() => setFinishedHidden((value) => !value)} accessibilityRole="button" accessibilityState={{ expanded: !finishedHidden }} style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', minHeight: 34 }}><Text style={{ color: color.muted, fontSize: 14, fontWeight: '900' }}>منتهية · <Text style={{ color: color.text }}>{finishedList.length}</Text></Text><Text style={{ color: color.primary, fontSize: 12.5, fontWeight: '800' }}>{finishedHidden ? 'عرض ⌄' : 'إخفاء ⌃'}</Text></Pressable>
-            {!finishedHidden ? finishedList.slice(0, finishedShown).map((order) => renderFinished(order)) : null}
-            {!finishedHidden && finishedList.length > finishedShown ? <Pressable onPress={() => setFinishedShown((value) => value + 25)} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.text, fontSize: 14, fontWeight: '800' }}>عرض كل الطلبات المنتهية ({finishedList.length})</Text></Pressable> : null}
+            {(() => { const shown = finishedList.slice(0, finishedShown); const groups: { label: string; items: AdminMobileOrder[] }[] = []; for (const order of shown) { const label = dayLabel(order.delivered_at ?? order.created_at); const last = groups[groups.length - 1]; if (last && last.label === label) last.items.push(order); else groups.push({ label, items: [order] }); } return groups.map((group) => <View key={group.label} style={{ gap: 6 }}>
+              <Text style={{ color: color.muted, fontSize: 13, fontWeight: '900', textAlign: 'right', paddingHorizontal: 2 }}>{group.label}</Text>
+              <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, overflow: 'hidden' }}>{group.items.map((order, index) => renderFinished(order, index))}</View>
+            </View>); })()}
+            {finishedList.length > finishedShown ? <Pressable onPress={() => setFinishedShown((value) => value + 25)} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.text, fontSize: 14, fontWeight: '800' }}>عرض المزيد ({finishedList.length - finishedShown})</Text></Pressable> : null}
           </> : null}
           {activeList.length > visible && <Pressable onPress={() => setVisible((value) => value + 25)} accessibilityRole="button" style={[pill(false), { alignSelf: 'center', justifyContent: 'center' }]}><Text style={{ color: color.primary, fontSize: 13, fontWeight: '800' }}>عرض المزيد ({activeList.length - visible})</Text></Pressable>}
         </> : <View style={{ alignItems: 'center', padding: 34, gap: 8 }}><Text style={{ color: color.text, fontSize: 17, fontWeight: '900' }}>ما في طلبات هون</Text><Text style={{ color: color.muted, fontSize: 13.5, textAlign: 'center' }}>{search ? 'ما لقينا نتيجة لبحثك.' : 'لما تنضاف طلبات بهالتصنيف بتظهر هون.'}</Text></View>}
