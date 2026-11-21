@@ -1680,6 +1680,10 @@ function CustomerHomeSkeleton() {
   </View>;
 }
 
+function UrgentStrip() {
+  return <View style={{ backgroundColor: '#F5A623', borderRadius: 12, minHeight: 30, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#2B1A00', fontSize: 13.5, fontWeight: '900' }}>⚡ طلب مستعجل</Text></View>;
+}
+
 function UrgentTag() {
   return <View style={{ backgroundColor: '#F5A623', borderRadius: 10, paddingHorizontal: 8, minHeight: 22, justifyContent: 'center' }}><Text style={{ color: '#2B1A00', fontSize: 11.5, fontWeight: '900' }}>⚡ مستعجل</Text></View>;
 }
@@ -2793,9 +2797,9 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
               <Text style={{ color: color.muted, fontSize: 14 }}>⌄</Text>
             </Pressable>;
             return <Pressable key={order.id} onPress={() => openSheet(order)} accessibilityRole="button" accessibilityLabel={`طلب #${order.id.slice(0, 6)}، ${orderStatus[order.status] ?? order.status}`} style={{ backgroundColor: color.surface, borderColor: order.is_urgent ? '#F5A623' : needs || hasReport ? '#C98A2B' : color.border, borderWidth: order.is_urgent ? 2 : 1, borderRadius: 20, padding: order.is_urgent ? 13 : 14, gap: 9 }}>
+              {order.is_urgent ? <UrgentStrip /> : null}
               <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <View style={{ backgroundColor: tone.bg, borderRadius: 12, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: tone.fg, fontSize: 12, fontWeight: '900' }}>{statusLabel(order)}</Text></View>
-                {order.is_urgent ? <UrgentTag /> : null}
                 <Text style={{ color: color.muted, fontSize: 11.5 }}>{timeAgo(order.created_at)} · #{order.id.slice(0, 6)}</Text>
                 {finished ? <Pressable onPress={() => setOpenFinished(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel="طيّ الطلب"><Text style={{ color: color.muted, fontSize: 14 }}>⌃</Text></Pressable> : null}
               </View>
@@ -3283,6 +3287,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
           }
           return <View key={order.id} style={{ backgroundColor: c.surface, borderColor: order.id === notificationOrderId ? '#B7FF30' : order.is_urgent && group === 'live' ? '#F5A623' : group === 'live' ? '#3F6A2E' : c.border, borderWidth: order.id === notificationOrderId || (order.is_urgent && group === 'live') ? 2 : 1, borderRadius: 22, padding: 14, gap: 11, marginBottom: 11 }}>
           {order.id === notificationOrderId && <Text style={s.notificationOrderLabel}>الطلب المرتبط بهذا الإشعار</Text>}
+          {!finished && order.is_urgent ? <UrgentStrip /> : null}
           {finished && <Pressable disabled={openFinished !== order.id} onPress={() => setOpenFinished(null)} accessibilityRole="button" accessibilityLabel="طيّ التفاصيل" style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11 }}>
             <View style={{ width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: cancelled ? 'rgba(255,138,138,0.16)' : 'rgba(82,213,160,0.16)' }}><Text style={{ color: cancelled ? '#FF8A8A' : c.accent, fontSize: 16, fontWeight: '900' }}>{cancelled ? '✕' : '✓'}</Text></View>
             <View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={2} style={{ color: c.text, fontSize: 14.5, fontWeight: '800', textAlign: 'right' }}>{splitPickup(order.request_text).body}</Text><Text numberOfLines={1} style={{ color: c.muted, fontSize: 12, textAlign: 'right' }}>{shortDateTimeFormatter.format(new Date(order.delivered_at ?? order.created_at))} · #{order.id.slice(0, 6)}</Text></View>
@@ -3290,7 +3295,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
             {openFinished === order.id ? <View style={{ minHeight: 30, paddingHorizontal: 11, borderRadius: 15, borderWidth: 1, borderColor: '#3D5A45', backgroundColor: '#1F2E24', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#B7FF30', fontSize: 12, fontWeight: '800' }}>إخفاء</Text></View> : null}
           </Pressable>}
           {!finished && <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
-            <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 6, backgroundColor: cancelled ? '#451E21' : done ? c.raised : '#26391C', borderRadius: 12, paddingHorizontal: 11, minHeight: 28 }}><Text style={{ color: cancelled ? '#FF8A8A' : done ? c.accent : '#B7FF30', fontSize: 12.5, fontWeight: '900' }}>{done ? '✅ ' : ''}{orderStatus[order.status] ?? order.status}</Text></View>{order.is_urgent ? <UrgentTag /> : null}
+            <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 6, backgroundColor: cancelled ? '#451E21' : done ? c.raised : '#26391C', borderRadius: 12, paddingHorizontal: 11, minHeight: 28 }}><Text style={{ color: cancelled ? '#FF8A8A' : done ? c.accent : '#B7FF30', fontSize: 12.5, fontWeight: '900' }}>{done ? '✅ ' : ''}{orderStatus[order.status] ?? order.status}</Text></View>
             <Text style={{ color: c.muted, fontSize: 11.5 }}>{shortDateTimeFormatter.format(new Date(order.created_at))} · #{order.id.slice(0, 6)}</Text>
           </View>}
           {!finished && <View style={{ flexDirection: 'row-reverse', gap: 11, alignItems: 'flex-start' }}>
