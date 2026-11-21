@@ -3555,6 +3555,13 @@ function NetworkStatusBanner() {
   const online = useInternetAvailable();
   const [backendHealth, setBackendHealth] = useState<BackendHealth>(getBackendHealth);
   useEffect(() => subscribeBackendHealth(setBackendHealth), []);
+  // While the app thinks it is offline, quietly ask the backend again every 15 s so it recovers by
+  // itself (a stale Android reachability flag would otherwise keep the banner until a restart).
+  useEffect(() => {
+    if (online) return;
+    const timer = setInterval(() => { void recheckBackend(); }, 15_000);
+    return () => clearInterval(timer);
+  }, [online]);
   // Short, calm wording: the person needs to know the app is fine and will recover by itself.
   const message = !online
     ? 'النت مقطوع حالياً. تطبيقك بيضل شغّال، وبيتحدّث لحاله أول ما يرجع الاتصال.'
