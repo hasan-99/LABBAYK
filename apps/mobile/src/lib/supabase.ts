@@ -27,6 +27,19 @@ export const supabase = supabaseConfigured ? createClient<Database>(url!, publis
 }) : null;
 
 /**
+ * Asks the backend for a tiny health response, through the same monitored fetch, so a success also
+ * flips the app's online state back. Used when the user pulls to refresh while the app still thinks
+ * it is offline: without a real request nothing could ever mark the connection as restored.
+ */
+export async function recheckBackend(): Promise<boolean> {
+  if (!url || !publishableKey) return false;
+  try {
+    const response = await createMonitoredFetch(fetch, 8_000)(`${url}/auth/v1/health`, { headers: { apikey: publishableKey } });
+    return response.status < 500;
+  } catch { return false; }
+}
+
+/**
  * Reads the saved session straight from device storage, without the network.
  * supabase.auth.getSession() refreshes an expired token before it resolves, which on a slow
  * connection kept the app on its loading screen for seconds. The app opens from this copy and the

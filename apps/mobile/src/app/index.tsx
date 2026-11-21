@@ -14,7 +14,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { tokens } from '@labbayk/design-tokens';
 import type { Session } from '@supabase/supabase-js';
 import type { Database } from '@labbayk/shared/database.types';
-import { readStoredSession, supabase, supabaseConfigured } from '@/lib/supabase';
+import { readStoredSession, recheckBackend, supabase, supabaseConfigured } from '@/lib/supabase';
 import { getBackendHealth, subscribeBackendHealth, type BackendHealth } from '@/lib/network-health';
 import { clearCustomerOrderDraft, clearCustomerOrdersSnapshot, loadCustomerOrderDraft, loadCustomerOrdersSnapshot, saveCustomerOrderDraft, saveCustomerOrdersSnapshot, type CustomerOrderImageDraft, type CustomerOrderSnapshot } from '@/lib/customer-order-draft';
 import { clearDriverOrdersSnapshot, loadDriverOrdersSnapshot, saveDriverOrdersSnapshot } from '@/lib/driver-orders-cache';
@@ -904,7 +904,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   useEffect(() => { if (orderSection === 'history' && history === null) void loadHistory(); }, [orderSection, history, loadHistory]);
   const manualRefresh = async () => {
     if (busy || refreshing) return;
-    if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; }
+    if (!online && !(await recheckBackend())) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; }
     setRefreshing(true); setLoading(true);
     await refreshNow();
     if (orderSection === 'history') await loadHistory();
@@ -2061,7 +2061,7 @@ function AdminDriversTab({ userId, active, onBadge }: { userId: string; active: 
   const nameOf = (id: string) => names[id] ?? '#' + id.slice(0, 6);
   const team = rows.filter((row) => row.review_status !== 'pending' && (segment === 'all' || (row.review_status === 'approved' && row.is_online)));
   const onlineCount = rows.filter((row) => row.review_status === 'approved' && row.is_online).length;
-  const manualRefresh = async () => { if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setRefreshing(true); await loadAdminNames(true); await refreshNow(); setRefreshing(false); };
+  const manualRefresh = async () => { if (!online && !(await recheckBackend())) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setRefreshing(true); await loadAdminNames(true); await refreshNow(); setRefreshing(false); };
   const review = async (id: string, approved: boolean) => {
     if (!supabase) return;
     if (!approved && !(await confirmAction('رفض طلب الانضمام؟', `رح يتم رفض طلب ${nameOf(id)}.`, 'رفض الطلب'))) return;
@@ -2141,7 +2141,7 @@ function AdminMoneyTab({ userId, active, onBadge, onOpenOrder }: { userId: strin
   const nameOf = (id: string | null) => id ? (names[id] ?? '#' + id.slice(0, 6)) : '—';
   const walletIds = useMemo(() => [...new Set([...drivers, ...Object.keys(balances)])], [drivers, balances]);
   const dueTotal = walletIds.reduce((sum, id) => sum + Math.max(0, -(balances[id] ?? 0)), 0);
-  const manualRefresh = async () => { if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setRefreshing(true); await loadAdminNames(true); await refreshNow(); setRefreshing(false); };
+  const manualRefresh = async () => { if (!online && !(await recheckBackend())) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setRefreshing(true); await loadAdminNames(true); await refreshNow(); setRefreshing(false); };
   const submitTopUp = async () => {
     if (!supabase || !topUp) return;
     const value = Number(amount);
@@ -2328,7 +2328,7 @@ function AdminReportsTab({ userId, active, onBadge, onOpenOrder }: { userId: str
   useEffect(() => { onBadge('reports', openCount); }, [openCount, onBadge]);
   const list = reports.filter((row) => segment === 'open' ? !row.resolved_at : !!row.resolved_at);
   const nameOf = (id: string | null) => id ? (names[id] ?? '#' + id.slice(0, 6)) : '—';
-  const manualRefresh = async () => { if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setRefreshing(true); await loadAdminNames(true); await refreshNow(); setRefreshing(false); };
+  const manualRefresh = async () => { if (!online && !(await recheckBackend())) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setRefreshing(true); await loadAdminNames(true); await refreshNow(); setRefreshing(false); };
   return <AdminTabShell title="البلاغات" subtitle="مشاكل العملاء والسائقين على الطلبات" onRefresh={() => void manualRefresh()} refreshing={refreshing}>
     <AdminSegment items={[{ key: 'open', label: `مفتوحة · ${openCount}` }, { key: 'done', label: `محلولة · ${reports.length - openCount}` }]} value={segment} onChange={setSegment} />
     {loading ? <ActivityIndicator color={color.primary} style={{ margin: 24 }} /> : list.length ? list.map((report) => {
@@ -2627,7 +2627,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
 
   const manualRefresh = async () => {
     if (refreshing) return;
-    if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; }
+    if (!online && !(await recheckBackend())) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; }
     setRefreshing(true); await loadAdminNames(true); await refreshNow(); setRefreshing(false); setMessage('تم تحديث الطلبات.');
   };
   // Offers that already ran out of time are still "pending" in the database until the next send, so
@@ -3342,7 +3342,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const pullRefresh = async () => {
     if (pullRefreshing) return;
-    if (!online) { setOrderActionMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; }
+    if (!online && !(await recheckBackend())) { setOrderActionMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; }
     setPullRefreshing(true);
     setNotificationsRefreshKey((value) => value + 1);
     try { const rows = await fetchCustomerOrders(); if (rows) applyCustomerOrders(rows); } finally { setPullRefreshing(false); }
@@ -3393,7 +3393,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       </> : tab === 'orders' ? <View style={s.orderPage}><StaggeredSections transitionKey={`${tab}-orders`}>
         <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', marginTop: 4, marginBottom: 2 }}>
           <View><Text style={s.accountPageTitle}>طلباتي</Text><Text style={s.accountPageSubtitle}>تابع كل طلب خطوة بخطوة</Text></View>
-          <Pressable onPress={() => { if (ordersLoading || ordersRefreshing) return; if (!online) { setOrderActionMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setNotificationsRefreshKey((value) => value + 1); setOrdersRefreshing(true); void fetchCustomerOrders().then((rows) => { if (rows) { applyCustomerOrders(rows); setOrderActionMessage('تم تحديث الطلبات.'); } else setOrderActionMessage('ما قدرنا نحدّث الطلبات. جرّب مرة ثانية.'); }).finally(() => setOrdersRefreshing(false)); }} accessibilityRole="button" accessibilityLabel="تحديث الطلبات والتنبيهات" accessibilityState={{ busy: ordersRefreshing }} style={[s.ordersRefreshButton, ordersRefreshing && { opacity: 0.5 }]}>
+          <Pressable onPress={async () => { if (ordersLoading || ordersRefreshing) return; if (!online && !(await recheckBackend())) { setOrderActionMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setNotificationsRefreshKey((value) => value + 1); setOrdersRefreshing(true); void fetchCustomerOrders().then((rows) => { if (rows) { applyCustomerOrders(rows); setOrderActionMessage('تم تحديث الطلبات.'); } else setOrderActionMessage('ما قدرنا نحدّث الطلبات. جرّب مرة ثانية.'); }).finally(() => setOrdersRefreshing(false)); }} accessibilityRole="button" accessibilityLabel="تحديث الطلبات والتنبيهات" accessibilityState={{ busy: ordersRefreshing }} style={[s.ordersRefreshButton, ordersRefreshing && { opacity: 0.5 }]}>
             <SymbolView name={{ios:'arrow.clockwise',android:'refresh',web:'refresh'}} tintColor={c.primary} size={19}/>
           </Pressable>
         </View>
