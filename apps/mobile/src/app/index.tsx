@@ -174,7 +174,7 @@ type Address = Database['public']['Tables']['addresses']['Row'];
 type DriverOfferAddress = Pick<Address, 'id'|'label'|'street'|'city'|'neighborhood'|'building'|'landmark'>;
 type CustomerOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'budget_ceiling_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'> & { driver_id?: string | null; delivered_at?: string | null; is_urgent?: boolean };
 type DriverOfferCard = { id: string; expires_at: string; order: Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'budget_ceiling_minor'|'address_id'> & { is_urgent?: boolean; address: DriverOfferAddress | null } };
-type DriverActiveOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'budget_ceiling_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'address_id'> & { address: Pick<Address, 'id'|'label'|'street'|'city'|'neighborhood'|'contact_phone'|'building'|'landmark'> | null };
+type DriverActiveOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'budget_ceiling_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'address_id'> & { is_urgent?: boolean; address: Pick<Address, 'id'|'label'|'street'|'city'|'neighborhood'|'contact_phone'|'building'|'landmark'> | null };
 const newRequestKey = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => { const value = Math.random() * 16 | 0; return (char === 'x' ? value : (value & 3 | 8)).toString(16); });
 type OrderImage = CustomerOrderImageDraft & { uri: string };
 type ProfileAvatarDraft = { uri: string; mimeType: string; extension: string };
@@ -840,7 +840,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       supabase.from('driver_profiles').select('is_online').eq('user_id', userId).single(),
       supabase.rpc('get_driver_wallet_balances'),
       supabase.from('order_offers').select('id,order_id,expires_at,order:orders(id,is_urgent,status,request_text,delivery_fee_minor,budget_ceiling_minor,address_id,address:addresses(id,label,street,city,neighborhood,building,landmark))').eq('driver_id', userId).eq('status', 'pending').gt('expires_at', new Date().toISOString()).order('expires_at'),
-      supabase.from('orders').select('id,status,request_text,delivery_fee_minor,budget_ceiling_minor,purchase_amount_minor,purchase_approved_at,created_at,address_id,address:addresses(id,label,street,city,neighborhood,contact_phone,building,landmark)').eq('driver_id', userId).neq('status', 'delivered').neq('status', 'settled').neq('status', 'cancelled').order('created_at', { ascending: false }),
+      supabase.from('orders').select('id,is_urgent,status,request_text,delivery_fee_minor,budget_ceiling_minor,purchase_amount_minor,purchase_approved_at,created_at,address_id,address:addresses(id,label,street,city,neighborhood,contact_phone,building,landmark)').eq('driver_id', userId).neq('status', 'delivered').neq('status', 'settled').neq('status', 'cancelled').order('created_at', { ascending: false }),
     ]);
     const { data: walletRows, error: walletError } = wallet;
     if (!walletError) { setWalletBalance(walletRows?.find((row) => row.driver_id === userId)?.balance_minor ?? 0); setWalletUnavailable(false); }
@@ -1161,7 +1161,8 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       </View>
       <View style={{ minHeight: 54, borderRadius: 18, borderWidth: 1.5, borderStyle: 'dashed', borderColor: c.border, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: c.muted, fontSize: 15, fontWeight: '900' }}>⏳ بانتظار فريق لَبّيك</Text></View>
     </View>;
-    return <View key={order.id} style={{ backgroundColor: c.surface, borderColor: c.border, borderWidth: 1, borderRadius: 22, padding: 13, gap: 11, marginTop: 10, marginBottom: 6 }}>
+    return <View key={order.id} style={{ backgroundColor: c.surface, borderColor: order.is_urgent ? '#F5A623' : c.border, borderWidth: order.is_urgent ? 2 : 1, borderRadius: 22, padding: order.is_urgent ? 12 : 13, gap: 11, marginTop: 10, marginBottom: 6 }}>
+      {order.is_urgent ? <UrgentStrip /> : null}
       <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
         <View style={{ backgroundColor: '#26391C', borderRadius: 12, paddingHorizontal: 11, minHeight: 28, justifyContent: 'center' }}><Text style={{ color: '#B7FF30', fontSize: 12.5, fontWeight: '900' }}>{activeLabels[order.status] ?? orderStatus[order.status] ?? order.status}</Text></View>
         <Text style={{ color: c.muted, fontSize: 12 }}>#{order.id.slice(0, 6)}</Text>
