@@ -1935,9 +1935,8 @@ function AdminEmpty({ title, hint }: { title: string; hint: string }) {
 
 type AdminDriverRow = Pick<Database['public']['Tables']['driver_profiles']['Row'], 'user_id' | 'review_status' | 'vehicle_description' | 'created_at' | 'is_online'>;
 type AdminInviteRow = { id: string; expires_at: string; redeemed_at: string | null; revoked_at: string | null; created_at: string };
-type AdminDriversData = { rows: AdminDriverRow[]; names: Record<string, string>; busyDrivers: Record<string, boolean>; invites: AdminInviteRow[] };
+type AdminDriversData = { rows: AdminDriverRow[]; names: Record<string, string>; busyDrivers: Record<string, boolean> };
 function AdminDriversTab({ userId, active, onBadge }: { userId: string; active: boolean; onBadge: AdminBadgeSetter }) {
-  const insets = useSafeAreaInsets();
   const { colors: color } = useMobileTheme();
   const online = useInternetAvailable();
   const [, setMessage] = useToastMessage();
@@ -1950,20 +1949,16 @@ function AdminDriversTab({ userId, active, onBadge }: { userId: string; active: 
   const [refreshing, setRefreshing] = useState(false);
   const [working, setWorking] = useState('');
   const [segment, setSegment] = useState<'all' | 'on'>('all');
-  const [invites, setInvites] = useState<AdminInviteRow[]>(cached?.invites ?? []);
-  const [newInvite, setNewInvite] = useState<{ webLink: string; appLink: string; token: string } | null>(null);
-  const [creating, setCreating] = useState(false);
   const channelKey = useRef(newRequestKey());
   const refresh = useCallback(async () => {
     if (!supabase) return;
-    const [inviteResult, driverResult, orderResult, nameMap] = await Promise.all([
-      supabase.from('driver_invites').select('id,expires_at,redeemed_at,revoked_at,created_at').order('created_at', { ascending: false }).limit(30),
+    const [driverResult, orderResult, nameMap] = await Promise.all([
       supabase.from('driver_profiles').select('user_id,review_status,vehicle_description,created_at,is_online').order('created_at', { ascending: false }),
       supabase.from('orders').select('driver_id').in('status', ['accepted', 'assigned', 'shopping', 'awaiting_approval', 'purchased', 'delivering']),
       loadAdminNames(),
     ]);
     const previous = readMemory<AdminDriversData>(memoryKey)?.value;
-    const next: AdminDriversData = { rows: previous?.rows ?? [], names: nameMap, busyDrivers: previous?.busyDrivers ?? {}, invites: inviteResult.error ? previous?.invites ?? [] : inviteResult.data ?? [] };
+    const next: AdminDriversData = { rows: previous?.rows ?? [], names: nameMap, busyDrivers: previous?.busyDrivers ?? {} };
     if (driverResult.error) setMessage('ما قدرنا نحمّل بيانات السائقين.');
     else {
       next.rows = driverResult.data ?? [];
@@ -1972,7 +1967,7 @@ function AdminDriversTab({ userId, active, onBadge }: { userId: string; active: 
       next.busyDrivers = busyMap;
       writeMemory(memoryKey, next);
     }
-    setRows(next.rows); setBusyDrivers(next.busyDrivers); setInvites(next.invites); setNames(nameMap); setLoading(false);
+    setRows(next.rows); setBusyDrivers(next.busyDrivers); setNames(nameMap); setLoading(false);
   }, [setMessage, memoryKey]);
   const { onRealtime, refreshNow } = useAdminTabRefresh(active, refresh, memoryKey);
   useEffect(() => {
@@ -1995,38 +1990,9 @@ function AdminDriversTab({ userId, active, onBadge }: { userId: string; active: 
     if (error) { setMessage('ما قدرنا نحفظ قرار المراجعة.'); return; }
     setMessage(approved ? 'تم اعتماد السائق.' : 'تم رفض الطلب.'); await refreshNow();
   };
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 60 * 1000); return () => clearInterval(timer); }, []);
-  const activeInvites = invites.filter((invite) => !invite.redeemed_at && !invite.revoked_at && Date.parse(invite.expires_at) > now);
-  const createInvite = async () => {
-    if (!supabase || creating) return;
-    setCreating(true);
-    const { data, error } = await supabase.rpc('admin_create_driver_invite');
-    setCreating(false);
-    if (error || !data) { setMessage('ما قدرنا ننشئ الدعوة. جرّب مرة ثانية.'); return; }
-    const base = (process.env.EXPO_PUBLIC_APP_URL?.trim() || 'https://labbayk.expo.app').replace(/\/+$/, '');
-    setNewInvite({ token: data, webLink: `${base}/?invite=${data}`, appLink: `labbayk:///?invite=${data}` });
-    await refreshNow();
-  };
-  const shareInvite = async () => {
-    if (!newInvite) return;
-    try { await Share.share({ message: `دعوة للانضمام لفريق سائقي لَبّيك.\n\nرابط الويب (بيشتغل على أي جهاز):\n${newInvite.webLink}\n\nرابط التطبيق (إذا منزّله):\n${newInvite.appLink}\n\nأو الصق هالرمز بالتطبيق:\n${newInvite.token}` }); } catch { setMessage('ما قدرنا نفتح المشاركة. انسخ الرابط يدوياً.'); }
-  };
-  const revokeInvite = async (id: string) => {
-    if (!supabase) return;
-    if (!(await confirmAction('إلغاء الدعوة؟', 'الرابط ما رح يشتغل بعد هلأ.', 'إلغاء الدعوة'))) return;
-    const { error } = await supabase.from('driver_invites').update({ revoked_at: new Date().toISOString() }).eq('id', id);
-    if (error) { setMessage('ما قدرنا نلغي الدعوة.'); return; }
-    setMessage('تم إلغاء رابط الدعوة.'); await refreshNow();
-  };
   const statusOf = (row: AdminDriverRow): { label: string; tone: keyof typeof adminTone | 'mute' } => row.review_status === 'suspended' ? { label: 'موقوف مؤقتاً', tone: 'bad' } : row.review_status === 'rejected' ? { label: 'مرفوض', tone: 'mute' } : !row.is_online ? { label: 'غير متصل', tone: 'mute' } : busyDrivers[row.user_id] ? { label: 'عنده طلب', tone: 'warn' } : { label: 'متاح', tone: 'ok' };
   const avatar = (id: string) => <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: color.raised, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 16, fontWeight: '900' }}>{nameOf(id).slice(0, 1)}</Text></View>;
   return <AdminTabShell title="السائقون" subtitle={`${onlineCount} متصل الآن من ${rows.filter((row) => row.review_status === 'approved').length}`} onRefresh={() => void manualRefresh()} refreshing={refreshing}>
-    <Pressable disabled={creating || !online} onPress={() => void createInvite()} accessibilityRole="button" style={{ minHeight: 52, borderRadius: 16, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', opacity: creating || !online ? 0.55 : 1 }}><Text style={{ color: color.background, fontSize: 15.5, fontWeight: '900' }}>{creating ? 'لحظة…' : '＋ دعوة سائق جديد'}</Text></Pressable>
-    {activeInvites.length ? <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12, gap: 8 }}>
-      <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>دعوات فعّالة · {activeInvites.length}</Text>
-      {activeInvites.map((invite) => <View key={invite.id} style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}><Text style={{ color: color.text, fontSize: 13.5, textAlign: 'right', flex: 1 }}>أُنشئت {timeAgo(invite.created_at)} · بتنتهي بعد {Math.max(1, Math.ceil((Date.parse(invite.expires_at) - now) / 86400000))} يوم</Text><Pressable onPress={() => void revokeInvite(invite.id)} accessibilityRole="button" accessibilityLabel="إلغاء الدعوة" style={{ minHeight: 36, paddingHorizontal: 12, borderRadius: 11, borderWidth: 1, borderColor: adminTone.bad.fg, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: adminTone.bad.fg, fontSize: 12.5, fontWeight: '900' }}>إلغاء</Text></Pressable></View>)}
-    </View> : null}
     {loading ? <ActivityIndicator color={color.primary} style={{ margin: 24 }} /> : <>
       {pending.length ? <>
         <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>طلبات الانضمام · {pending.length}</Text>
@@ -2044,19 +2010,6 @@ function AdminDriversTab({ userId, active, onBadge }: { userId: string; active: 
         {team.map((row, index) => { const status = statusOf(row); return <View key={row.user_id} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11, padding: 12, borderTopWidth: index ? 1 : 0, borderTopColor: color.border }}>{avatar(row.user_id)}<View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 15, fontWeight: '800', textAlign: 'right' }}>{nameOf(row.user_id)}</Text><Text numberOfLines={1} style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>{row.vehicle_description || 'بدون وصف للمركبة'}</Text></View><AdminPill label={status.label} tone={status.tone} /></View>; })}
       </View> : <AdminEmpty title="ما في سائقين هون" hint={segment === 'on' ? 'ما في سائق متصل حالياً.' : 'السائقين المسجلين بيظهروا هون.'} />}
     </>}
-    <Modal visible={!!newInvite} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => setNewInvite(null)}>
-      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' }} onPress={() => setNewInvite(null)} accessibilityRole="button" accessibilityLabel="إغلاق" />
-        <View style={{ backgroundColor: color.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderTopWidth: 1, borderColor: color.border, padding: 16, paddingBottom: 26 + insets.bottom, gap: 10 }}>
-          <View style={{ alignSelf: 'center', width: 42, height: 4, borderRadius: 2, backgroundColor: color.border }} />
-          <Text style={{ color: color.text, fontSize: 19, fontWeight: '900', textAlign: 'right' }}>دعوة سائق جاهزة</Text>
-          <Text style={{ color: color.muted, fontSize: 13.5, lineHeight: 22, textAlign: 'right' }}>أرسل الرابط للسائق. بيفتحه وبيسجّل دخوله وبيصير سائق مباشرة بدون مراجعة. الرابط لمرة وحدة وبينتهي بعد 7 أيام. ما رح تقدر تشوفه مرة ثانية بعد ما تسكّر هالشاشة.</Text>
-          {([['رابط الويب', newInvite?.webLink], ['رابط التطبيق', newInvite?.appLink]] as const).map(([label, link]) => <View key={label} style={{ backgroundColor: color.background, borderColor: color.border, borderWidth: 1, borderRadius: 14, padding: 12, gap: 4 }}><Text style={{ color: color.muted, fontSize: 12, fontWeight: '800', textAlign: 'right' }}>{label}</Text><Text selectable style={{ color: color.text, fontSize: 12, lineHeight: 19, textAlign: 'left', writingDirection: 'ltr' }}>{link}</Text></View>)}
-          <Pressable onPress={() => void shareInvite()} accessibilityRole="button" style={{ minHeight: 52, borderRadius: 16, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 16, fontWeight: '900' }}>مشاركة الدعوة</Text></Pressable>
-          <Pressable onPress={() => setNewInvite(null)} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: color.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.text, fontSize: 14.5, fontWeight: '800' }}>تم</Text></Pressable>
-        </View>
-      </View>
-    </Modal>
   </AdminTabShell>;
 }
 
@@ -2341,6 +2294,67 @@ function AdminReportsTab({ userId, active, onBadge, onOpenOrder }: { userId: str
   </AdminTabShell>;
 }
 
+function AdminInvitesSection() {
+  const insets = useSafeAreaInsets();
+  const { colors: color } = useMobileTheme();
+  const online = useInternetAvailable();
+  const [, setMessage] = useToastMessage();
+  const [invites, setInvites] = useState<AdminInviteRow[]>([]);
+  const [newInvite, setNewInvite] = useState<{ webLink: string; appLink: string; token: string } | null>(null);
+  const [creating, setCreating] = useState(false);
+  const load = useCallback(async () => {
+    if (!supabase) return;
+    const { data, error } = await supabase.from('driver_invites').select('id,expires_at,redeemed_at,revoked_at,created_at').order('created_at', { ascending: false }).limit(30);
+    if (!error) setInvites(data ?? []);
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 60 * 1000); return () => clearInterval(timer); }, []);
+  const activeInvites = invites.filter((invite) => !invite.redeemed_at && !invite.revoked_at && Date.parse(invite.expires_at) > now);
+  const createInvite = async () => {
+    if (!supabase || creating) return;
+    setCreating(true);
+    const { data, error } = await supabase.rpc('admin_create_driver_invite');
+    setCreating(false);
+    if (error || !data) { setMessage('ما قدرنا ننشئ الدعوة. جرّب مرة ثانية.'); return; }
+    const base = (process.env.EXPO_PUBLIC_APP_URL?.trim() || 'https://labbayk.expo.app').replace(/\/+$/, '');
+    setNewInvite({ token: data, webLink: `${base}/?invite=${data}`, appLink: `labbayk:///?invite=${data}` });
+    await load();
+  };
+  const shareInvite = async () => {
+    if (!newInvite) return;
+    try { await Share.share({ message: `دعوة للانضمام لفريق سائقي لَبّيك.\n\nرابط الويب (بيشتغل على أي جهاز):\n${newInvite.webLink}\n\nرابط التطبيق (إذا منزّله):\n${newInvite.appLink}\n\nأو الصق هالرمز بالتطبيق:\n${newInvite.token}` }); } catch { setMessage('ما قدرنا نفتح المشاركة. انسخ الرابط يدوياً.'); }
+  };
+  const revokeInvite = async (id: string) => {
+    if (!supabase) return;
+    if (!(await confirmAction('إلغاء الدعوة؟', 'الرابط ما رح يشتغل بعد هلأ.', 'إلغاء الدعوة'))) return;
+    const { error } = await supabase.from('driver_invites').update({ revoked_at: new Date().toISOString() }).eq('id', id);
+    if (error) { setMessage('ما قدرنا نلغي الدعوة.'); return; }
+    setMessage('تم إلغاء رابط الدعوة.'); await load();
+  };
+  return <>
+    <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>دعوات السائقين</Text>
+    <Pressable disabled={creating || !online} onPress={() => void createInvite()} accessibilityRole="button" style={{ minHeight: 52, borderRadius: 16, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', opacity: creating || !online ? 0.55 : 1 }}><Text style={{ color: color.background, fontSize: 15.5, fontWeight: '900' }}>{creating ? 'لحظة…' : '＋ دعوة سائق جديد'}</Text></Pressable>
+    {activeInvites.length ? <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12, gap: 8 }}>
+      <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>دعوات فعّالة · {activeInvites.length}</Text>
+      {activeInvites.map((invite) => <View key={invite.id} style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}><Text style={{ color: color.text, fontSize: 13.5, textAlign: 'right', flex: 1 }}>أُنشئت {timeAgo(invite.created_at)} · بتنتهي بعد {Math.max(1, Math.ceil((Date.parse(invite.expires_at) - now) / 86400000))} يوم</Text><Pressable onPress={() => void revokeInvite(invite.id)} accessibilityRole="button" accessibilityLabel="إلغاء الدعوة" style={{ minHeight: 36, paddingHorizontal: 12, borderRadius: 11, borderWidth: 1, borderColor: adminTone.bad.fg, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: adminTone.bad.fg, fontSize: 12.5, fontWeight: '900' }}>إلغاء</Text></Pressable></View>)}
+    </View> : null}
+    <Modal visible={!!newInvite} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => setNewInvite(null)}>
+      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' }} onPress={() => setNewInvite(null)} accessibilityRole="button" accessibilityLabel="إغلاق" />
+        <View style={{ backgroundColor: color.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderTopWidth: 1, borderColor: color.border, padding: 16, paddingBottom: 26 + insets.bottom, gap: 10 }}>
+          <View style={{ alignSelf: 'center', width: 42, height: 4, borderRadius: 2, backgroundColor: color.border }} />
+          <Text style={{ color: color.text, fontSize: 19, fontWeight: '900', textAlign: 'right' }}>دعوة سائق جاهزة</Text>
+          <Text style={{ color: color.muted, fontSize: 13.5, lineHeight: 22, textAlign: 'right' }}>أرسل الرابط للسائق. بيفتحه وبيسجّل دخوله وبيصير سائق مباشرة بدون مراجعة. الرابط لمرة وحدة وبينتهي بعد 7 أيام. ما رح تقدر تشوفه مرة ثانية بعد ما تسكّر هالشاشة.</Text>
+          {([['رابط الويب', newInvite?.webLink], ['رابط التطبيق', newInvite?.appLink]] as const).map(([label, link]) => <View key={label} style={{ backgroundColor: color.background, borderColor: color.border, borderWidth: 1, borderRadius: 14, padding: 12, gap: 4 }}><Text style={{ color: color.muted, fontSize: 12, fontWeight: '800', textAlign: 'right' }}>{label}</Text><Text selectable style={{ color: color.text, fontSize: 12, lineHeight: 19, textAlign: 'left', writingDirection: 'ltr' }}>{link}</Text></View>)}
+          <Pressable onPress={() => void shareInvite()} accessibilityRole="button" style={{ minHeight: 52, borderRadius: 16, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 16, fontWeight: '900' }}>مشاركة الدعوة</Text></Pressable>
+          <Pressable onPress={() => setNewInvite(null)} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: color.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.text, fontSize: 14.5, fontWeight: '800' }}>تم</Text></Pressable>
+        </View>
+      </View>
+    </Modal>
+  </>;
+}
+
 function AdminMoreTab({ email, theme, onToggleTheme, onSignOut }: { email: string; theme: 'dark' | 'light'; onToggleTheme: () => void; onSignOut: () => void }) {
   const { colors: color } = useMobileTheme();
   const webOnly = ['التسعير ونسبة العمولة', 'المستخدمون وإيقاف الحسابات', 'مناطق الخدمة', 'التنبيهات'];
@@ -2351,6 +2365,7 @@ function AdminMoreTab({ email, theme, onToggleTheme, onSignOut }: { email: strin
   const box = { backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 20, overflow: 'hidden' } as const;
   return <AdminTabShell title="المزيد" subtitle="الحساب والمظهر وباقي الأقسام">
     <View style={[box, { padding: 14, flexDirection: 'row-reverse', alignItems: 'center', gap: 12 }]}><View style={{ width: 46, height: 46, borderRadius: 23, backgroundColor: color.raised, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 18, fontWeight: '900' }}>م</Text></View><View style={{ flex: 1 }}><Text style={{ color: color.text, fontSize: 16, fontWeight: '900', textAlign: 'right' }}>مدير لَبّيك</Text><Text selectable style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>{email}</Text></View></View>
+    <AdminInvitesSection />
     <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>التطبيق</Text>
     <View style={box}>
       {row('المظهر', theme === 'dark' ? 'داكن · اضغط للتبديل' : 'فاتح · اضغط للتبديل', onToggleTheme)}
