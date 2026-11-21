@@ -426,7 +426,7 @@ function PricingPanel() {
   const saveCommission = async (event: FormEvent) => {
     event.preventDefault(); if (!supabase) return
     const rate=Number(commissionRate); const basisPoints=Math.round(rate*100)
-    if (!Number.isFinite(rate) || basisPoints < 0 || basisPoints > 5000 || Math.abs(rate*100-basisPoints) > 0.001 || commissionReason.trim().length < 5) { setMessage('أدخل نسبة من 0 إلى 50% بخطوتين عشريتين كحد أقصى وسبباً واضحاً.'); return }
+    if (!Number.isFinite(rate) || basisPoints < 0 || basisPoints > 6000 || Math.abs(rate*100-basisPoints) > 0.001 || commissionReason.trim().length < 5) { setMessage('أدخل نسبة من 0 إلى 60% بخطوتين عشريتين كحد أقصى وسبباً واضحاً.'); return }
     setBusy('commission'); setMessage('')
     const { error } = await supabase.rpc('set_commission_rate',{p_rate_basis_points:basisPoints,p_reason:commissionReason.trim()})
     setBusy('')
