@@ -2,6 +2,7 @@ import type { Database } from '@labbayk/shared/database.types';
 import { getOfflineItem, removeOfflineItem, setOfflineItem } from './offline-storage';
 
 type DriverOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'address_id'> & {
+  budget_ceiling_minor?: Database['public']['Tables']['orders']['Row']['budget_ceiling_minor'];
   address: Pick<Database['public']['Tables']['addresses']['Row'], 'id'|'label'|'street'|'city'|'neighborhood'|'contact_phone'|'building'|'landmark'> | null;
 };
 export type DriverOrdersSnapshot = { schemaVersion: 1; orders: DriverOrder[]; syncedAt: string };
@@ -18,7 +19,7 @@ export const saveDriverOrdersSnapshot = (userId: string, orders: DriverOrder[]) 
   const snapshot: DriverOrdersSnapshot = {
     schemaVersion: 1,
     syncedAt: new Date().toISOString(),
-    orders: orders.filter((order) => activeStatuses.has(order.status)).slice(0, 20).map((order) => ({ ...order, request_text: '', address_id: null, address: null, delivery_fee_minor: 0, purchase_amount_minor: null, purchase_approved_at: null })),
+    orders: orders.filter((order) => activeStatuses.has(order.status)).slice(0, 20).map((order) => ({ ...order, request_text: '', address_id: null, address: null, budget_ceiling_minor: 0, delivery_fee_minor: 0, purchase_amount_minor: null, purchase_approved_at: null })),
   };
   await setOfflineItem(key(userId), JSON.stringify(snapshot));
   return snapshot;
@@ -44,9 +45,9 @@ export const loadDriverOrdersSnapshot = (userId: string) => enqueue(async (): Pr
       && Number.isSafeInteger(order.delivery_fee_minor)
       && (order.purchase_amount_minor === null || Number.isSafeInteger(order.purchase_amount_minor))
       && (order.purchase_approved_at === null || typeof order.purchase_approved_at === 'string'));
-    const sanitized = orders.slice(0, 20).map((order) => ({ ...order, request_text: '', address_id: null, address: null, delivery_fee_minor: 0, purchase_amount_minor: null, purchase_approved_at: null }));
+    const sanitized = orders.slice(0, 20).map((order) => ({ ...order, request_text: '', address_id: null, address: null, budget_ceiling_minor: 0, delivery_fee_minor: 0, purchase_amount_minor: null, purchase_approved_at: null }));
     const result: DriverOrdersSnapshot = { schemaVersion: 1, orders: sanitized, syncedAt: new Date(syncedAt).toISOString() };
-    const hadSensitiveFields = snapshot.schemaVersion !== 1 || orders.some((order) => order.request_text !== '' || order.address_id !== null || order.address !== null || order.delivery_fee_minor !== 0 || order.purchase_amount_minor !== null || order.purchase_approved_at !== null);
+    const hadSensitiveFields = snapshot.schemaVersion !== 1 || orders.some((order) => order.request_text !== '' || order.address_id !== null || order.address !== null || order.budget_ceiling_minor !== 0 || order.delivery_fee_minor !== 0 || order.purchase_amount_minor !== null || order.purchase_approved_at !== null);
     if (hadSensitiveFields) await setOfflineItem(key(userId), JSON.stringify(result));
     return result;
   } catch {

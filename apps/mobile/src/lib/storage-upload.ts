@@ -13,7 +13,8 @@ export async function uploadWithProgress(options: {
   onProgress?: (fraction: number) => void;
   timeoutMs?: number;
 }): Promise<void> {
-  if (!supabase || !supabaseUrl || !supabasePublishableKey) throw new Error('Storage is not configured');
+  const apiKey = supabasePublishableKey;
+  if (!supabase || !supabaseUrl || !apiKey) throw new Error('Storage is not configured');
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error('Not signed in');
@@ -22,7 +23,7 @@ export async function uploadWithProgress(options: {
     const request = new XMLHttpRequest();
     request.open('POST', target);
     request.setRequestHeader('Authorization', `Bearer ${token}`);
-    request.setRequestHeader('apikey', supabasePublishableKey);
+    request.setRequestHeader('apikey', apiKey);
     request.setRequestHeader('Content-Type', options.contentType);
     request.setRequestHeader('Cache-Control', 'max-age=3600');
     request.setRequestHeader('x-upsert', 'false');

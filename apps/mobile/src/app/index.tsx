@@ -294,10 +294,7 @@ function AddressBook({ userId, onBack, backLabel, onAddressSaved }: { userId: st
   const [manualCity, setManualCity] = useState('');
   const [manualNeighborhood, setManualNeighborhood] = useState('');
   const [label, setLabel] = useState('');
-  const [street, setStreet] = useState('');
   const [landmark, setLandmark] = useState('');
-  const [building, setBuilding] = useState('');
-  const [floor, setFloor] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [editingAddress, setEditingAddress] = useState<Address | null>(null);
   const editingAddressRef = useRef<Address | null>(null);
@@ -310,8 +307,8 @@ function AddressBook({ userId, onBack, backLabel, onAddressSaved }: { userId: st
     editingAddressRef.current = address;
     setEditingAddress(address);
     setManualGovernorate(address.governorate.toLowerCase().includes('ريف') || address.governorate.toLowerCase().includes('rif') ? 'ريف دمشق' : 'دمشق');
-    setManualCity(address.city); setManualNeighborhood(address.neighborhood); setLabel(address.label); setStreet(address.street ?? '');
-    setLandmark(address.landmark ?? ''); setBuilding(address.building ?? ''); setFloor(address.floor ?? ''); setContactPhone(address.contact_phone);
+    setManualCity(address.city); setManualNeighborhood(address.neighborhood); setLabel(address.label);
+    setLandmark(address.landmark ?? ''); setContactPhone(address.contact_phone);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -875,15 +872,21 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   }, [online, userId, setMessage]);
   // One scheduler: realtime bursts collapse into one reload, and a reload requested while another is
   // running waits for it instead of racing it (two overlapping reloads used to fight over the lists).
-  const scheduler = useMemo(() => createRefreshScheduler(refresh, 300), [refresh]);
-  useEffect(() => () => scheduler.cancel(), [scheduler]);
-  const scheduleRefresh = scheduler.schedule;
-  const refreshNow = scheduler.now;
+  const refreshRef = useRef(refresh);
+  useEffect(() => { refreshRef.current = refresh; }, [refresh]);
+  const schedulerRef = useRef<ReturnType<typeof createRefreshScheduler> | null>(null);
+  useEffect(() => {
+    const scheduler = createRefreshScheduler(() => refreshRef.current(), 300);
+    schedulerRef.current = scheduler;
+    return () => { scheduler.cancel(); if (schedulerRef.current === scheduler) schedulerRef.current = null; };
+  }, []);
+  const scheduleRefresh = useCallback(() => schedulerRef.current?.schedule(), []);
+  const refreshNow = useCallback(() => schedulerRef.current?.now() ?? Promise.resolve(), []);
   // Initial load and realtime refresh are server synchronization, not derived render state.
-  useEffect(() => { setLoading(true); void refreshNow(); }, [refreshNow]);
+  useEffect(() => { void refreshNow(); }, [refreshNow]);
   // Switching between home and orders reuses loaded data; realtime keeps it current.
   // Only data older than 30 s is refreshed, quietly in the background.
-  useEffect(() => { const last = driverLastSync.get(userId) ?? 0; if (last && Date.now() - last > 30 * 1000) scheduleRefresh(); }, [screen]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const last = driverLastSync.get(userId) ?? 0; if (last && Date.now() - last > 30 * 1000) scheduleRefresh(); }, [screen, userId, scheduleRefresh]);
   const loadHistory = useCallback(async () => {
     if (!supabase || (!online && !forceNetworkRefresh.current)) return;
     // Cash and note columns come with the main query; addresses follow in one more request.
@@ -937,7 +940,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       if (state === 'active' && Date.now() - (driverLastSync.get(userId) ?? 0) > 30 * 1000) scheduleRefresh();
     });
     return () => subscription.remove();
-  }, [scheduleRefresh]);
+  }, [scheduleRefresh, userId]);
   const patchOrder = (orderId: string, changes: Partial<DriverActiveOrder>) => setActiveOrders((current) => current.map((order) => order.id === orderId ? { ...order, ...changes } : order));
   const [pendingAction, setPendingAction] = useState('');
   const setAvailability = async (is_online: boolean) => {
@@ -1095,7 +1098,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       <View style={{ backgroundColor: c.surface, borderColor: '#3F6A2E', borderWidth: 1, borderRadius: 20, padding: 12, gap: 9 }}>
         <Text style={{ color: c.muted, fontSize: 13, fontWeight: '800', textAlign: 'right' }}>{historyPeriod === 'today' ? '📅 اليوم' : historyPeriod === 'week' ? '📅 آخر 7 أيام' : '📅 كل الطلبات'}</Text>
         <View style={{ flexDirection: 'row-reverse' }}>
-          {([['طلبات', String(rows.length), false], ['أجرتك', numberFormatter.format(fees), true], ...(knownCash.length ? [['المحصَّل', numberFormatter.format(cashTotal), false]] as const : [])] as const).map(([label, value, strong], index) => <View key={label} style={{ flex: 1, alignItems: 'center', borderRightWidth: index ? 1 : 0, borderRightColor: c.border }}><Text style={{ color: c.muted, fontSize: 11 }}>{label}</Text><Text style={{ color: strong ? c.primary : c.text, fontSize: 16.5, fontWeight: '900' }}>{value}</Text></View>)}
+          {([['طلبات', String(rows.length), false], ['أجرة التوصيل', numberFormatter.format(fees), true], ...(knownCash.length ? [['المحصَّل', numberFormatter.format(cashTotal), false]] as const : [])] as const).map(([label, value, strong], index) => <View key={label} style={{ flex: 1, alignItems: 'center', borderRightWidth: index ? 1 : 0, borderRightColor: c.border }}><Text style={{ color: c.muted, fontSize: 11 }}>{label}</Text><Text style={{ color: strong ? c.primary : c.text, fontSize: 16.5, fontWeight: '900' }}>{value}</Text></View>)}
         </View>
       </View>
       <View style={{ flexDirection: 'row-reverse', gap: 7 }}>
@@ -1161,7 +1164,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
         {addr ? <><Text style={{ color: c.text, fontSize: 15, fontWeight: '900', textAlign: 'right' }}>{addr.label}</Text><Text style={{ color: c.muted, fontSize: 13, lineHeight: 21, textAlign: 'right' }}>{addr.neighborhood}، {addr.city} · {[addr.street, addr.building ? 'بناء ' + addr.building : '', addr.landmark].filter(Boolean).join(' · ')}</Text></> : <Text style={{ color: c.muted, fontSize: 13, textAlign: 'right' }}>—</Text>}
       </View>
       <View style={{ flexDirection: 'row-reverse', backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 14, paddingVertical: 7, paddingHorizontal: 6 }}>
-        <View style={{ flex: 1, alignItems: 'center' }}><Text style={{ color: c.muted, fontSize: 10.5, fontWeight: '700' }}>أجرتك</Text><Text style={{ color: c.primary, fontSize: 13.5, fontWeight: '900', marginTop: 1 }}>{numberFormatter.format(order.delivery_fee_minor)}</Text></View>
+        <View style={{ flex: 1, alignItems: 'center' }}><Text style={{ color: c.muted, fontSize: 10.5, fontWeight: '700' }}>أجرة التوصيل</Text><Text style={{ color: c.primary, fontSize: 13.5, fontWeight: '900', marginTop: 1 }}>{numberFormatter.format(order.delivery_fee_minor)}</Text></View>
       </View>
       <View style={{ minHeight: 54, borderRadius: 18, borderWidth: 1.5, borderStyle: 'dashed', borderColor: c.border, backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: c.muted, fontSize: 15, fontWeight: '900' }}>⏳ بانتظار فريق لَبّيك</Text></View>
     </View>;
@@ -1197,7 +1200,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
         </> : <Text style={{ color: c.muted, fontSize: 13, textAlign: 'right' }}>{operationsAreStale ? 'يظهر العنوان عند رجوع الاتصال.' : 'عم نحمل العنوان…'}</Text>}
       </View>
       <View style={{ flexDirection: 'row-reverse', backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 14, paddingVertical: 7, paddingHorizontal: 6 }}>
-        {([...(order.purchase_amount_minor !== null && ['purchased', 'delivering'].includes(order.status) ? [['مشتريات دفعتها', numberFormatter.format(order.purchase_amount_minor), false]] as const : []), ['أجرتك', numberFormatter.format(order.delivery_fee_minor), true]] as const).map(([label, value, strong], index) => <View key={label} style={{ flex: 1, alignItems: 'center', borderRightWidth: index ? 1 : 0, borderRightColor: c.border }}><Text style={{ color: c.muted, fontSize: 10.5, fontWeight: '700' }}>{label}</Text><Text style={{ color: strong ? c.primary : c.text, fontSize: 13.5, fontWeight: '900', marginTop: 1 }}>{value}</Text></View>)}
+        {([...(order.purchase_amount_minor !== null && ['purchased', 'delivering'].includes(order.status) ? [['مشتريات دفعتها', numberFormatter.format(order.purchase_amount_minor), false]] as const : []), ['أجرة التوصيل', numberFormatter.format(order.delivery_fee_minor), true]] as const).map(([label, value, strong], index) => <View key={label} style={{ flex: 1, alignItems: 'center', borderRightWidth: index ? 1 : 0, borderRightColor: c.border }}><Text style={{ color: c.muted, fontSize: 10.5, fontWeight: '700' }}>{label}</Text><Text style={{ color: strong ? c.primary : c.text, fontSize: 13.5, fontWeight: '900', marginTop: 1 }}>{value}</Text></View>)}
       </View>
       {['purchased', 'delivering'].includes(order.status) && order.purchase_amount_minor !== null && <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#B7FF30', borderRadius: 13, paddingHorizontal: 13, minHeight: 40 }}><Text style={{ color: '#0B1411', fontSize: 12.5, fontWeight: '800' }}>المطلوب تحصيله من الزبون</Text><Text style={{ color: '#0B1411', fontSize: 16, fontWeight: '900' }}>{numberFormatter.format(order.purchase_amount_minor + order.delivery_fee_minor)} ل.س</Text></View>}
       <Pressable onPress={() => setImagesOpen((current) => ({ ...current, [order.id]: !current[order.id] }))} accessibilityRole="button" accessibilityState={{ expanded: !!imagesOpen[order.id] }} style={{ minHeight: 46, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 13, borderRadius: 15, borderWidth: 1.5, borderColor: c.border, backgroundColor: c.surface }}><Text style={{ color: c.text, fontSize: 13.5, fontWeight: '800' }}>📷 صور الطلب</Text><Text style={{ color: c.primary, fontSize: 12.5, fontWeight: '900' }}>{imagesOpen[order.id] ? 'إخفاء ⌃' : 'عرض ⌄'}</Text></Pressable>
@@ -1214,6 +1217,10 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       <SupportIssueForm orderId={order.id} status={order.status} disabled={operationsAreStale} userId={userId} />
     </View>;
   };
+  const live = offers.find((offer) => offer.id !== dismissedOfferId);
+  const open = isActive && !!live && profile.is_online && online && !pageLoading;
+  const can = !(busy || !profile.is_online || !online || operationsAreStale || !live?.order.address);
+  const closeSheet = () => setDismissedOfferId(live?.id ?? null);
   return <View style={[s.driverPanel,s.driverHomePanel]}>{false&&<View style={s.driverPanelTop}><View><Text style={s.driverApplyTitle}>{screen==='home'?'استقبال الطلبات':'قائمة التوصيل'}</Text><Text style={s.driverApplyCopy}>{screen==='home'?'بدّل حالتك من هون لتبدأ أو توقف استقبال العروض.':'شوف العروض الجديدة أو تابع طلباتك النشطة.'}</Text></View><Pressable disabled={busy || refreshing} onPress={() => void manualRefresh()} style={s.driverRefresh} accessibilityRole="button" accessibilityLabel="تحديث طلبات السائق"><Text style={s.driverRefreshGlyph}>↻</Text></Pressable></View>}
       {operationsAreStale && !pageLoading && <Text style={s.driverAvailabilityOffline}>{ordersSyncedAt ? 'عم نعرض آخر نسخة محفوظة (' + shortDateTimeFormatter.format(new Date(ordersSyncedAt)) + '). العناوين والمبالغ بتظهر لما يرجع النت.' : 'عم نحاول نوصل للخدمة. العروض الجديدة رح توصلك أول ما يرجع الاتصال.'}</Text>}
     {pageLoading ? <DriverOperationsSkeleton screen={screen}/> : <StaggeredSections transitionKey={`${screen}-ready`}><>
@@ -1252,7 +1259,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     </View><View style={orderSection === 'active' ? undefined : s.hidden}>{!!activeOrders.length && <>{activeOrders.map(renderActiveOrder)}</>}
     {!activeOrders.length && <View style={s.noOffers}><View style={s.emptyIconWrap}><SymbolView name={{ios:'shippingbox.fill',android:'local_shipping',web:'local_shipping'}} tintColor={c.primary} size={26}/></View><Text style={s.noOffersTitle}>ما عندك طلبات نشطة</Text><Text style={s.noOffersCopy}>بعد قبول عرض، تفاصيله وخطوات التوصيل بتظهر هون.</Text></View>}</View><View style={orderSection === 'history' ? undefined : s.hidden}>{renderHistory()}</View></>}
     </></StaggeredSections>}
-    {screen==='home'&&(()=>{const live=offers.find(o=>o.id!==dismissedOfferId);const open=isActive&&!!live&&profile.is_online&&online&&!pageLoading;const can=!(busy||!profile.is_online||!online||operationsAreStale||!live?.order.address);const closeSheet=()=>setDismissedOfferId(live?.id??null);return <Modal visible={open} transparent animationType="slide" onRequestClose={closeSheet}>
+    {screen==='home'&&<Modal visible={open} transparent animationType="slide" onRequestClose={closeSheet}>
       <Pressable style={s.sheetBackdrop} onPress={closeSheet} accessibilityLabel="إغلاق"><Pressable style={s.sheet} onPress={()=>{}}>
         {live&&<>
         <View style={s.sheetHandle}/>
@@ -1268,7 +1275,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
           <OrderImageGallery orderId={live.order.id} defaultOpen/>
           <View style={s.liveDivider}/>
           <View style={s.liveStats}><Text style={s.liveStat}>الأجرة: <Text style={s.liveStatValue}>{numberFormatter.format(live.order.delivery_fee_minor)} ل.س</Text></Text></View>
-          <Pressable disabled={!can} onPress={()=>void accept(live.id)} style={[s.liveAccept,!can&&s.disabled]} accessibilityRole="button"><Text style={s.liveAcceptText}>{pendingAction===`accept-${live.id}`?'لحظة… عم نثبّت القبول':'قبول العرض الآن'}</Text></Pressable>
+          <Pressable disabled={!can} onPress={() => void accept(live.id)} style={[s.liveAccept,!can&&s.disabled]} accessibilityRole="button"><Text style={s.liveAcceptText}>{pendingAction===`accept-${live.id}`?'لحظة… عم نثبّت القبول':'قبول العرض الآن'}</Text></Pressable>
         </View>
         <View style={s.offerActions}>
           <Pressable onPress={()=>{setDismissedOfferId(live.id);setOrderSection('offers');onOpenOrders()}} style={s.liveSecondary} accessibilityRole="button"><Text style={s.liveSecondaryText}>عرض كل الطلبات</Text></Pressable>
@@ -1276,7 +1283,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
         </View>
         </>}
       </Pressable></Pressable>
-    </Modal>})()}
+    </Modal>}
     {screen==='home'&&<Modal visible={balanceOpen&&isActive} transparent animationType="slide" onRequestClose={()=>setBalanceOpen(false)}>
       <Pressable style={s.sheetBackdrop} onPress={()=>setBalanceOpen(false)} accessibilityLabel="إغلاق"><Pressable style={s.sheet} onPress={()=>{}}>
         <View style={s.sheetHandle}/>
@@ -1727,7 +1734,8 @@ function FilterSheet({ title, options, value, onSelect, onClose }: { title: stri
 function CancelReasonSheet({ target, busy, warning, onClose, onConfirm }: { target: { id: string; label: string } | null; busy: boolean; warning?: string; onClose: () => void; onConfirm: (reason: string) => void }) {
   const [reason, setReason] = useState('');
   const [focused, setFocused] = useState(false);
-  useEffect(() => { if (target) setReason(''); }, [target?.id]);
+  const targetId = target?.id;
+  useEffect(() => { if (targetId) setReason(''); }, [targetId]);
   const ready = reason.trim().length >= 5;
   return <Modal visible={!!target} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => { if (!busy) onClose(); }}>
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -2172,10 +2180,7 @@ function AdminMoneyTab({ userId, active, onBadge, onOpenOrder }: { userId: strin
       const orderIds = [...new Set(rows.flatMap((row) => row.order_id ? [row.order_id] : []))];
       const details: Record<string, AdminLedgerDetail> = {};
       if (orderIds.length) {
-        const [settlementResult, orderResult] = await Promise.all([
-          supabase!.from('cash_settlements').select('order_id,purchase_amount_minor,delivery_fee_minor,commission_rate_basis_points,commission_amount_minor,cash_collected_minor,created_at').in('order_id', orderIds).order('created_at', { ascending: false }),
-          supabase!.from('orders').select('id').in('id', orderIds),
-        ]);
+        const settlementResult = await supabase!.from('cash_settlements').select('order_id,purchase_amount_minor,delivery_fee_minor,commission_rate_basis_points,commission_amount_minor,cash_collected_minor,created_at').in('order_id', orderIds).order('created_at', { ascending: false });
         for (const id of orderIds) details[id] = { purchase: null, fee: null, rate: null, commission: null, collected: null };
         // The newest settlement of an order is the one in force (older ones were reversed).
         const seen = new Set<string>();
@@ -2631,11 +2636,11 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   // only the ones whose time has not passed count as waiting for an answer.
   const [clock, setClock] = useState(() => Date.now());
   useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 30 * 1000); return () => clearInterval(timer); }, []);
-  const liveOffers = (orderId: string) => (pending[orderId] ?? []).filter((offer) => Date.parse(offer.expires_at) > clock);
+  const liveOffers = useCallback((orderId: string) => (pending[orderId] ?? []).filter((offer) => Date.parse(offer.expires_at) > clock), [pending, clock]);
   // 10 minutes after the order was sent with nobody left who can still answer: it needs the admin.
-  const noResponse = (order: AdminMobileOrder) => order.status === 'searching' && !order.driver_id && !!order.delivery_quote_set_at
-    && clock - Date.parse(order.delivery_quote_set_at) >= 10 * 60 * 1000 && liveOffers(order.id).length === 0;
-  const groupOf = (order: AdminMobileOrder) => openDisputes[order.id] ? 'action' : order.status === 'searching' && ((declines[order.id]?.length ?? 0) > 0 || noResponse(order)) ? 'action' : adminStatusGroup(order.status);
+  const noResponse = useCallback((order: AdminMobileOrder) => order.status === 'searching' && !order.driver_id && !!order.delivery_quote_set_at
+    && clock - Date.parse(order.delivery_quote_set_at) >= 10 * 60 * 1000 && liveOffers(order.id).length === 0, [clock, liveOffers]);
+  const groupOf = useCallback((order: AdminMobileOrder) => openDisputes[order.id] ? 'action' : order.status === 'searching' && ((declines[order.id]?.length ?? 0) > 0 || noResponse(order)) ? 'action' : adminStatusGroup(order.status), [openDisputes, declines, noResponse]);
   const statusLabel = (order: AdminMobileOrder) => noResponse(order) ? 'ما حدا رد على الطلب' : order.status === 'searching' && liveOffers(order.id).length === 1 ? 'بانتظار رد السائق' : (orderStatus[order.status] ?? order.status);
   const nameOf = (id: string | null) => id ? (names[id] ?? '#' + id.slice(0, 6)) : '—';
   // Customers who never set a name only have an email on file: show their phone number instead, which is
@@ -2651,16 +2656,16 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
     const result: Record<string, number> = { all: orders.length, action: 0, searching: 0, active: 0, done: 0 };
     for (const order of orders) { const group = groupOf(order); if (group in result) result[group] += 1; }
     return result;
-  }, [orders, declines, pending, openDisputes, clock]);
+  }, [orders, groupOf]);
   const list = useMemo(() => {
     const term = search.trim().toLowerCase();
     const matchesStatus = (order: AdminMobileOrder) => { const group = groupOf(order); return filter === 'all' || (filter === 'action' ? group === 'action' : filter === 'active' ? group === 'active' || group === 'searching' : filter === 'done' ? adminStatusGroup(order.status) === 'done' : order.status === 'cancelled'); };
     return orders.filter((order) => matchesStatus(order) && (!filterDriver || order.driver_id === filterDriver) && inAdminPeriod(order.created_at, filterPeriod) && (!term || order.id.toLowerCase().includes(term) || order.request_text.toLowerCase().includes(term) || (names[order.customer_id ?? ''] ?? '').toLowerCase().includes(term)));
-  }, [orders, filter, filterDriver, filterPeriod, search, names, declines, pending, clock]);
+  }, [orders, filter, filterDriver, filterPeriod, search, names, groupOf]);
   const driverCounts = useMemo(() => { const map: Record<string, number> = {}; for (const order of orders) if (order.driver_id) map[order.driver_id] = (map[order.driver_id] ?? 0) + 1; return map; }, [orders]);
-  const isFinished = (order: AdminMobileOrder) => (adminStatusGroup(order.status) === 'done' || order.status === 'cancelled') && !openDisputes[order.id] && order.status !== 'disputed';
-  const activeList = useMemo(() => list.filter((order) => !isFinished(order)), [list, openDisputes]);
-  const finishedList = useMemo(() => list.filter((order) => isFinished(order)), [list, openDisputes]);
+  const isFinished = useCallback((order: AdminMobileOrder) => (adminStatusGroup(order.status) === 'done' || order.status === 'cancelled') && !openDisputes[order.id] && order.status !== 'disputed', [openDisputes]);
+  const activeList = useMemo(() => list.filter((order) => !isFinished(order)), [list, isFinished]);
+  const finishedList = useMemo(() => list.filter((order) => isFinished(order)), [list, isFinished]);
 
   useEffect(() => { onBadge('orders', counts.action); }, [counts.action, onBadge]);
   useEffect(() => { if (counts.action === 0 && filter === 'action') setFilter('all'); }, [counts.action, filter]);
@@ -2673,15 +2678,15 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
     if (group === 'active') return { bg: '#26391C', fg: color.primary === '#343A32' ? '#385616' : '#B7FF30' };
     return { bg: color.raised, fg: color.muted };
   };
-  const openSheet = (order: AdminMobileOrder) => {
+  const openSheet = useCallback((order: AdminMobileOrder) => {
     setFee(order.delivery_quote_set_at ? String(order.delivery_fee_minor) : ''); setReason(''); setMode('all'); setDriverId(''); setPricingOpen(false); setSheet(order);
-  };
+  }, []);
   useEffect(() => { onDetail(!!sheet); }, [sheet, onDetail]);
   useEffect(() => {
     if (!focusOrderId) return;
     const target = orders.find((order) => order.id === focusOrderId);
     if (target) { openSheet(target); onFocusHandled(); }
-  }, [focusOrderId, orders]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [focusOrderId, orders, openSheet, onFocusHandled]);
   useEffect(() => {
     setDispute(null); setResolution('');
     if (!sheet || !(sheet.status === 'disputed' || openDisputes[sheet.id]) || !supabase) return;
@@ -3009,17 +3014,17 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   const [draftSaveError, setDraftSaveError] = useState(false);
   const [tabScale] = useState(() => new Animated.Value(1));
   const [activeTabAnimation, setActiveTabAnimation] = useState('home');
-  const navigate = (nextTab: string) => {
+  const navigate = useCallback((nextTab: string) => {
     if (nextTab !== 'orders') setNotificationOrderId(null);
     if (nextTab !== tab) setTabHistory((history) => [...history, tab]);
     setTab(nextTab);
     setActiveTabAnimation(nextTab);
     tabScale.setValue(0.82);
     Animated.spring(tabScale, { toValue: 1, useNativeDriver: true, speed: 22, bounciness: 7 }).start();
-  };
+  }, [tab, tabScale]);
   useEffect(() => {
     if (openOrderId) navigate('orders');
-  }, [openOrderId]);
+  }, [openOrderId, navigate]);
   const goBack = () => {
     const previous = tabHistory[tabHistory.length - 1] ?? 'home';
     setTabHistory((history) => history.slice(0, -1));

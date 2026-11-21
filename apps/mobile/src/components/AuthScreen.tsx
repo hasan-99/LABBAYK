@@ -51,18 +51,17 @@ export function PasswordRecoveryScreen({ onDone, theme }: { onDone: () => void; 
   const passwordRef = useRef<TextInputInstance>(null);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useToastMessage();
+  const [, setMessage] = useToastMessage();
   const showToast = useAppToast();
-  const [messageError, setMessageError] = useState(false);
   const save = async () => {
     if (!supabase) return;
-    if (password.length < 8) { setMessageError(true); setMessage('كلمة السر لازم تكون 8 أحرف على الأقل.'); return; }
-    setBusy(true); setMessage(''); setMessageError(false);
+    if (password.length < 8) { setMessage('كلمة السر لازم تكون 8 أحرف على الأقل.'); return; }
+    setBusy(true); setMessage('');
     try {
       const { error } = await supabase.auth.updateUser({ password });
-      if (error) { setMessageError(true); setMessage('ما قدرنا نحدّث كلمة السر. اطلب رمز استعادة جديد.'); return; }
+      if (error) { setMessage('ما قدرنا نحدّث كلمة السر. اطلب رمز استعادة جديد.'); return; }
       showToast('تم تغيير كلمة السر.', 'success'); onDone();
-    } catch { setMessageError(true); setMessage('تعذر الاتصال. تحقق من الإنترنت وحاول مرة ثانية.'); }
+    } catch { setMessage('تعذر الاتصال. تحقق من الإنترنت وحاول مرة ثانية.'); }
     finally { setBusy(false); }
   };
   return <SafeAreaView style={s.safe}><KeyboardAvoidingView style={s.keyboardAvoid} behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined}><ScrollView ref={scrollRef} onScroll={onScroll} scrollEventThrottle={16} keyboardShouldPersistTaps="handled" contentContainerStyle={s.scrollContent}><View accessibilityRole="main" style={s.content}><View style={s.formCard}><Text style={s.title}>كلمة سر جديدة</Text><Text style={s.copy}>اختر كلمة سر من 8 أحرف على الأقل.</Text><Text style={s.label}>كلمة السر</Text><TextInput ref={passwordRef} onFocus={() => onInputFocus(passwordRef.current)} value={password} onChangeText={setPassword} secureTextEntry autoComplete="new-password" style={s.input} accessibilityLabel="كلمة السر الجديدة"/><Pressable accessibilityRole="button" disabled={busy} onPress={() => void save()} style={[s.button,busy&&s.disabled]}>{busy?<ActivityIndicator color="#0B1411"/>:<Text style={s.buttonText}>حفظ كلمة السر</Text>}</Pressable></View></View></ScrollView></KeyboardAvoidingView></SafeAreaView>;
@@ -81,28 +80,23 @@ export function AuthScreen({ inviteToken, theme }: { inviteToken?: string; theme
   const [showPassword, setShowPassword] = useState(false);
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
-  const [message, setMessageState] = useState('');
   const showToast = useAppToast();
-  const setMessage = (text: string) => setMessageState(text);
-  const [messageTone, setMessageTone] = useState<'error' | 'success' | 'info'>('info');
   const normalized = email.trim().toLowerCase();
 
   const showMessage = (text: string, tone: 'error' | 'success' | 'info' = 'info') => {
-    setMessageState(text);
     if (text) showToast(text, tone);
-    setMessageTone(tone);
   };
 
   const submit = async () => {
     if (!supabase) return;
     if (!/^\S+@\S+\.\S+$/.test(normalized)) { showMessage('تأكد من كتابة بريد إلكتروني صحيح.', 'error'); return; }
     if ((mode === 'login' || mode === 'signup') && !password) { showMessage('اكتب كلمة السر أولاً.', 'error'); return; }
-    setBusy(true); setMessage('');
+    setBusy(true);
     try {
       if (mode === 'login') {
         const { error } = await supabase.auth.signInWithPassword({ email: normalized, password });
         if (error) { showMessage('البريد أو كلمة السر غير صحيحة. إذا ما عندك حساب، أنشئ حساب جديد.', 'error'); return; }
-        setMessage(''); return;
+        return;
       }
       if (mode === 'signup') {
         if (fullName.trim().length < 2) { showMessage('اكتب اسمك حتى الإدارة والسائق يعرفوك.', 'error'); return; }
@@ -136,7 +130,7 @@ export function AuthScreen({ inviteToken, theme }: { inviteToken?: string; theme
 
   const resendCode = async () => {
     if (!supabase || !normalized || busy) return;
-    setBusy(true); setMessage('');
+    setBusy(true);
     try {
       const { error } = await supabase.auth.resend({ type: 'signup', email: normalized });
       showMessage(error ? 'ما قدرنا نعيد إرسال الرمز. انتظر شوي وجرب مرة ثانية.' : `أعدنا إرسال رمز التأكيد إلى ${normalized}.`, error ? 'error' : 'success');
@@ -147,7 +141,7 @@ export function AuthScreen({ inviteToken, theme }: { inviteToken?: string; theme
   const resendRecoveryCode = async () => {
     if (!supabase || !normalized || busy) return;
     const baseUrl = Platform.OS === 'web' && typeof window !== 'undefined' ? new URL('/', window.location.origin).toString() : Linking.createURL('/');
-    setBusy(true); setMessage('');
+    setBusy(true);
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(normalized, { redirectTo: baseUrl });
       showMessage(error ? 'ما قدرنا نعيد إرسال رمز التغيير. انتظر شوي وجرب مرة ثانية.' : `أعدنا إرسال رمز تغيير كلمة السر إلى ${normalized}.`, error ? 'error' : 'success');
@@ -164,11 +158,11 @@ export function AuthScreen({ inviteToken, theme }: { inviteToken?: string; theme
     {(mode === 'login' || mode === 'signup') && <><Text style={s.label}>كلمة السر</Text><View style={s.passwordInputWrap}><TextInput ref={passwordRef} onFocus={() => onInputFocus(passwordRef.current)} onSubmitEditing={() => void submit()} returnKeyType="go" value={password} onChangeText={setPassword} secureTextEntry={!showPassword} autoCapitalize="none" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} textContentType={mode === 'signup' ? 'newPassword' : 'password'} importantForAutofill="yes" placeholder="8 أحرف على الأقل" placeholderTextColor="#839188" style={[s.input,s.passwordInput]} accessibilityLabel="كلمة السر"/><Pressable accessibilityRole="button" accessibilityLabel={showPassword ? 'إخفاء كلمة السر' : 'إظهار كلمة السر'} accessibilityState={{ selected: showPassword }} onPress={() => setShowPassword((visible) => !visible)} style={s.passwordEye} hitSlop={8}><View style={s.eyeShape}><View style={s.eyePupil}/>{showPassword ? <View style={s.eyeSlash}/> : null}</View></Pressable></View></>}
     {(mode === 'code' || mode === 'recovery-code') && <><Text style={s.label}>{mode === 'code' ? 'رمز التأكيد' : 'رمز تغيير كلمة السر'}</Text><TextInput ref={codeRef} onFocus={() => onInputFocus(codeRef.current)} value={code} onChangeText={(value) => setCode(value.replace(/\D/g, '').slice(0, 8))} keyboardType="number-pad" textAlign="center" maxLength={8} placeholder="12345678" placeholderTextColor="#839188" style={s.input} accessibilityLabel={mode === 'code' ? 'رمز تأكيد البريد' : 'رمز تغيير كلمة السر'} accessibilityHint="أدخل الرمز المكوّن من 8 أرقام الذي وصلك بالبريد"/></>}
     <Pressable disabled={busy} onPress={() => void submit()} style={[s.button,busy&&s.disabled]} accessibilityRole="button">{busy?<ActivityIndicator color="#0B1411"/>:<Text style={s.buttonText}>{mode === 'login' ? 'تسجيل الدخول' : mode === 'signup' ? 'إنشاء الحساب' : mode === 'recovery-code' || mode === 'code' ? 'تأكيد الرمز' : 'إرسال رمز التغيير'} <Text style={s.arrow}>←</Text></Text>}</Pressable>
-    {mode === 'login' && <Pressable accessibilityRole="button" onPress={() => { setMode('signup'); setMessage(''); }} style={s.back}><Text style={s.backText}>إنشاء حساب جديد</Text></Pressable>}
-    {mode === 'login' && <Pressable accessibilityRole="button" onPress={() => { setMode('reset'); setMessage(''); }} style={s.back}><Text style={s.backText}>نسيت كلمة السر؟</Text></Pressable>}
+    {mode === 'login' && <Pressable accessibilityRole="button" onPress={() => { setMode('signup'); }} style={s.back}><Text style={s.backText}>إنشاء حساب جديد</Text></Pressable>}
+    {mode === 'login' && <Pressable accessibilityRole="button" onPress={() => { setMode('reset'); }} style={s.back}><Text style={s.backText}>نسيت كلمة السر؟</Text></Pressable>}
     {mode === 'code' && <Pressable accessibilityRole="button" disabled={busy} onPress={() => void resendCode()} style={s.back}><Text style={s.backText}>إعادة إرسال الرمز</Text></Pressable>}
     {mode === 'recovery-code' && <Pressable accessibilityRole="button" disabled={busy} onPress={() => void resendRecoveryCode()} style={s.back}><Text style={s.backText}>إعادة إرسال رمز التغيير</Text></Pressable>}
-    {(mode === 'signup' || mode === 'reset' || mode === 'code' || mode === 'recovery-code') && <Pressable accessibilityRole="button" onPress={() => { setMode('login'); setMessage(''); }} style={s.back}><Text style={s.backText}>رجوع لتسجيل الدخول</Text></Pressable>}
+    {(mode === 'signup' || mode === 'reset' || mode === 'code' || mode === 'recovery-code') && <Pressable accessibilityRole="button" onPress={() => { setMode('login'); }} style={s.back}><Text style={s.backText}>رجوع لتسجيل الدخول</Text></Pressable>}
     </View>
     <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'center', gap: 4, marginTop: 14 }}>
       <Link href="/privacy" style={{ color: '#D3EFA4', fontSize: 12, padding: 8 }}>الخصوصية</Link>
