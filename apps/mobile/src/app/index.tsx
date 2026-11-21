@@ -2060,8 +2060,7 @@ function AdminDriversTab({ userId, active, onBadge }: { userId: string; active: 
   </AdminTabShell>;
 }
 
-type AdminCashOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id' | 'driver_id'  | 'purchase_amount_minor' | 'delivery_fee_minor' | 'cash_collected_minor' | 'created_at'>;
-type AdminMoneyData = { orders: AdminCashOrder[]; balances: Record<string, number>; drivers: string[]; names: Record<string, string> };
+type AdminMoneyData = { balances: Record<string, number>; drivers: string[]; names: Record<string, string> };
 type AdminLedgerRow = Pick<Database['public']['Tables']['driver_wallet_ledger']['Row'], 'id' | 'amount_minor' | 'entry_type' | 'order_id' | 'reason' | 'created_at'>;
 type AdminLedgerDetail = { purchase: number | null; fee: number | null; rate: number | null; commission: number | null; collected: number | null };
 function AdminMoneyTab({ userId, active, onBadge, onOpenOrder }: { userId: string; active: boolean; onBadge: AdminBadgeSetter; onOpenOrder: (orderId: string) => void }) {
@@ -2071,13 +2070,11 @@ function AdminMoneyTab({ userId, active, onBadge, onOpenOrder }: { userId: strin
   const [, setMessage] = useToastMessage();
   const memoryKey = cacheKey(userId, 'admin-money');
   const [cached] = useState(() => readMemory<AdminMoneyData>(memoryKey)?.value ?? null);
-  const [orders, setOrders] = useState<AdminCashOrder[]>(cached?.orders ?? []);
   const [balances, setBalances] = useState<Record<string, number>>(cached?.balances ?? {});
   const [drivers, setDrivers] = useState<string[]>(cached?.drivers ?? []);
   const [names, setNames] = useState<Record<string, string>>(cached?.names ?? {});
   const [loading, setLoading] = useState(!cached);
   const [refreshing, setRefreshing] = useState(false);
-  const [segment, setSegment] = useState<'ready' | 'wallets'>('ready');
   const [working, setWorking] = useState('');
   const [topUp, setTopUp] = useState<{ id: string } | null>(null);
   const [amount, setAmount] = useState('');
@@ -2086,18 +2083,17 @@ function AdminMoneyTab({ userId, active, onBadge, onOpenOrder }: { userId: strin
   const channelKey = useRef(newRequestKey());
   const refresh = useCallback(async () => {
     if (!supabase) return;
-    const [orderResult, balanceResult, driverResult, nameMap] = await Promise.all([
-      supabase.from('orders').select('id,driver_id,purchase_amount_minor,delivery_fee_minor,cash_collected_minor,created_at').eq('status', 'delivered').order('delivered_at', { ascending: false }).limit(100),
+    const [balanceResult, driverResult, nameMap] = await Promise.all([
       supabase.rpc('get_driver_wallet_balances'),
       supabase.from('driver_profiles').select('user_id').eq('review_status', 'approved').order('created_at'),
       loadAdminNames(),
     ]);
-    if (orderResult.error || balanceResult.error || driverResult.error) setMessage('ما قدرنا نحمّل بيانات المال. جرّب التحديث.');
+    if (balanceResult.error || driverResult.error) setMessage('ما قدرنا نحمّل بيانات المال. جرّب التحديث.');
     else {
       const map: Record<string, number> = {};
       for (const row of balanceResult.data ?? []) map[row.driver_id] = row.balance_minor;
-      const next: AdminMoneyData = { orders: orderResult.data ?? [], balances: map, drivers: (driverResult.data ?? []).map((row) => row.user_id), names: nameMap };
-      setOrders(next.orders); setBalances(next.balances); setDrivers(next.drivers);
+      const next: AdminMoneyData = { balances: map, drivers: (driverResult.data ?? []).map((row) => row.user_id), names: nameMap };
+      setBalances(next.balances); setDrivers(next.drivers);
       writeMemory(memoryKey, next);
     }
     setNames(nameMap); setLoading(false);
@@ -2108,22 +2104,10 @@ function AdminMoneyTab({ userId, active, onBadge, onOpenOrder }: { userId: strin
     const channel = supabase.channel(`admin-mobile-money-${channelKey.current}`).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, onRealtime).on('postgres_changes', { event: '*', schema: 'public', table: 'driver_wallet_ledger' }, onRealtime).subscribe();
     return () => { void supabase?.removeChannel(channel); };
   }, [online, onRealtime]);
-  useEffect(() => { onBadge('money', orders.length); }, [orders.length, onBadge]);
   const nameOf = (id: string | null) => id ? (names[id] ?? '#' + id.slice(0, 6)) : '—';
   const walletIds = useMemo(() => [...new Set([...drivers, ...Object.keys(balances)])], [drivers, balances]);
   const dueTotal = walletIds.reduce((sum, id) => sum + Math.max(0, -(balances[id] ?? 0)), 0);
   const manualRefresh = async () => { if (!online) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setRefreshing(true); await loadAdminNames(true); await refreshNow(); setRefreshing(false); };
-  const settle = async (order: AdminCashOrder) => {
-    if (!supabase) return;
-    const expected = (order.purchase_amount_minor ?? 0) + order.delivery_fee_minor;
-    if (!(await confirmAction('تأكيد التحصيل؟', `تأكدت أن السائق سلّم الطلب وحصّل من الزبون ${numberFormatter.format(expected)} ل.س؟`, 'تأكيد'))) return;
-    keys.current[order.id] ??= newRequestKey();
-    setWorking(order.id);
-    const { error } = await supabase.rpc('settle_cash_order', { p_order_id: order.id, p_idempotency_key: keys.current[order.id] });
-    setWorking('');
-    if (error) { setMessage('ما تمت التسوية. تحقق من اكتمال التوصيل وقيمة المشتريات.'); return; }
-    delete keys.current[order.id]; setMessage('تمت التسوية وتوثيق النقد والعمولة وأرباح السائق.'); await refreshNow();
-  };
   const submitTopUp = async () => {
     if (!supabase || !topUp) return;
     const value = Number(amount);
@@ -2236,27 +2220,13 @@ function AdminMoneyTab({ userId, active, onBadge, onOpenOrder }: { userId: strin
   };
   const line = (label: string, value: string, tint?: string) => <View key={label} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5 }}>{label}</Text><Text style={{ color: tint ?? color.text, fontSize: 13.5, fontWeight: '900' }}>{value}</Text></View>;
   const input = { minHeight: 50, paddingHorizontal: 14, borderRadius: 14, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, color: color.text, textAlign: 'right', fontSize: 15 } as const;
-  return <AdminTabShell title={historyFor ? nameOf(historyFor) : 'المال'} subtitle={historyFor ? 'سجل الحساب' : 'تسويات التوصيل وحسابات العمولة'} onRefresh={() => void manualRefresh()} refreshing={refreshing}>
+  return <AdminTabShell title={historyFor ? nameOf(historyFor) : 'المال'} subtitle={historyFor ? 'سجل الحساب' : 'حسابات العمولة على السائقين'} onRefresh={() => void manualRefresh()} refreshing={refreshing}>
     {historyFor ? renderHistory() : <>
     <View style={{ flexDirection: 'row-reverse', gap: 10 }}>
-      <View style={{ flex: 1, backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12 }}><Text style={{ color: color.text, fontSize: 24, fontWeight: '900', textAlign: 'right' }}>{numberFormatter.format(orders.length)}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>بانتظار التأكيد</Text></View>
+      <View style={{ flex: 1, backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12 }}><Text style={{ color: color.text, fontSize: 24, fontWeight: '900', textAlign: 'right' }}>{numberFormatter.format(walletIds.filter((id) => (balances[id] ?? 0) < 0).length)}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>سائقين عليهم عمولة</Text></View>
       <View style={{ flex: 1, backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12 }}><Text style={{ color: adminTone.bad.fg, fontSize: 24, fontWeight: '900', textAlign: 'right' }}>{numberFormatter.format(dueTotal)}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>مستحق على السائقين · ل.س</Text></View>
     </View>
-    <AdminSegment items={[{ key: 'ready', label: 'للتسوية' }, { key: 'wallets', label: 'محافظ العمولة' }]} value={segment} onChange={setSegment} />
-    {loading ? <ActivityIndicator color={color.primary} style={{ margin: 24 }} /> : segment === 'ready' ? (orders.length ? orders.map((order) => {
-      const expected = (order.purchase_amount_minor ?? 0) + order.delivery_fee_minor; const collected = order.cash_collected_minor; const diff = collected === null ? null : collected - expected;
-      return <View key={order.id} style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 20, padding: 14, gap: 10 }}>
-        <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center' }}><Text style={{ color: color.text, fontSize: 15, fontWeight: '900' }}>طلب #{order.id.slice(0, 4)}</Text><Text style={{ color: color.muted, fontSize: 12.5 }}>{nameOf(order.driver_id)}</Text></View>
-        <View style={{ backgroundColor: color.background, borderColor: color.border, borderWidth: 1, borderRadius: 14, padding: 10, gap: 6 }}>
-          {line('مشتريات دفعها السائق', order.purchase_amount_minor === null ? '—' : numberFormatter.format(order.purchase_amount_minor) + ' ل.س')}
-          {line('أجرة التوصيل', numberFormatter.format(order.delivery_fee_minor) + ' ل.س')}
-          {line('المطلوب من الزبون', numberFormatter.format(expected) + ' ل.س')}
-          {line('المبلغ المستلم', collected === null ? 'لم يُسجَّل' : numberFormatter.format(collected) + ' ل.س', color.primary)}
-          {diff !== null && diff !== 0 ? line(diff > 0 ? 'زيادة (إكرامية)' : 'نقص عن المطلوب', numberFormatter.format(Math.abs(diff)) + ' ل.س', diff > 0 ? adminTone.ok.fg : adminTone.bad.fg) : null}
-        </View>
-        <Pressable disabled={!!working || !online} onPress={() => void settle(order)} accessibilityRole="button" style={{ minHeight: 48, borderRadius: 14, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', opacity: working || !online ? 0.55 : 1 }}><Text style={{ color: color.background, fontSize: 15, fontWeight: '900' }}>{working === order.id ? 'لحظة…' : 'تأكيد التحصيل وحساب العمولة'}</Text></Pressable>
-      </View>;
-    }) : <AdminEmpty title="كل التسويات مأكدة" hint="التوصيلات المكتملة بتظهر هون لمراجعة التحصيل." />) : <>
+    {loading ? <ActivityIndicator color={color.primary} style={{ margin: 24 }} /> : <>
       <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>السالب مبلغ مستحق على السائق</Text>
       {walletIds.length ? <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 20, overflow: 'hidden' }}>
         {walletIds.map((id, index) => { const balance = balances[id] ?? 0; return <View key={id} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10, padding: 12, borderTopWidth: index ? 1 : 0, borderTopColor: color.border }}>
