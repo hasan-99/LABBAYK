@@ -1248,7 +1248,8 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
           <View style={{flex:1,minWidth:0}}><Text style={s.sheetKicker}>مركز الطلبات المباشر</Text><Text style={s.sheetTitle}>طلباتك وعروضك</Text></View>
           <Pressable onPress={closeSheet} style={s.sheetClose} accessibilityRole="button" accessibilityLabel="إغلاق"><SymbolView name={{ios:'xmark',android:'close',web:'close'}} tintColor={c.muted} size={16}/></Pressable>
         </View>
-        <View style={s.liveCard}>
+        <View style={[s.liveCard, live.order.is_urgent && { borderColor: '#F5A623', borderWidth: 2 }]}>
+          {live.order.is_urgent ? <View style={{ backgroundColor: '#F5A623', borderRadius: 14, minHeight: 34, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#2B1A00', fontSize: 15, fontWeight: '900' }}>⚡ طلب مستعجل</Text></View> : null}
           <View style={s.liveCardTop}><LiveOfferBadge expiresAt={live.expires_at}/><Text style={s.liveCardCode}>{'#'+live.id.slice(0,8)}</Text></View>
           <View style={s.liveRow}><View style={[s.liveDot,{backgroundColor:c.primary}]}/><Text style={s.liveRowLabel}>الطلب:</Text><Text numberOfLines={2} style={s.liveRowValue}>{live.order.request_text}</Text></View>
           <View style={s.liveRow}><View style={[s.liveDot,{backgroundColor:c.accent}]}/><Text style={s.liveRowLabel}>التسليم:</Text><Text numberOfLines={2} style={s.liveRowValue}>{live.order.address?`${live.order.address.neighborhood}، ${live.order.address.city}`:'عم نحمل عنوان التوصيل…'}</Text></View>
