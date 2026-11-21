@@ -3539,10 +3539,17 @@ export default function HomeScreen() {
     const readyTimeout = setTimeout(() => { if (active) setReady(true); }, 5000);
     // Open instantly from the session saved on the device; getSession() (which may need the network
     // to refresh an expired token) confirms or replaces it below.
-    void readStoredSession().then((stored) => { if (active && stored && !resolved) { setSession(stored); setReady(true); } });
+    const storedSessionPromise = readStoredSession().then((stored) => {
+      if (active && stored && !resolved) { setSession(stored); setReady(true); }
+      return stored;
+    }).catch(() => null);
     void supabase.auth.getSession()
       .then(({ data }) => { resolved = true; if (active) setSession(data.session); })
-      .catch(() => { if (active) setSession(null); })
+      .catch(async () => {
+        // A temporary auth/network failure must not discard a session already saved on this device.
+        const stored = await storedSessionPromise;
+        if (active && stored) setSession(stored);
+      })
       .finally(() => { clearTimeout(readyTimeout); if (active) setReady(true); });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, value) => { if (event === 'PASSWORD_RECOVERY') setPasswordRecovery(true); setSession(value); });
     return () => { active = false; clearTimeout(readyTimeout); subscription.unsubscribe(); };
