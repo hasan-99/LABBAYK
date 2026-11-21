@@ -1680,6 +1680,30 @@ function CustomerHomeSkeleton() {
   </View>;
 }
 
+function CancelReasonSheet({ target, busy, warning, onClose, onConfirm }: { target: { id: string; label: string } | null; busy: boolean; warning?: string; onClose: () => void; onConfirm: (reason: string) => void }) {
+  const [reason, setReason] = useState('');
+  const [focused, setFocused] = useState(false);
+  useEffect(() => { if (target) setReason(''); }, [target?.id]);
+  const ready = reason.trim().length >= 5;
+  return <Modal visible={!!target} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => { if (!busy) onClose(); }}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <Pressable style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' }} onPress={() => { if (!busy) onClose(); }} accessibilityLabel="إغلاق">
+        <Pressable onPress={() => {}} style={{ backgroundColor: '#18241F', borderTopLeftRadius: 30, borderTopRightRadius: 30, borderWidth: 1, borderColor: '#2B3C34', paddingHorizontal: 18, paddingTop: 12, paddingBottom: 26, gap: 10 }}>
+          <View style={{ width: 44, height: 5, borderRadius: 3, backgroundColor: '#3A4B43', alignSelf: 'center', marginBottom: 6 }} />
+          <Text style={{ color: '#FFFFFF', fontSize: 23, fontWeight: '900', textAlign: 'right' }}>إلغاء الطلب</Text>
+          <Text numberOfLines={1} style={{ color: '#9DB3A8', fontSize: 14, textAlign: 'right' }}>{target?.label}</Text>
+          <Text style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '900', textAlign: 'right', marginTop: 4 }}>اكتب سبب الإلغاء <Text style={{ color: '#FF8A8A' }}>*</Text></Text>
+          <TextInput value={reason} onChangeText={setReason} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} multiline editable={!busy} maxLength={300} placeholder="اكتب السبب هون…" placeholderTextColor="#6B7C73" style={{ minHeight: 96, borderRadius: 16, borderWidth: 1, borderColor: ready || focused ? '#B7FF30' : '#3A4B43', backgroundColor: '#0E1613', color: '#FFFFFF', paddingHorizontal: 12, paddingTop: 12, paddingBottom: 12, textAlign: 'right', textAlignVertical: 'top', fontSize: 15 }} accessibilityLabel="سبب الإلغاء" />
+          <Text style={{ color: '#6B7C73', fontSize: 12, textAlign: 'right' }}>{ready ? ' ' : 'السبب إجباري (5 أحرف على الأقل)'}</Text>
+          {warning ? <View style={{ backgroundColor: '#2A2216', borderColor: '#5A4620', borderWidth: 1, borderRadius: 14, padding: 10 }}><Text style={{ color: '#F5C062', fontSize: 13, textAlign: 'right', lineHeight: 20 }}>{warning}</Text></View> : null}
+          <Pressable disabled={!ready || busy} onPress={() => onConfirm(reason.trim())} accessibilityRole="button" style={{ minHeight: 52, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: ready ? '#E5484D' : '#2A3430', marginTop: 4 }}><Text style={{ color: ready ? '#FFFFFF' : '#6B7C73', fontSize: 18, fontWeight: '900' }}>{busy ? 'لحظة…' : 'تأكيد الإلغاء'}</Text></Pressable>
+          <Pressable disabled={busy} onPress={onClose} accessibilityRole="button" style={{ minHeight: 44, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#B7FF30', fontSize: 16, fontWeight: '900' }}>رجوع، لا تلغي</Text></Pressable>
+        </Pressable>
+      </Pressable>
+    </KeyboardAvoidingView>
+  </Modal>;
+}
+
 function UrgentStrip() {
   return <View style={{ backgroundColor: '#F5A623', borderRadius: 12, minHeight: 30, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#2B1A00', fontSize: 13.5, fontWeight: '900' }}>⚡ طلب مستعجل</Text></View>;
 }
@@ -2437,7 +2461,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   const [dispute, setDispute] = useState<{ id: string; reason: string; details: string; opened_by: string; created_at: string } | null>(null);
   const [resolution, setResolution] = useState('');
   const [openDisputes, setOpenDisputes] = useState<Record<string, boolean>>({});
-  const [cancelReason, setCancelReason] = useState('');
+  const [cancelOpen, setCancelOpen] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [timeline, setTimeline] = useState<{ id: number; event_type: string; actor_id: string | null; created_at: string; details: Record<string, unknown> | null }[] | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -2615,16 +2639,13 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
     void supabase.from('order_disputes').select('id,reason,details,opened_by,created_at').eq('order_id', sheet.id).is('resolved_at', null).limit(1).then(({ data }) => { if (active) setDispute(data?.[0] ?? null); });
     return () => { active = false; };
   }, [sheet, openDisputes]);
-  const cancelOrder = async () => {
+  const cancelOrder = async (reason: string) => {
     if (!supabase || !sheet) return;
-    if (cancelReason.trim().length < 5) { setMessage('اكتب سبب الإلغاء (5 أحرف على الأقل).'); return; }
-    const afterPurchase = sheet.purchase_amount_minor !== null || ['purchased', 'delivering'].includes(sheet.status);
-    if (!(await confirmAction('إلغاء الطلب؟', afterPurchase ? 'السائق اشترى الأغراض أصلاً. بيتلغى الطلب وبتضل المبالغ مسجلة للتسوية اليدوية.' : 'رح يتلغى الطلب وبيوصل إشعار للعميل.', 'إلغاء الطلب'))) return;
     setCancelling(true);
-    const { error } = await supabase.rpc('cancel_admin_order', { p_order_id: sheet.id, p_reason: cancelReason.trim() });
+    const { error } = await supabase.rpc('cancel_admin_order', { p_order_id: sheet.id, p_reason: reason });
     setCancelling(false);
-    if (error) { setMessage('ما قدرنا نلغي الطلب. إذا السائق اشترى الأغراض لازم يكون في بلاغ مفتوح على الطلب.'); return; }
-    setCancelReason(''); setSheet(null); await refreshNow(); setMessage('تم إلغاء الطلب.');
+    if (error) { setCancelOpen(false); setMessage('ما قدرنا نلغي الطلب. إذا السائق اشترى الأغراض لازم يكون في بلاغ مفتوح على الطلب.'); return; }
+    setCancelOpen(false); setSheet(null); await refreshNow(); setMessage('تم إلغاء الطلب.');
   };
   const pauseOrder = async () => {
     if (!supabase || !dispute) return;
@@ -2731,11 +2752,9 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
             {timelineOpen ? (timeline === null ? <Text style={{ color: color.muted, fontSize: 13, textAlign: 'right' }}>عم نحمّل السجل…</Text> : timeline.length ? timeline.map((event) => { const detail = event.details ?? {}; const from = typeof detail.previous_status === 'string' ? detail.previous_status : typeof detail.previous_order_status === 'string' ? detail.previous_order_status : ''; return <View key={event.id} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', gap: 8, borderTopWidth: 1, borderTopColor: color.border, paddingTop: 6 }}><View style={{ flex: 1 }}><Text style={{ color: color.text, fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>{eventLabels[event.event_type] ?? event.event_type}{from ? ` (من: ${orderStatus[from] ?? from})` : ''}</Text><Text style={{ color: color.muted, fontSize: 11.5, textAlign: 'right' }}>{event.actor_id ? nameOf(event.actor_id) : 'النظام'}</Text></View><Text style={{ color: color.muted, fontSize: 11.5 }}>{shortDateTimeFormatter.format(new Date(event.created_at))}</Text></View>; }) : <Text style={{ color: color.muted, fontSize: 13, textAlign: 'right' }}>ما في أحداث مسجلة.</Text>) : null}
           </View>
           {!['delivered', 'settled', 'cancelled'].includes(sheet.status) && <View style={[card, { gap: 8 }]}>
-            <Text style={{ color: '#FF8A8A', fontSize: 13.5, fontWeight: '900', textAlign: 'right' }}>🚫 إلغاء الطلب</Text>
-            <TextInput value={cancelReason} onChangeText={setCancelReason} placeholder="سبب الإلغاء (إلزامي)" placeholderTextColor={color.muted} style={{ minHeight: 46, borderRadius: 12, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, color: color.text, paddingHorizontal: 12, textAlign: 'right', fontSize: 14 }} accessibilityLabel="سبب الإلغاء" />
-            <Pressable disabled={cancelling || !online} onPress={() => void cancelOrder()} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: '#FF8A8A', alignItems: 'center', justifyContent: 'center', opacity: cancelling || !online ? 0.55 : 1 }}><Text style={{ color: '#FF8A8A', fontSize: 14.5, fontWeight: '900' }}>{cancelling ? 'لحظة…' : 'إلغاء الطلب'}</Text></Pressable>
-            {sheet.purchase_amount_minor !== null || ['purchased', 'delivering'].includes(sheet.status) ? <Text style={{ color: color.muted, fontSize: 12, lineHeight: 19, textAlign: 'right' }}>السائق اشترى الأغراض: الإلغاء بعد الشراء بيحتاج بلاغاً مفتوحاً على الطلب، وبتضل المبالغ مسجلة للتسوية اليدوية.</Text> : null}
+            <Pressable disabled={cancelling || !online} onPress={() => setCancelOpen(true)} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: '#FF8A8A', alignItems: 'center', justifyContent: 'center', opacity: cancelling || !online ? 0.55 : 1 }}><Text style={{ color: '#FF8A8A', fontSize: 14.5, fontWeight: '900' }}>🚫 إلغاء الطلب</Text></Pressable>
           </View>}
+          <CancelReasonSheet target={cancelOpen ? { id: sheet.id, label: `طلب #${sheet.id.slice(0, 6)} · ${sheet.request_text}` } : null} busy={cancelling} warning={sheet.purchase_amount_minor !== null || ['purchased', 'delivering'].includes(sheet.status) ? 'السائق اشترى الأغراض أصلاً. الإلغاء بعد الشراء بيحتاج بلاغاً مفتوحاً على الطلب، وبتضل المبالغ مسجلة للتسوية اليدوية.' : undefined} onClose={() => setCancelOpen(false)} onConfirm={(reason) => void cancelOrder(reason)} />
           {!delivered && !actionable && <View style={card}><Text style={{ color: color.muted, fontSize: 13.5, textAlign: 'center', lineHeight: 22 }}>{sheet.driver_id ? `الطلب مع السائق ${nameOf(sheet.driver_id)} ولا يحتاج إجراء منك.` : 'ما في إجراءات متاحة لهالطلب حالياً.'}</Text></View>}
           <Modal visible={actionable && pricingOpen} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => setPricingOpen(false)}>
           <KeyboardAvoidingView style={{ flex: 1, justifyContent: 'flex-end' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -3174,11 +3193,12 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     setOrderImages((current) => current.filter((image) => image.id !== imageId));
     setRequestMessage('انحذفت الصورة من الطلب.');
   };
-  const cancelOrder = async (orderId: string) => {
+  const [cancelTarget, setCancelTarget] = useState<{ id: string; label: string } | null>(null);
+  const cancelOrder = async (orderId: string, reason: string) => {
     if (!supabase) return;
     setOrderActionBusy(orderId); setOrderActionMessage('');
-    const { error } = await supabase.rpc('cancel_customer_order', { p_order_id: orderId, p_reason: 'إلغاء بطلب العميل من التطبيق' });
-    setOrderActionBusy('');
+    const { error } = await supabase.rpc('cancel_customer_order', { p_order_id: orderId, p_reason: reason });
+    setOrderActionBusy(''); setCancelTarget(null);
     if (error) { setOrderActionMessage('ما قدرنا نلغي الطلب بهالمرحلة. تواصل مع الدعم إذا بلش الشراء.'); return; }
     // Mark it cancelled right away; the list is re-read in the background.
     setOrders((current) => current.map((order) => order.id === orderId ? { ...order, status: 'cancelled' } : order));
@@ -3271,6 +3291,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
             <Text style={s.retryOrdersText}>تحديث الطلبات ↻</Text>
           </Pressable>}
         </View>}
+        <CancelReasonSheet target={cancelTarget} busy={!!orderActionBusy} onClose={() => setCancelTarget(null)} onConfirm={(reason) => cancelTarget && void cancelOrder(cancelTarget.id, reason)} />
         {ordersLoading ? <OrdersSkeleton styles={s} /> : orders.length ? filteredOrders.slice(0, ordersVisible).map((order) => { const group = customerGroup(order.status); const done = group === 'done'; const cancelled = group === 'cancelled'; const hasDriver = !!order.driver_id && !cancelled && !['searching', 'requested', 'quoted'].includes(order.status);
           const finished = group !== 'live';
           const expanded = !finished || openFinished === order.id || order.id === notificationOrderId;
@@ -3316,7 +3337,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
             <View style={{ flex: 1, backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 14, paddingVertical: 7, paddingHorizontal: 11 }}><Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>{order.purchase_amount_minor !== null ? 'مبلغ المشتريات' : 'ميزانية المشتريات'}</Text><Text style={{ color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{ordersAreStale ? '—' : numberFormatter.format(order.purchase_amount_minor ?? order.budget_ceiling_minor) + ' ل.س'}</Text></View>
           </View>}
           {done && !ordersAreStale && <View style={{ borderColor: c.accent, borderWidth: 1, borderRadius: 16, padding: 9, gap: 7 }}><Text style={{ color: c.accent, fontSize: 13.5, fontWeight: '900', textAlign: 'right' }}>صورة التسليم{order.delivered_at ? ' · ' + shortDateTimeFormatter.format(new Date(order.delivered_at)) : ''}</Text><AdminImageStrip orderId={order.id} bucket="delivery-proofs" size={84} emptyText="ما في صورة تسليم لهذا الطلب." /></View>}
-          {(['requested','quoted','searching','accepted','assigned','awaiting_approval'].includes(order.status) || (order.status === 'shopping' && order.purchase_amount_minor === null)) && <Pressable disabled={orderActionBusy === order.id || !online || ordersAreStale} onPress={() => void cancelOrder(order.id)} style={[s.cancelOrder, (orderActionBusy === order.id || !online || ordersAreStale) && s.disabled]} accessibilityRole="button"><Text style={s.cancelOrderText}>{orderActionBusy === order.id ? 'عم نلغي الطلب…' : 'إلغاء الطلب'}</Text></Pressable>}
+          {(['requested','quoted','searching','accepted','assigned','awaiting_approval'].includes(order.status) || (order.status === 'shopping' && order.purchase_amount_minor === null)) && <Pressable disabled={orderActionBusy === order.id || !online || ordersAreStale} onPress={() => setCancelTarget({ id: order.id, label: `طلب #${order.id.slice(0, 6)} · ${splitPickup(order.request_text).body}` })} style={[s.cancelOrder, (orderActionBusy === order.id || !online || ordersAreStale) && s.disabled]} accessibilityRole="button"><Text style={s.cancelOrderText}>{orderActionBusy === order.id ? 'عم نلغي الطلب…' : 'إلغاء الطلب'}</Text></Pressable>}
           <SupportIssueForm orderId={order.id} status={order.status} disabled={ordersAreStale} userId={userId}/>
         </View>; }) : <View style={s.empty}>
           <Text style={s.emptyMark}>≋</Text>
