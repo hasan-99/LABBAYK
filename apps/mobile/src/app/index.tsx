@@ -1666,7 +1666,7 @@ function SignedInHome({ userId, email, inviteToken, openOrderId, onSignOut, them
   return <DriverWorkspace userId={userId} email={email} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
 }
 
-type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'customer_id'|'address_id'|'delivered_at'|'purchase_amount_minor'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'created_at'|'cash_collected_minor'|'delivery_note'> & { is_urgent?: boolean };
+type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'customer_id'|'address_id'|'delivered_at'|'purchase_amount_minor'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'created_at'|'cash_collected_minor'|'delivery_note'|'shopping_admin_alerted_at'|'delivery_admin_alerted_at'> & { is_urgent?: boolean };
 type AdminMobileDriver = Pick<Database['public']['Tables']['driver_profiles']['Row'], 'user_id'|'vehicle_description'>;
 
 const pickupPrefix = 'الشراء من: ';
@@ -2564,7 +2564,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
       // the admin refreshes. It is idempotent and only flags orders that are already overdue.
       void supabase.rpc('flag_unanswered_orders').then(() => undefined, () => undefined);
       const [orderResult, driverResult, disputeResult, nameMap] = await Promise.all([
-        supabase.from('orders').select('id,is_urgent,customer_id,address_id,delivered_at,purchase_amount_minor,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,created_at,cash_collected_minor,delivery_note').order('created_at', { ascending: false }).limit(150),
+        supabase.from('orders').select('id,is_urgent,customer_id,address_id,delivered_at,purchase_amount_minor,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,created_at,cash_collected_minor,delivery_note,shopping_admin_alerted_at,delivery_admin_alerted_at').order('created_at', { ascending: false }).limit(150),
         supabase.from('driver_profiles').select('user_id,vehicle_description').eq('review_status', 'approved').eq('is_online', true).order('created_at'),
         supabase.from('order_disputes').select('order_id').is('resolved_at', null),
         loadAdminNames(),
@@ -2639,7 +2639,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   const liveOffers = useCallback((orderId: string) => (pending[orderId] ?? []).filter((offer) => Date.parse(offer.expires_at) > clock), [pending, clock]);
   // 10 minutes after the order was sent with nobody left who can still answer: it needs the admin.
   const noResponse = useCallback((order: AdminMobileOrder) => order.status === 'searching' && !order.driver_id && !!order.delivery_quote_set_at
-    && clock - Date.parse(order.delivery_quote_set_at) >= 10 * 60 * 1000 && liveOffers(order.id).length === 0, [clock, liveOffers]);
+    && clock - Date.parse(order.delivery_quote_set_at) >= 15 * 60 * 1000 && liveOffers(order.id).length === 0, [clock, liveOffers]);
   const groupOf = useCallback((order: AdminMobileOrder) => openDisputes[order.id] ? 'action' : order.status === 'searching' && ((declines[order.id]?.length ?? 0) > 0 || noResponse(order)) ? 'action' : adminStatusGroup(order.status), [openDisputes, declines, noResponse]);
   const statusLabel = (order: AdminMobileOrder) => noResponse(order) ? 'ما حدا رد على الطلب' : order.status === 'searching' && liveOffers(order.id).length === 1 ? 'بانتظار رد السائق' : (orderStatus[order.status] ?? order.status);
   const nameOf = (id: string | null) => id ? (names[id] ?? '#' + id.slice(0, 6)) : '—';
@@ -2926,13 +2926,14 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
         : list.length ? <>
           {activeList.length && finishedList.length ? <Text style={{ color: color.muted, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>جارية · <Text style={{ color: color.text }}>{activeList.length}</Text></Text> : null}
           {activeList.slice(0, visible).map((order) => {
-            const tone = toneForOrder(order); const hasReport = !!openDisputes[order.id] || order.status === 'disputed'; const needs = groupOf(order) === 'action' && ['requested', 'quoted', 'searching'].includes(order.status); const declinedNames = (declines[order.id] ?? []).map((id) => nameOf(id)); const pendingOffers = liveOffers(order.id); const silent = noResponse(order);
+            const tone = toneForOrder(order); const hasReport = !!openDisputes[order.id] || order.status === 'disputed'; const needs = groupOf(order) === 'action' && ['requested', 'quoted', 'searching'].includes(order.status); const declinedNames = (declines[order.id] ?? []).map((id) => nameOf(id)); const pendingOffers = liveOffers(order.id); const silent = noResponse(order); const delayLabel = order.status === 'shopping' && order.shopping_admin_alerted_at ? 'متأخر بالتسوّق' : order.status === 'delivering' && order.delivery_admin_alerted_at ? 'متأخر بالتوصيل' : null;
             return <Pressable key={order.id} onPress={() => openSheet(order)} accessibilityRole="button" accessibilityLabel={`طلب #${order.id.slice(0, 6)}، ${orderStatus[order.status] ?? order.status}`} style={{ backgroundColor: color.surface, borderColor: order.is_urgent ? '#F5A623' : needs || hasReport ? '#C98A2B' : color.border, borderWidth: order.is_urgent ? 2 : 1, borderRadius: 20, padding: order.is_urgent ? 13 : 14, gap: 9 }}>
               {order.is_urgent ? <UrgentStrip /> : null}
               <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <View style={{ backgroundColor: tone.bg, borderRadius: 12, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: tone.fg, fontSize: 12, fontWeight: '900' }}>{statusLabel(order)}</Text></View>
                 <Text style={{ color: color.muted, fontSize: 11.5 }}>{timeAgo(order.created_at)} · #{order.id.slice(0, 6)}</Text>
               </View>
+              {delayLabel ? <View style={{ alignSelf: 'flex-end', backgroundColor: '#451E21', borderRadius: 10, paddingHorizontal: 9, paddingVertical: 5 }}><Text style={{ color: '#FF8A8A', fontSize: 11.5, fontWeight: '900' }}>{delayLabel}</Text></View> : null}
               <View style={{ flexDirection: 'row-reverse', gap: 11, alignItems: 'flex-start' }}>
                 <AdminOrderThumb orderId={order.id} bucket={adminStatusGroup(order.status) === 'done' ? 'delivery-proofs' : 'order-images'} />
                 <Text numberOfLines={3} style={{ flex: 1, color: color.text, fontSize: 15, fontWeight: '800', lineHeight: 23, textAlign: 'right' }}>{splitPickup(order.request_text).body}</Text>

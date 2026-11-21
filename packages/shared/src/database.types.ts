@@ -666,6 +666,10 @@ export type Database = {
         Row: {
           no_response_alerted_at: string | null
           customer_wait_alerted_at: string | null
+          shopping_driver_alerted_at: string | null
+          shopping_admin_alerted_at: string | null
+          delivery_driver_alerted_at: string | null
+          delivery_admin_alerted_at: string | null
           address_id: string | null
           base_fee_minor: number
           budget_ceiling_minor: number | null
@@ -702,6 +706,10 @@ export type Database = {
         Insert: {
           no_response_alerted_at?: string | null
           customer_wait_alerted_at?: string | null
+          shopping_driver_alerted_at?: string | null
+          shopping_admin_alerted_at?: string | null
+          delivery_driver_alerted_at?: string | null
+          delivery_admin_alerted_at?: string | null
           address_id: string | null
           base_fee_minor?: number
           budget_ceiling_minor?: number
@@ -738,6 +746,10 @@ export type Database = {
         Update: {
           no_response_alerted_at?: string | null
           customer_wait_alerted_at?: string | null
+          shopping_driver_alerted_at?: string | null
+          shopping_admin_alerted_at?: string | null
+          delivery_driver_alerted_at?: string | null
+          delivery_admin_alerted_at?: string | null
           address_id?: string
           base_fee_minor?: number
           budget_ceiling_minor?: number
