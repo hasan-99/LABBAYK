@@ -1861,8 +1861,7 @@ function dayLabel(iso: string) {
 const eventLabels: Record<string, string> = { order_requested: 'أُرسل الطلب', delivery_quote_set: 'حُددت الأجرة', offers_dispatched: 'أُرسل للسائقين', driver_assigned: 'عُيّن سائق', order_accepted: 'قبل السائق الطلب', driver_declined_offer: 'اعتذر سائق', shopping_started: 'بدأ التسوق', purchase_amount_proposed_within_budget: 'سُجل مبلغ المشتريات', purchase_completed: 'تأكد الشراء', delivery_started: 'بدأ التوصيل', delivery_confirmed: 'تم تأكيد التسليم', order_disputed: 'وصل بلاغ', dispute_resolved: 'حُل البلاغ', order_paused_by_admin: 'أوقفه الأدمن مؤقتاً', admin_cancelled: 'ألغاه الأدمن', customer_cancelled: 'ألغاه العميل', cash_settled: 'تمت التسوية' };
 
 const adminStatusGroup = (status: string) => ['requested', 'quoted', 'disputed'].includes(status) ? 'action' : status === 'searching' ? 'searching' : ['accepted', 'assigned', 'shopping', 'awaiting_approval', 'purchased', 'delivering'].includes(status) ? 'active' : ['delivered', 'settled'].includes(status) ? 'done' : 'other';
-const adminFilters = [{ key: 'action', label: 'تحتاج إجراء' }, { key: 'searching', label: 'عند السائقين' }, { key: 'active', label: 'جارية' }, { key: 'done', label: 'منتهية' }, { key: 'all', label: 'الكل' }] as const;
-type AdminFilter = typeof adminFilters[number]['key'];
+type AdminFilter = 'action' | 'searching' | 'active' | 'done' | 'all';
 const adminStages = ['تسعير', 'إسناد', 'شراء', 'توصيل', 'تسليم'];
 const adminDoneSteps: Record<string, number> = { requested: 0, quoted: 1, searching: 1, accepted: 2, assigned: 2, shopping: 2, awaiting_approval: 2, purchased: 3, delivering: 3, delivered: 5, settled: 5, disputed: 3 };
 function minutesLeft(iso: string) { return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 60000)); }
@@ -2457,8 +2456,11 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   const namesRef = useRef<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [filter, setFilter] = useState<AdminFilter>('action');
+  const [filter, setFilter] = useState<AdminFilter>('all');
   const [search, setSearch] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [finishedHidden, setFinishedHidden] = useState(false);
+  const [finishedShown, setFinishedShown] = useState(5);
   const [visible, setVisible] = useState(25);
   // Settled and cancelled orders show as one compact row; tapping opens the full card (one at a time).
   const [openFinished, setOpenFinished] = useState<string | null>(null);
@@ -2597,8 +2599,12 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
     const term = search.trim().toLowerCase();
     return orders.filter((order) => (filter === 'all' || groupOf(order) === filter) && (!term || order.id.toLowerCase().includes(term) || order.request_text.toLowerCase().includes(term) || (names[order.customer_id ?? ''] ?? '').toLowerCase().includes(term)));
   }, [orders, filter, search, names, declines, pending, clock]);
+  const isFinished = (order: AdminMobileOrder) => (adminStatusGroup(order.status) === 'done' || order.status === 'cancelled') && !openDisputes[order.id] && order.status !== 'disputed';
+  const activeList = useMemo(() => list.filter((order) => !isFinished(order)), [list, openDisputes]);
+  const finishedList = useMemo(() => list.filter((order) => isFinished(order)), [list, openDisputes]);
 
   useEffect(() => { onBadge('orders', counts.action); }, [counts.action, onBadge]);
+  useEffect(() => { if (counts.action === 0 && filter === 'action') setFilter('all'); }, [counts.action, filter]);
   const toneForOrder = (order: AdminMobileOrder) => noResponse(order) ? { bg: '#3A2D18', fg: '#F0CC83' } : toneFor(order.status);
   const toneFor = (status: string) => {
     const group = adminStatusGroup(status);
@@ -2778,34 +2784,74 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
       </KeyboardAvoidingView>
     </SafeAreaView>;
   }
+  const renderFinished = (order: AdminMobileOrder) => {
+    const tone = toneForOrder(order); const cancelled = order.status === 'cancelled'; const open = openFinished === order.id;
+    const purchase = order.purchase_amount_minor ?? 0; const collected = cashCollected[order.id] ?? order.cash_collected_minor ?? null;
+    const total = cancelled ? null : collected ?? purchase + order.delivery_fee_minor;
+    const barColor = cancelled ? adminTone.bad.fg : order.status === 'settled' ? color.primary : adminTone.ok.fg;
+    const parsed = splitPickup(order.request_text);
+    const row = (label: string, value: string, tint?: string) => <View key={label} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', paddingVertical: 6 }}><Text style={{ color: color.muted, fontSize: 14 }}>{label}</Text><Text style={{ color: tint ?? color.text, fontSize: 14, fontWeight: '900' }}>{value}</Text></View>;
+    return <View key={order.id} style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, overflow: 'hidden' }}>
+      <Pressable onPress={() => setOpenFinished(open ? null : order.id)} accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityLabel={`طلب #${order.id.slice(0, 6)}، ${statusLabel(order)}`} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 12, padding: 13 }}>
+        <View style={{ width: 5, alignSelf: 'stretch', borderRadius: 3, backgroundColor: barColor }} />
+        <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+          <Text numberOfLines={1} style={{ color: color.text, fontSize: 16.5, fontWeight: '900', textAlign: 'right' }}>{parsed.body}</Text>
+          <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 7 }}>
+            <View style={{ backgroundColor: tone.bg, borderRadius: 10, paddingHorizontal: 9, minHeight: 22, justifyContent: 'center' }}><Text style={{ color: tone.fg, fontSize: 12, fontWeight: '900' }}>{statusLabel(order)}</Text></View>
+            <Text numberOfLines={1} style={{ flexShrink: 1, color: color.muted, fontSize: 12.5 }}>{timeAgo(order.created_at)} · #{order.id.slice(0, 6)}</Text>
+          </View>
+        </View>
+        <View style={{ alignItems: 'flex-start' }}>{total === null ? <Text style={{ color: color.muted, fontSize: 16, fontWeight: '900' }}>—</Text> : <><Text style={{ color: color.text, fontSize: 16, fontWeight: '900' }}>{numberFormatter.format(total)}</Text><Text style={{ color: color.muted, fontSize: 11.5 }}>ل.س</Text></>}</View>
+      </Pressable>
+      {open ? <View style={{ borderTopWidth: 1, borderTopColor: color.border, backgroundColor: color.background, padding: 14, gap: 12 }}>
+        {!cancelled ? <View style={{ flexDirection: 'row-reverse', gap: 4 }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{adminStages.map((stage) => <View key={stage} style={{ flex: 1, height: 5, borderRadius: 3, backgroundColor: color.accent }} />)}</View> : null}
+        <View style={{ gap: 7 }}>
+          <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 9 }}><View style={{ width: 11, height: 11, borderRadius: 6, borderWidth: 2, borderColor: color.primary }} /><Text numberOfLines={1} style={{ flex: 1, color: color.text, fontSize: 14.5, textAlign: 'right' }}>{parsed.pickup ? `من ${parsed.pickup}` : 'من أقرب محل للسائق'}</Text></View>
+          <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 9 }}><View style={{ width: 11, height: 11, borderRadius: 6, backgroundColor: color.primary }} /><Text numberOfLines={1} style={{ flex: 1, color: color.text, fontSize: 14.5, textAlign: 'right' }}>إلى {order.address_id && addresses[order.address_id] ? `${addresses[order.address_id].neighborhood}، ${addresses[order.address_id].city}` : '—'}</Text></View>
+        </View>
+        <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 12, backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 14, padding: 10 }}>
+          <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
+            <Text numberOfLines={1} style={{ color: color.muted, fontSize: 14, textAlign: 'right' }}>العميل · <Text style={{ color: color.text, fontWeight: '900' }}>{customerLabel(order)}</Text></Text>
+            {order.driver_id ? <Text numberOfLines={1} style={{ color: color.muted, fontSize: 14, textAlign: 'right' }}>السائق · <Text style={{ color: color.text, fontWeight: '900' }}>{nameOf(order.driver_id)}</Text></Text> : null}
+            {!cancelled && order.delivered_at ? <Text style={{ color: adminTone.ok.fg, fontSize: 12.5, fontWeight: '700', textAlign: 'right' }}>✓ تسليم {timeAgo(order.delivered_at)}</Text> : null}
+          </View>
+          <AdminImageStrip orderId={order.id} bucket={cancelled ? 'order-images' : 'delivery-proofs'} size={56} />
+        </View>
+        {!cancelled ? <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 4 }}>
+          {row('المشتريات', order.purchase_amount_minor === null ? '—' : numberFormatter.format(order.purchase_amount_minor) + ' ل.س')}
+          {row('أجرة التوصيل', numberFormatter.format(order.delivery_fee_minor) + ' ل.س')}
+          {row('المبلغ المستلم', total === null ? '—' : numberFormatter.format(total) + ' ل.س', color.primary)}
+        </View> : null}
+        <Pressable onPress={() => openSheet(order)} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: color.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.text, fontSize: 14.5, fontWeight: '900' }}>فتح تفاصيل الطلب</Text></Pressable>
+      </View> : null}
+    </View>;
+  };
   return <SafeAreaView edges={['top']} style={[style.safe, { flex: 1 }]}>
     {header}
     <KeyboardScroll contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 12 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void manualRefresh()} tintColor={color.primary} colors={[color.primary]} progressBackgroundColor={color.surface} />}>
       <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
         <View><Text style={{ color: color.text, fontSize: 24, fontWeight: '900', textAlign: 'right' }}>الطلبات</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', marginTop: 2 }}>{counts.action ? `${counts.action} طلب بانتظار إجراء منك` : 'ما في طلبات بانتظار إجراء'}</Text></View>
-        <Pressable disabled={refreshing} onPress={() => void manualRefresh()} accessibilityRole="button" style={[pill(false), refreshing && { opacity: 0.6 }]}><Text style={{ color: color.primary, fontSize: 12, fontWeight: '800' }}>{refreshing ? 'لحظة…' : '↻ تحديث'}</Text></Pressable>
+        <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
+          <Pressable onPress={() => { if (searchOpen || search) { setSearchOpen(false); setSearch(''); } else setSearchOpen(true); }} accessibilityRole="button" accessibilityLabel="بحث" style={{ width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface, alignItems: 'center', justifyContent: 'center' }}><SymbolView name={searchOpen || search ? { ios: 'xmark', android: 'close', web: 'close' } : { ios: 'magnifyingglass', android: 'search', web: 'search' }} tintColor={color.primary} size={18} /></Pressable>
+          <Pressable disabled={refreshing} onPress={() => void manualRefresh()} accessibilityRole="button" style={[pill(false), refreshing && { opacity: 0.6 }]}><Text style={{ color: color.primary, fontSize: 12, fontWeight: '800' }}>{refreshing ? 'لحظة…' : '↻ تحديث'}</Text></Pressable>
+        </View>
       </View>
-      <TextInput value={search} onChangeText={(value) => { setSearch(value); setVisible(25); }} placeholder="ابحث برقم الطلب أو النص أو اسم العميل" placeholderTextColor={color.muted} style={input} accessibilityLabel="بحث في الطلبات" />
-      <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8 }}>
-        {adminFilters.map((item, index) => { const on = filter === item.key; const wide = index >= 3; const hot = item.key === 'action' && counts.action > 0 && !on; return <Pressable key={item.key} onPress={() => { setFilter(item.key); setVisible(25); }} accessibilityRole="button" accessibilityLabel={`${item.label} ${counts[item.key] ?? 0}`} accessibilityState={{ selected: on }} style={{ flexGrow: 1, flexBasis: wide ? '45%' : '28%', minHeight: wide ? 54 : 66, borderRadius: 18, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.primary : color.surface, alignItems: 'center', justifyContent: 'center', flexDirection: wide ? 'row-reverse' : 'column', gap: wide ? 10 : 2, paddingHorizontal: 6 }}><Text style={{ color: on ? color.background : hot ? '#F0CC83' : color.text, fontSize: wide ? 18 : 22, fontWeight: '900' }}>{counts[item.key] ?? 0}</Text><Text style={{ color: on ? color.background : color.muted, fontSize: 13, fontWeight: '700' }}>{item.label}</Text></Pressable>; })}
-      </View>
+      {searchOpen || search ? <TextInput value={search} autoFocus={searchOpen && !search} onChangeText={(value) => { setSearch(value); setVisible(25); }} placeholder="ابحث برقم الطلب أو النص أو اسم العميل" placeholderTextColor={color.muted} style={input} accessibilityLabel="بحث في الطلبات" /> : null}
+      {counts.action > 0 && !search ? <Pressable onPress={() => { setFilter(filter === 'action' ? 'all' : 'action'); setVisible(25); }} accessibilityRole="button" style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10, backgroundColor: adminTone.warn.bg, borderColor: adminTone.warn.fg, borderWidth: 1, borderRadius: 16, paddingHorizontal: 14, minHeight: 50 }}>
+        <View style={{ backgroundColor: adminTone.warn.fg, borderRadius: 12, minWidth: 26, paddingHorizontal: 8, minHeight: 24, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 13.5, fontWeight: '900' }}>{counts.action}</Text></View>
+        <Text style={{ flex: 1, color: adminTone.warn.fg, fontSize: 15, fontWeight: '900', textAlign: 'right' }}>{counts.action === 1 ? 'طلب يحتاج إجراءك' : 'طلبات تحتاج إجراءك'}</Text>
+        <Text style={{ color: adminTone.warn.fg, fontSize: 13.5, fontWeight: '900' }}>{filter === 'action' ? 'عرض الكل' : 'عرض ›'}</Text>
+      </Pressable> : null}
       {loading ? [0, 1, 2].map((item) => <SkeletonCard key={item} style={{ gap: 12 }}><View style={[skRow, { justifyContent: 'space-between' }]}>{sk(90, 26, { borderRadius: 13 })}{sk(70, 12)}</View>{sk('90%', 12, { alignSelf: 'flex-end' })}{sk('60%', 12, { alignSelf: 'flex-end' })}<View style={[skRow, { justifyContent: 'space-between' }]}>{sk(110, 12)}{sk(80, 36, { borderRadius: 12 })}</View></SkeletonCard>)
         : list.length ? <>
-          {list.slice(0, visible).map((order) => {
+          {activeList.length && finishedList.length ? <Text style={{ color: color.muted, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>جارية · <Text style={{ color: color.text }}>{activeList.length}</Text></Text> : null}
+          {activeList.slice(0, visible).map((order) => {
             const tone = toneForOrder(order); const hasReport = !!openDisputes[order.id] || order.status === 'disputed'; const needs = groupOf(order) === 'action' && ['requested', 'quoted', 'searching'].includes(order.status); const declinedNames = (declines[order.id] ?? []).map((id) => nameOf(id)); const pendingOffers = liveOffers(order.id); const silent = noResponse(order);
-            const finished = (adminStatusGroup(order.status) === 'done' || order.status === 'cancelled') && !hasReport;
-            if (finished && openFinished !== order.id) return <Pressable key={order.id} onPress={() => setOpenFinished(order.id)} accessibilityRole="button" accessibilityState={{ expanded: false }} accessibilityLabel={`طلب #${order.id.slice(0, 6)}، ${statusLabel(order)}`} style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 16, paddingHorizontal: 14, minHeight: 52, flexDirection: 'row-reverse', alignItems: 'center', gap: 10 }}>
-              <View style={{ backgroundColor: tone.bg, borderRadius: 10, paddingHorizontal: 9, minHeight: 24, justifyContent: 'center' }}><Text style={{ color: tone.fg, fontSize: 11.5, fontWeight: '900' }}>{statusLabel(order)}</Text></View>
-              <Text numberOfLines={1} style={{ flex: 1, color: color.text, fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>{splitPickup(order.request_text).body}</Text>
-              <Text style={{ color: color.muted, fontSize: 11.5 }}>{timeAgo(order.created_at)}</Text>
-              <Text style={{ color: color.muted, fontSize: 14 }}>⌄</Text>
-            </Pressable>;
             return <Pressable key={order.id} onPress={() => openSheet(order)} accessibilityRole="button" accessibilityLabel={`طلب #${order.id.slice(0, 6)}، ${orderStatus[order.status] ?? order.status}`} style={{ backgroundColor: color.surface, borderColor: order.is_urgent ? '#F5A623' : needs || hasReport ? '#C98A2B' : color.border, borderWidth: order.is_urgent ? 2 : 1, borderRadius: 20, padding: order.is_urgent ? 13 : 14, gap: 9 }}>
               {order.is_urgent ? <UrgentStrip /> : null}
               <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <View style={{ backgroundColor: tone.bg, borderRadius: 12, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: tone.fg, fontSize: 12, fontWeight: '900' }}>{statusLabel(order)}</Text></View>
                 <Text style={{ color: color.muted, fontSize: 11.5 }}>{timeAgo(order.created_at)} · #{order.id.slice(0, 6)}</Text>
-                {finished ? <Pressable onPress={() => setOpenFinished(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel="طيّ الطلب"><Text style={{ color: color.muted, fontSize: 14 }}>⌃</Text></Pressable> : null}
               </View>
               <View style={{ flexDirection: 'row-reverse', gap: 11, alignItems: 'flex-start' }}>
                 <AdminOrderThumb orderId={order.id} bucket={adminStatusGroup(order.status) === 'done' ? 'delivery-proofs' : 'order-images'} />
@@ -2828,7 +2874,12 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
               {needs ? <View style={{ minHeight: 42, borderRadius: 14, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 14, fontWeight: '900' }}>{order.status === 'searching' ? 'إعادة الإرسال أو إسناد سائق ←' : order.delivery_quote_set_at ? 'إرسال الطلب للسائقين ←' : 'تحديد الأجرة وإرسال ←'}</Text></View> : null}
             </Pressable>;
           })}
-          {list.length > visible && <Pressable onPress={() => setVisible((value) => value + 25)} accessibilityRole="button" style={[pill(false), { alignSelf: 'center', justifyContent: 'center' }]}><Text style={{ color: color.primary, fontSize: 13, fontWeight: '800' }}>عرض المزيد ({list.length - visible})</Text></Pressable>}
+          {finishedList.length ? <>
+            <Pressable onPress={() => setFinishedHidden((value) => !value)} accessibilityRole="button" accessibilityState={{ expanded: !finishedHidden }} style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', minHeight: 34 }}><Text style={{ color: color.muted, fontSize: 14, fontWeight: '900' }}>منتهية · <Text style={{ color: color.text }}>{finishedList.length}</Text></Text><Text style={{ color: color.primary, fontSize: 12.5, fontWeight: '800' }}>{finishedHidden ? 'عرض ⌄' : 'إخفاء ⌃'}</Text></Pressable>
+            {!finishedHidden ? finishedList.slice(0, finishedShown).map((order) => renderFinished(order)) : null}
+            {!finishedHidden && finishedList.length > finishedShown ? <Pressable onPress={() => setFinishedShown((value) => value + 25)} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.text, fontSize: 14, fontWeight: '800' }}>عرض كل الطلبات المنتهية ({finishedList.length})</Text></Pressable> : null}
+          </> : null}
+          {activeList.length > visible && <Pressable onPress={() => setVisible((value) => value + 25)} accessibilityRole="button" style={[pill(false), { alignSelf: 'center', justifyContent: 'center' }]}><Text style={{ color: color.primary, fontSize: 13, fontWeight: '800' }}>عرض المزيد ({activeList.length - visible})</Text></Pressable>}
         </> : <View style={{ alignItems: 'center', padding: 34, gap: 8 }}><Text style={{ color: color.text, fontSize: 17, fontWeight: '900' }}>ما في طلبات هون</Text><Text style={{ color: color.muted, fontSize: 13.5, textAlign: 'center' }}>{search ? 'ما لقينا نتيجة لبحثك.' : 'لما تنضاف طلبات بهالتصنيف بتظهر هون.'}</Text></View>}
     </KeyboardScroll>
   </SafeAreaView>;
