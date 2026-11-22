@@ -5,7 +5,7 @@ export default function RootHtml({ children }: PropsWithChildren) {
   const { bodyAttributes, bodyNodes, headNodes, htmlAttributes } = useServerDocumentContext();
 
   return (
-    <html lang="ar" dir="rtl" {...htmlAttributes}>
+    <html {...htmlAttributes} lang="ar" dir="rtl" style={{ backgroundColor: '#0B1411' }}>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -15,7 +15,7 @@ export default function RootHtml({ children }: PropsWithChildren) {
         <ScrollViewStyleReset />
         {headNodes}
       </head>
-      <body {...bodyAttributes}>
+      <body {...bodyAttributes} style={{ margin: 0, minHeight: '100vh', backgroundColor: '#0B1411' }}>
         {children}
         {bodyNodes}
       </body>

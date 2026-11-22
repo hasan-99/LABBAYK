@@ -1,7 +1,13 @@
 import { Stack } from 'expo-router';
 import { useFonts } from 'expo-font';
 import { useEffect } from 'react';
-import { ActivityIndicator, Platform, View } from 'react-native';
+import { ActivityIndicator, I18nManager, Platform, View } from 'react-native';
+
+// Keep the Arabic app RTL even when the device language is English.
+if (Platform.OS !== 'web') {
+  I18nManager.allowRTL(true);
+  I18nManager.forceRTL(true);
+}
 
 // Load only the weights used by AppText; importing the package entry loads
 // every Tajawal weight into native bundles.

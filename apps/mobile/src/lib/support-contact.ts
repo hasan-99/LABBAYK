@@ -26,9 +26,12 @@ export function useSupportContact(): SupportContact {
 
 export const whatsappUrl = (number: string) => `https://wa.me/${number.replace(/\D/g, '')}`;
 
-// Phone numbers are left-to-right text: isolate them so the "+" and digit groups never flip inside Arabic (RTL) lines.
-export const ltrPhone = (number: string) => `\u2066${number}\u2069`;
+// Display Syrian phone numbers in local form and isolate them from Arabic (RTL) text.
 export const prettyPhone = (number: string) => {
-  const digits = number.replace(/[^\d+]/g, '');
-  return /^\+963\d{9}$/.test(digits) ? `+963 ${digits.slice(4, 7)} ${digits.slice(7, 10)} ${digits.slice(10)}` : number;
+  const asciiDigits = number.replace(/[٠-٩۰-۹]/g, (digit) => String('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹'.indexOf(digit) % 10));
+  const digits = asciiDigits.replace(/\D/g, '');
+  const national = digits.startsWith('00963') ? digits.slice(5) : digits.startsWith('963') ? digits.slice(3) : digits;
+  const local = national.startsWith('09') ? national.slice(0, 10) : national.startsWith('9') ? `0${national.slice(0, 9)}` : national;
+  return /^09\d{8}$/.test(local) ? `${local.slice(0, 4)} ${local.slice(4, 7)} ${local.slice(7)}` : number;
 };
+export const ltrPhone = (number: string) => `\u2066${prettyPhone(number)}\u2069`;
