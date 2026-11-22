@@ -1727,12 +1727,12 @@ function FilterSheet({ title, options, value, onSelect, onClose }: { title: stri
     <Pressable style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.55)' }} onPress={onClose} accessibilityLabel="إغلاق">
       <Pressable onPress={() => {}} style={{ backgroundColor: color.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, borderTopWidth: 1, borderColor: color.border, paddingHorizontal: 18, paddingTop: 12, paddingBottom: 26, maxHeight: '75%' }}>
         <View style={{ alignSelf: 'center', width: 44, height: 5, borderRadius: 3, backgroundColor: color.border, marginBottom: 8 }} />
-        <Text style={{ color: color.text, fontSize: 20, fontWeight: '900', textAlign: 'right', marginBottom: 6 }}>{title}</Text>
+        <Text style={{ color: color.text, fontSize: 20, fontWeight: '900', textAlign: 'left', marginBottom: 6 }}>{title}</Text>
         <ScrollView>
-          {options.map((option, index) => { const on = option.key === value; return <Pressable key={option.key} onPress={() => { onSelect(option.key); onClose(); }} accessibilityRole="radio" accessibilityState={{ selected: on }} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 12, minHeight: 54, borderTopWidth: index ? 1 : 0, borderTopColor: color.border }}>
+          {options.map((option, index) => { const on = option.key === value; return <Pressable key={option.key} onPress={() => { onSelect(option.key); onClose(); }} accessibilityRole="radio" accessibilityState={{ selected: on }} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 54, borderTopWidth: index ? 1 : 0, borderTopColor: color.border }}>
             <View style={{ width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: on ? color.primary : color.border, alignItems: 'center', justifyContent: 'center' }}>{on ? <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: color.primary }} /> : null}</View>
             {option.initial ? <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: color.raised, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 14, fontWeight: '900' }}>{option.initial}</Text></View> : null}
-            <Text numberOfLines={1} style={{ flex: 1, color: on ? color.primary : color.text, fontSize: 16, fontWeight: on ? '900' : '700', textAlign: 'right' }}>{option.label}</Text>
+            <Text numberOfLines={1} style={{ flex: 1, color: on ? color.primary : color.text, fontSize: 16, fontWeight: on ? '900' : '700', textAlign: 'left' }}>{option.label}</Text>
             {option.sub ? <Text style={{ color: color.muted, fontSize: 13, fontWeight: '700' }}>{option.sub}</Text> : null}
           </Pressable>; })}
         </ScrollView>
@@ -1800,28 +1800,30 @@ function OrderReceipt({ data, admin = false }: { data: ReceiptData; admin?: bool
     return () => { alive = false; };
   }, [admin, data.id]);
   const ink = '#1B241E'; const muted = '#6B756D'; const line = '#DAD8CC'; const good = '#0F7A52'; const bad = '#B3341F';
+  const rowDirection = admin ? 'row-reverse' as const : 'row' as const;
+  const textSide = admin ? 'left' as const : 'right' as const;
   const { pickup, body } = splitPickup(data.request);
   const expected = (data.purchase ?? 0) + data.fee;
   const diff = data.collected === null ? 0 : data.collected - expected;
   const minutes = data.createdAt && data.deliveredAt ? Math.max(1, Math.round((Date.parse(data.deliveredAt) - Date.parse(data.createdAt)) / 60000)) : null;
-  const row = (label: string, value: string, opts: { big?: boolean; tint?: string } = {}) => <View key={label} style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10, paddingVertical: opts.big ? 4 : 2 }}><Text style={{ color: opts.big ? ink : muted, fontSize: opts.big ? 15.5 : 13.5, fontWeight: opts.big ? '900' : '500', textAlign: 'right' }}>{label}</Text><Text style={{ color: opts.tint ?? ink, fontSize: opts.big ? 15.5 : 13.5, fontWeight: '800' }}>{value}</Text></View>;
+  const row = (label: string, value: string, opts: { big?: boolean; tint?: string } = {}) => <View key={label} style={{ flexDirection: rowDirection, justifyContent: 'space-between', gap: 10, paddingVertical: opts.big ? 4 : 2 }}><Text style={{ color: opts.big ? ink : muted, fontSize: opts.big ? 15.5 : 13.5, fontWeight: opts.big ? '900' : '500', textAlign: textSide }}>{label}</Text><Text style={{ color: opts.tint ?? ink, fontSize: opts.big ? 15.5 : 13.5, fontWeight: '800' }}>{value}</Text></View>;
   const money = (value: number) => numberFormatter.format(value) + ' ل.س';
   const section = { borderTopWidth: 1, borderTopColor: line, paddingTop: 10, marginTop: 10, gap: 2 } as const;
   const net = commission === null ? null : data.fee - commission;
   return <View accessibilityLabel={`إيصال الطلب ${data.id.slice(0, 6)}`} style={{ backgroundColor: '#F6F4EC', borderRadius: 18, padding: 16 }}>
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+    <View style={{ flexDirection: rowDirection, justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
       <View style={{ flex: 1 }}>
-        <Text style={{ color: ink, fontSize: 16, fontWeight: '900', textAlign: 'right' }}>طلب #{data.id.slice(0, 6)}</Text>
-        {data.deliveredAt ? <Text style={{ color: muted, fontSize: 13, fontWeight: '700', lineHeight: 20, textAlign: 'right', writingDirection: 'rtl' }}>{shortDateTimeFormatter.format(new Date(data.deliveredAt))}</Text> : null}
-        {minutes !== null ? <Text style={{ color: muted, fontSize: 12, lineHeight: 19, textAlign: 'right', writingDirection: 'rtl' }}>استغرق {minutes} د من الطلب للتسليم</Text> : null}
+        <Text style={{ color: ink, fontSize: 16, fontWeight: '900', textAlign: textSide }}>طلب #{data.id.slice(0, 6)}</Text>
+        {data.deliveredAt ? <Text style={{ color: muted, fontSize: 13, fontWeight: '700', lineHeight: 20, textAlign: textSide, writingDirection: 'rtl' }}>{shortDateTimeFormatter.format(new Date(data.deliveredAt))}</Text> : null}
+        {minutes !== null ? <Text style={{ color: muted, fontSize: 12, lineHeight: 19, textAlign: textSide, writingDirection: 'rtl' }}>استغرق {minutes} د من الطلب للتسليم</Text> : null}
       </View>
       <View style={{ borderWidth: 1.5, borderColor: good, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 }}><Text style={{ color: good, fontSize: 11.5, fontWeight: '900' }}>تم التسليم</Text></View>
     </View>
     <View style={section}>
-      <Text style={{ color: ink, fontSize: 14.5, fontWeight: '800', lineHeight: 22, textAlign: 'right' }}>{body}</Text>
-      <Text style={{ color: muted, fontSize: 12.5, textAlign: 'right' }}>من: {pickup || 'أقرب محل للسائق'}</Text>
-      <Text style={{ color: muted, fontSize: 12.5, textAlign: 'right' }}>إلى: {data.address ? `${data.address.neighborhood}، ${data.address.city}` : '—'}</Text>
-      {admin && (data.driverName || data.customerName) ? <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', gap: 8, marginTop: 4 }}><Text style={{ color: muted, fontSize: 12.5 }}>السائق: {data.driverName ?? '—'}</Text><Text style={{ color: muted, fontSize: 12.5 }}>الزبون: {data.customerName ?? '—'}</Text></View> : null}
+      <Text style={{ color: ink, fontSize: 14.5, fontWeight: '800', lineHeight: 22, textAlign: textSide }}>{body}</Text>
+      <Text style={{ color: muted, fontSize: 12.5, textAlign: textSide }}>من: {pickup || 'أقرب محل للسائق'}</Text>
+      <Text style={{ color: muted, fontSize: 12.5, textAlign: textSide }}>إلى: {data.address ? `${data.address.neighborhood}، ${data.address.city}` : '—'}</Text>
+      {admin && (data.driverName || data.customerName) ? <View style={{ flexDirection: rowDirection, justifyContent: 'space-between', gap: 8, marginTop: 4 }}><Text style={{ color: muted, fontSize: 12.5 }}>السائق: {data.driverName ?? '—'}</Text><Text style={{ color: muted, fontSize: 12.5 }}>الزبون: {data.customerName ?? '—'}</Text></View> : null}
     </View>
     <View style={section}>
       {row('المشتريات (دفعها السائق)', data.purchase === null ? '—' : numberFormatter.format(data.purchase))}
@@ -1991,10 +1993,10 @@ function useAdminTabRefresh(active: boolean, refresh: () => Promise<void>, memor
 
 function AdminTopBar({ right }: { right?: ReactNode }) {
   const { colors: color, styles: s } = useMobileTheme();
-  return <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6 }}>
-    <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10 }}>
+  return <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6 }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
       <View style={s.brandMark}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={s.brandLogo} contentFit="contain" accessibilityLabel="شعار لَبّيك" /></View>
-      <View><Text style={s.brandName}>لَبّيك</Text><Text style={{ color: color.muted, fontSize: 11.5, textAlign: 'right' }}>الإدارة</Text></View>
+      <View><Text style={s.brandName}>لَبّيك</Text><Text style={{ color: color.muted, fontSize: 11.5, textAlign: 'left' }}>الإدارة</Text></View>
     </View>
     {right}
   </View>;
@@ -2002,7 +2004,7 @@ function AdminTopBar({ right }: { right?: ReactNode }) {
 
 function AdminSegment<T extends string>({ items, value, onChange }: { items: { key: T; label: string }[]; value: T; onChange: (key: T) => void }) {
   const { colors: color } = useMobileTheme();
-  return <View style={{ flexDirection: 'row-reverse', gap: 4, padding: 4, borderRadius: 16, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface }}>
+  return <View style={{ flexDirection: 'row', gap: 4, padding: 4, borderRadius: 16, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface }}>
     {items.map((item) => { const on = item.key === value; return <Pressable key={item.key} onPress={() => onChange(item.key)} accessibilityRole="button" accessibilityState={{ selected: on }} style={{ flex: 1, minHeight: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: on ? color.raised : 'transparent', borderWidth: on ? 1 : 0, borderColor: color.border }}><Text style={{ color: on ? color.text : color.muted, fontSize: 14, fontWeight: '800' }}>{item.label}</Text></Pressable>; })}
   </View>;
 }
@@ -2018,7 +2020,7 @@ function AdminTabShell({ title, subtitle, onRefresh, refreshing, children }: { t
   return <SafeAreaView edges={['top']} style={[style.safe, { flex: 1 }]}>
     <AdminTopBar right={onRefresh ? <Pressable disabled={refreshing} onPress={onRefresh} accessibilityRole="button" accessibilityLabel="تحديث" style={{ width: 44, height: 44, borderRadius: 14, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface, alignItems: 'center', justifyContent: 'center', opacity: refreshing ? 0.6 : 1 }}><SymbolView name={{ ios: 'arrow.clockwise', android: 'refresh', web: 'refresh' }} tintColor={color.primary} size={18} /></Pressable> : undefined} />
     <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 12 }} keyboardShouldPersistTaps="handled" refreshControl={onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} tintColor={color.primary} colors={[color.primary]} progressBackgroundColor={color.surface} /> : undefined}>
-      <View><Text style={{ color: color.text, fontSize: 26, fontWeight: '900', textAlign: 'right' }}>{title}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', marginTop: 2 }}>{subtitle}</Text></View>
+      <View><Text style={{ color: color.text, fontSize: 26, fontWeight: '900', textAlign: 'left' }}>{title}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'left', marginTop: 2 }}>{subtitle}</Text></View>
       {children}
     </ScrollView>
   </SafeAreaView>;
@@ -2486,11 +2488,11 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
     {visited.reports ? <View style={pane('reports')}><AdminReportsTab userId={userId} active={tab === 'reports'} onBadge={setBadge} onOpenOrder={(id) => { setFocusOrderId(id); openTab('orders'); }} /></View> : null}
     {visited.more ? <View style={pane('more')}><AdminMoreTab email={email} theme={theme} onToggleTheme={onToggleTheme} onSignOut={onSignOut} /></View> : null}
     {!(tab === 'orders' && inDetail) ? <SafeAreaView edges={['bottom']} style={{ backgroundColor: color.surface, borderTopWidth: 1, borderTopColor: color.border }}>
-      <View style={{ flexDirection: 'row-reverse', paddingHorizontal: 6, paddingTop: 6, paddingBottom: 4 }}>
+      <View style={{ flexDirection: 'row', paddingHorizontal: 6, paddingTop: 6, paddingBottom: 4 }}>
         {tabs.map((item) => { const on = tab === item.key; const count = badges[item.key] ?? 0; return <Pressable key={item.key} onPress={() => openTab(item.key)} accessibilityRole="tab" accessibilityState={{ selected: on }} accessibilityLabel={count ? `${item.label}، ${count}` : item.label} style={{ flex: 1, minHeight: 56, alignItems: 'center', justifyContent: 'center', gap: 3 }}>
           <View style={{ width: 52, height: 30, borderRadius: 15, backgroundColor: on ? color.primary : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
             <SymbolView name={item.symbol} tintColor={on ? color.background : color.muted} size={22} />
-            {count ? <View style={{ position: 'absolute', top: -5, right: -2, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: '#F0CC83', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 }}><Text style={{ color: '#0B1411', fontSize: 11, fontWeight: '900' }}>{count}</Text></View> : null}
+            {count ? <View style={{ position: 'absolute', top: -5, left: -2, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: '#F0CC83', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 }}><Text style={{ color: '#0B1411', fontSize: 11, fontWeight: '900' }}>{count}</Text></View> : null}
           </View>
           <Text style={{ color: on ? color.text : color.muted, fontSize: 11.5, fontWeight: '700' }}>{item.label}</Text>
         </Pressable>; })}
@@ -2751,8 +2753,8 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
     setMessage(mode === 'driver' ? 'تم تحديد الأجرة وإرسال الطلب للسائق المحدد، بانتظار رده.' : data ? `تم إرسال العرض إلى ${data} سائق متاح؛ أول من يقبل يحصل على الطلب.` : 'تم حفظ الأجرة، ولا يوجد سائق متاح حالياً. أعد الإرسال عند توفر سائق.');
   };
 
-  const pill = (on: boolean) => ({ minHeight: 38, paddingHorizontal: 14, borderRadius: 19, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.primary : color.surface, flexDirection: 'row-reverse' as const, alignItems: 'center' as const, gap: 7 });
-  const input = { minHeight: 50, paddingHorizontal: 14, borderRadius: 14, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, color: color.text, textAlign: 'right' as const, fontSize: 15 } as const;
+  const pill = (on: boolean) => ({ minHeight: 38, paddingHorizontal: 14, borderRadius: 19, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.primary : color.surface, flexDirection: 'row' as const, alignItems: 'center' as const, gap: 7 });
+  const input = { minHeight: 50, paddingHorizontal: 14, borderRadius: 14, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, color: color.text, textAlign: 'left' as const, fontSize: 15 } as const;
   const header = <AdminTopBar />;
 
   if (sheet) {
@@ -2761,60 +2763,60 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
     const delivered = ['delivered', 'settled'].includes(sheet.status);
     const tone = toneForOrder(sheet);
     const card = { backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12 } as const;
-    const tag = (label: string, value: string) => <View key={label} style={{ flexDirection: 'row-reverse', gap: 5, backgroundColor: color.raised, borderColor: color.border, borderWidth: 1, borderRadius: 10, paddingHorizontal: 9, paddingVertical: 4 }}><Text style={{ color: color.muted, fontSize: 12 }}>{label}</Text><Text style={{ color: color.text, fontSize: 12, fontWeight: '800' }}>{value}</Text></View>;
+    const tag = (label: string, value: string) => <View key={label} style={{ flexDirection: 'row', gap: 5, backgroundColor: color.raised, borderColor: color.border, borderWidth: 1, borderRadius: 10, paddingHorizontal: 9, paddingVertical: 4 }}><Text style={{ color: color.muted, fontSize: 12 }}>{label}</Text><Text style={{ color: color.text, fontSize: 12, fontWeight: '800' }}>{value}</Text></View>;
     const segment = (on: boolean) => ({ flex: 1, minHeight: 46, borderRadius: 13, borderWidth: 1.5, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.primary : color.surface, alignItems: 'center' as const, justifyContent: 'center' as const });
     const chosenDriver = drivers.find((driver) => driver.user_id === driverId);
     return <SafeAreaView style={[style.safe, { flex: 1 }]}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: color.border }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: color.border }}>
           <Pressable onPress={() => setSheet(null)} accessibilityRole="button" accessibilityLabel="رجوع" style={{ width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface, alignItems: 'center', justifyContent: 'center' }}><SymbolView name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }} tintColor={color.text} size={18} /></Pressable>
-          <View style={{ flex: 1 }}><Text style={{ color: color.muted, fontSize: 11.5, textAlign: 'right' }}>#{sheet.id.slice(0, 8)} · {timeAgo(sheet.created_at)}</Text><Text style={{ color: color.text, fontSize: 18, fontWeight: '900', textAlign: 'right' }}>طلب #{sheet.id.slice(0, 6)}</Text></View>
+          <View style={{ flex: 1 }}><Text style={{ color: color.muted, fontSize: 11.5, textAlign: 'left' }}>#{sheet.id.slice(0, 8)} · {timeAgo(sheet.created_at)}</Text><Text style={{ color: color.text, fontSize: 18, fontWeight: '900', textAlign: 'left' }}>طلب #{sheet.id.slice(0, 6)}</Text></View>
           <View style={{ backgroundColor: tone.bg, borderRadius: 11, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: tone.fg, fontSize: 11.5, fontWeight: '900' }}>{statusLabel(sheet)}</Text></View>
         </View>
         <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 14, gap: 10, paddingBottom: 20 }}>
           <View style={card}>
-            <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11 }}>
               <View style={{ width: 42, height: 42, borderRadius: 21, borderWidth: 2, borderColor: color.primary, backgroundColor: color.raised, alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontSize: 19 }}>👤</Text></View>
-              <View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 18, fontWeight: '900', textAlign: 'right' }}>{customerTitle(sheet)}</Text>{address?.contact_phone ? <Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', writingDirection: 'ltr' }}>{ltrPhone(address.contact_phone)}</Text> : null}</View>
+              <View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 18, fontWeight: '900', textAlign: 'left' }}>{customerTitle(sheet)}</Text>{address?.contact_phone ? <Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'left', writingDirection: 'ltr' }}>{ltrPhone(address.contact_phone)}</Text> : null}</View>
               {address?.contact_phone ? <Pressable onPress={() => void Linking.openURL(`tel:${address.contact_phone}`)} accessibilityRole="button" accessibilityLabel="اتصال بالعميل" style={{ minHeight: 44, borderRadius: 13, backgroundColor: color.primary, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 14, fontWeight: '900' }}>📞 اتصال</Text></Pressable> : null}
             </View>
             <View style={{ height: 1, backgroundColor: color.border, marginVertical: 10 }} />
-            <View style={{ flexDirection: 'row-reverse', gap: 9, alignItems: 'flex-start' }}>
+            <View style={{ flexDirection: 'row', gap: 9, alignItems: 'flex-start' }}>
               <Text style={{ fontSize: 16 }}>📍</Text>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: color.text, fontSize: 14.5, fontWeight: '800', lineHeight: 22, textAlign: 'right' }}>{address ? [address.neighborhood, address.label].filter(Boolean).join(' · ') : '—'}</Text>
-                {address && [address.city, address.street, address.building ? 'بناء ' + address.building : '', address.landmark].some(Boolean) ? <Text style={{ color: color.muted, fontSize: 12.5, lineHeight: 19, textAlign: 'right' }}>{[address.city, address.street, address.building ? 'بناء ' + address.building : '', address.landmark].filter(Boolean).join(' · ')}</Text> : null}
+                <Text style={{ color: color.text, fontSize: 14.5, fontWeight: '800', lineHeight: 22, textAlign: 'left' }}>{address ? [address.neighborhood, address.label].filter(Boolean).join(' · ') : '—'}</Text>
+                {address && [address.city, address.street, address.building ? 'بناء ' + address.building : '', address.landmark].some(Boolean) ? <Text style={{ color: color.muted, fontSize: 12.5, lineHeight: 19, textAlign: 'left' }}>{[address.city, address.street, address.building ? 'بناء ' + address.building : '', address.landmark].filter(Boolean).join(' · ')}</Text> : null}
               </View>
             </View>
           </View>
           <View style={[card, { gap: 9 }]}>
-            <Text style={{ color: color.text, fontSize: 15, fontWeight: '700', lineHeight: 25, textAlign: 'right' }}>{body}</Text>
-            <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 6 }}>{[...(pickup ? [tag('الشراء من', pickup)] : [])]}</View>
+            <Text style={{ color: color.text, fontSize: 15, fontWeight: '700', lineHeight: 25, textAlign: 'left' }}>{body}</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>{[...(pickup ? [tag('الشراء من', pickup)] : [])]}</View>
             <AdminImageStrip orderId={sheet.id} />
           </View>
           {delivered && <View style={[card, { borderColor: color.accent, gap: 9 }]}>
-            <Text style={{ color: color.accent, fontSize: 14.5, fontWeight: '900', textAlign: 'right' }}>✅ إيصال الطلب</Text>
+            <Text style={{ color: color.accent, fontSize: 14.5, fontWeight: '900', textAlign: 'left' }}>✅ إيصال الطلب</Text>
             <OrderReceipt admin data={{ id: sheet.id, createdAt: sheet.created_at, deliveredAt: sheet.delivered_at, deliveryProofPath: sheet.delivery_proof_path, request: sheet.request_text, address: sheet.address_id ? addresses[sheet.address_id] ?? null : null, purchase: sheet.purchase_amount_minor, fee: sheet.delivery_fee_minor, collected: cashCollected[sheet.id] ?? null, note: deliveryNotes[sheet.id] ?? null, driverName: nameOf(sheet.driver_id), customerName: customerLabel(sheet) }} />
             {sheet.driver_id && driverPhones[sheet.driver_id] ? <Pressable onPress={() => void Linking.openURL(`tel:${driverPhones[sheet.driver_id!]}`)} accessibilityRole="button" accessibilityLabel="اتصال بالسائق" style={{ minHeight: 44, borderRadius: 13, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 14, fontWeight: '900' }}>📞 اتصال بالسائق · {ltrPhone(driverPhones[sheet.driver_id])}</Text></Pressable> : null}
           </View>}
           {(sheet.status === 'disputed' || openDisputes[sheet.id]) && <View style={[card, { borderColor: '#C98A2B', gap: 8 }]}>
-            <Text style={{ color: '#F0CC83', fontSize: 14.5, fontWeight: '900', textAlign: 'right' }}>⚠️ بلاغ من {dispute ? (dispute.opened_by === sheet.customer_id ? 'العميل' : 'السائق') + ' ' + nameOf(dispute.opened_by) : '…'}</Text>
+            <Text style={{ color: '#F0CC83', fontSize: 14.5, fontWeight: '900', textAlign: 'left' }}>⚠️ بلاغ من {dispute ? (dispute.opened_by === sheet.customer_id ? 'العميل' : 'السائق') + ' ' + nameOf(dispute.opened_by) : '…'}</Text>
             {dispute ? <>
-              <Text style={{ color: color.text, fontSize: 14, fontWeight: '800', textAlign: 'right' }}>{dispute.reason} · <Text style={{ color: color.muted, fontWeight: '500' }}>{timeAgo(dispute.created_at)}</Text></Text>
-              <Text selectable style={{ color: color.text, fontSize: 14, lineHeight: 23, textAlign: 'right' }}>{dispute.details}</Text>
-              <TextInput value={resolution} onChangeText={setResolution} multiline textAlign="right" textAlignVertical="top" placeholder="اكتب ملخص الحل أو الخطوة التي تمت" placeholderTextColor={color.muted} style={{ minHeight: 70, borderRadius: 12, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, color: color.text, padding: 10, fontSize: 14 }} accessibilityLabel="ملخص الحل" />
+              <Text style={{ color: color.text, fontSize: 14, fontWeight: '800', textAlign: 'left' }}>{dispute.reason} · <Text style={{ color: color.muted, fontWeight: '500' }}>{timeAgo(dispute.created_at)}</Text></Text>
+              <Text selectable style={{ color: color.text, fontSize: 14, lineHeight: 23, textAlign: 'left' }}>{dispute.details}</Text>
+              <TextInput value={resolution} onChangeText={setResolution} multiline textAlign="left" textAlignVertical="top" placeholder="اكتب ملخص الحل أو الخطوة التي تمت" placeholderTextColor={color.muted} style={{ minHeight: 70, borderRadius: 12, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, color: color.text, padding: 10, fontSize: 14 }} accessibilityLabel="ملخص الحل" />
               <Pressable disabled={resolving || !online} onPress={() => void resolveDispute()} accessibilityRole="button" style={{ minHeight: 48, borderRadius: 14, backgroundColor: '#B7FF30', alignItems: 'center', justifyContent: 'center', opacity: resolving || !online ? 0.55 : 1 }}><Text style={{ color: '#0B1411', fontSize: 15, fontWeight: '900' }}>{resolving ? 'لحظة…' : sheet.status === 'disputed' ? '✅ حل البلاغ وإعادة الطلب' : '✅ تم حل البلاغ'}</Text></Pressable>
               {sheet.status !== 'disputed' && ['accepted', 'assigned', 'shopping', 'awaiting_approval', 'purchased', 'delivering'].includes(sheet.status) ? <Pressable disabled={resolving || !online} onPress={() => void pauseOrder()} accessibilityRole="button" style={{ minHeight: 44, borderRadius: 14, borderWidth: 1, borderStyle: 'dashed', borderColor: '#C98A2B', alignItems: 'center', justifyContent: 'center', opacity: resolving || !online ? 0.55 : 1 }}><Text style={{ color: '#F0CC83', fontSize: 13.5, fontWeight: '800' }}>⏸ إيقاف الطلب مؤقتاً</Text></Pressable> : null}
-            </> : <Text style={{ color: color.muted, fontSize: 13, textAlign: 'right' }}>عم نحمّل تفاصيل البلاغ…</Text>}
+            </> : <Text style={{ color: color.muted, fontSize: 13, textAlign: 'left' }}>عم نحمّل تفاصيل البلاغ…</Text>}
           </View>}
           {sheet.status === 'searching' && ((declines[sheet.id]?.length ?? 0) > 0 || liveOffers(sheet.id).length > 0 || noResponse(sheet)) && <View style={[card, { gap: 6 }]}>
-            {noResponse(sheet) ? <Text style={{ color: '#F0CC83', fontSize: 13.5, fontWeight: '800', lineHeight: 21, textAlign: 'right' }}>⏰ ما حدا من السائقين رد خلال 10 دقايق. أعد الإرسال للكل أو أسنده لسائق محدد.</Text> : null}
-            {liveOffers(sheet.id).map((offer) => <Text key={offer.driver_id} style={{ color: '#F0CC83', fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>⏳ {nameOf(offer.driver_id)} · بانتظار رده</Text>)}
-            {(declines[sheet.id] ?? []).map((id) => <Text key={id} style={{ color: '#FF8A8A', fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>⚠️ {nameOf(id)} · اعتذر</Text>)}
+            {noResponse(sheet) ? <Text style={{ color: '#F0CC83', fontSize: 13.5, fontWeight: '800', lineHeight: 21, textAlign: 'left' }}>⏰ ما حدا من السائقين رد خلال 10 دقايق. أعد الإرسال للكل أو أسنده لسائق محدد.</Text> : null}
+            {liveOffers(sheet.id).map((offer) => <Text key={offer.driver_id} style={{ color: '#F0CC83', fontSize: 13.5, fontWeight: '800', textAlign: 'left' }}>⏳ {nameOf(offer.driver_id)} · بانتظار رده</Text>)}
+            {(declines[sheet.id] ?? []).map((id) => <Text key={id} style={{ color: '#FF8A8A', fontSize: 13.5, fontWeight: '800', textAlign: 'left' }}>⚠️ {nameOf(id)} · اعتذر</Text>)}
           </View>}
           <View style={[card, { gap: 8 }]}>
-            <Pressable onPress={() => setTimelineOpen((value) => !value)} accessibilityRole="button" accessibilityState={{ expanded: timelineOpen }} style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', minHeight: 38 }}><Text style={{ color: color.text, fontSize: 14, fontWeight: '900' }}>🕘 سجل الطلب</Text><Text style={{ color: color.primary, fontSize: 12.5, fontWeight: '900' }}>{timelineOpen ? 'إخفاء ⌃' : 'عرض ⌄'}</Text></Pressable>
-            {timelineOpen ? (timeline === null ? <Text style={{ color: color.muted, fontSize: 13, textAlign: 'right' }}>عم نحمّل السجل…</Text> : timeline.length ? timeline.map((event) => { const detail = event.details ?? {}; const from = typeof detail.previous_status === 'string' ? detail.previous_status : typeof detail.previous_order_status === 'string' ? detail.previous_order_status : ''; return <View key={event.id} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', gap: 8, borderTopWidth: 1, borderTopColor: color.border, paddingTop: 6 }}><View style={{ flex: 1 }}><Text style={{ color: color.text, fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>{eventLabels[event.event_type] ?? event.event_type}{from ? ` (من: ${orderStatus[from] ?? from})` : ''}</Text><Text style={{ color: color.muted, fontSize: 11.5, textAlign: 'right' }}>{event.actor_id ? nameOf(event.actor_id) : 'النظام'}</Text></View><Text style={{ color: color.muted, fontSize: 11.5 }}>{shortDateTimeFormatter.format(new Date(event.created_at))}</Text></View>; }) : <Text style={{ color: color.muted, fontSize: 13, textAlign: 'right' }}>ما في أحداث مسجلة.</Text>) : null}
+            <Pressable onPress={() => setTimelineOpen((value) => !value)} accessibilityRole="button" accessibilityState={{ expanded: timelineOpen }} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 38 }}><Text style={{ color: color.text, fontSize: 14, fontWeight: '900' }}>🕘 سجل الطلب</Text><Text style={{ color: color.primary, fontSize: 12.5, fontWeight: '900' }}>{timelineOpen ? 'إخفاء ⌃' : 'عرض ⌄'}</Text></Pressable>
+            {timelineOpen ? (timeline === null ? <Text style={{ color: color.muted, fontSize: 13, textAlign: 'left' }}>عم نحمّل السجل…</Text> : timeline.length ? timeline.map((event) => { const detail = event.details ?? {}; const from = typeof detail.previous_status === 'string' ? detail.previous_status : typeof detail.previous_order_status === 'string' ? detail.previous_order_status : ''; return <View key={event.id} style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8, borderTopWidth: 1, borderTopColor: color.border, paddingTop: 6 }}><View style={{ flex: 1 }}><Text style={{ color: color.text, fontSize: 13.5, fontWeight: '800', textAlign: 'left' }}>{eventLabels[event.event_type] ?? event.event_type}{from ? ` (من: ${orderStatus[from] ?? from})` : ''}</Text><Text style={{ color: color.muted, fontSize: 11.5, textAlign: 'left' }}>{event.actor_id ? nameOf(event.actor_id) : 'النظام'}</Text></View><Text style={{ color: color.muted, fontSize: 11.5 }}>{shortDateTimeFormatter.format(new Date(event.created_at))}</Text></View>; }) : <Text style={{ color: color.muted, fontSize: 13, textAlign: 'left' }}>ما في أحداث مسجلة.</Text>) : null}
           </View>
           {!['delivered', 'settled', 'cancelled'].includes(sheet.status) && <View style={[card, { gap: 8 }]}>
             <Pressable disabled={cancelling || !online} onPress={() => setCancelOpen(true)} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: '#FF8A8A', alignItems: 'center', justifyContent: 'center', opacity: cancelling || !online ? 0.55 : 1 }}><Text style={{ color: '#FF8A8A', fontSize: 14.5, fontWeight: '900' }}>🚫 إلغاء الطلب</Text></Pressable>
@@ -2826,24 +2828,24 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
           <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' }} onPress={() => setPricingOpen(false)} accessibilityRole="button" accessibilityLabel="إغلاق" />
           <View style={{ backgroundColor: color.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderTopWidth: 1, borderColor: color.border, maxHeight: '88%' }}>
           <View style={{ alignSelf: 'center', width: 42, height: 4, borderRadius: 2, backgroundColor: color.border, marginTop: 10 }} />
-          <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 8, paddingBottom: 6 }}><Text style={{ color: color.text, fontSize: 19, fontWeight: '900' }}>تسعير وإرسال</Text><Pressable onPress={() => setPricingOpen(false)} accessibilityRole="button" accessibilityLabel="إغلاق" style={{ width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: color.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.text, fontSize: 18 }}>✕</Text></Pressable></View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 8, paddingBottom: 6 }}><Text style={{ color: color.text, fontSize: 19, fontWeight: '900' }}>تسعير وإرسال</Text><Pressable onPress={() => setPricingOpen(false)} accessibilityRole="button" accessibilityLabel="إغلاق" style={{ width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: color.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.text, fontSize: 18 }}>✕</Text></Pressable></View>
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 16, gap: 10 }}>
-            <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>أجرة التوصيل</Text>
-            <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, borderRadius: 13, paddingHorizontal: 8 }}>
+            <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'left' }}>أجرة التوصيل</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, borderRadius: 13, paddingHorizontal: 8 }}>
               <Pressable onPress={() => setFee(String(Math.max(0, (Number(fee) || 0) - 1000)))} accessibilityRole="button" accessibilityLabel="نقّص ألف" style={{ width: 44, height: 44, borderRadius: 12, borderWidth: 1, borderColor: color.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.text, fontSize: 22, fontWeight: '900' }}>−</Text></Pressable>
-              <TextInput value={fee} onChangeText={(value) => setFee(value.replace(/\D/g, '').slice(0, 9))} keyboardType="number-pad" placeholder="مثال: 15000" placeholderTextColor={color.muted} style={{ flex: 1, minHeight: 50, color: color.primary, fontSize: 20, fontWeight: '900', textAlign: 'right' }} accessibilityLabel="أجرة التوصيل" />
+              <TextInput value={fee} onChangeText={(value) => setFee(value.replace(/\D/g, '').slice(0, 9))} keyboardType="number-pad" placeholder="مثال: 15000" placeholderTextColor={color.muted} style={{ flex: 1, minHeight: 50, color: color.primary, fontSize: 20, fontWeight: '900', textAlign: 'left' }} accessibilityLabel="أجرة التوصيل" />
               <Text style={{ color: color.muted, fontSize: 13, fontWeight: '700' }}>ل.س</Text>
               <Pressable onPress={() => setFee(String(Math.min(100000000, (Number(fee) || 0) + 1000)))} accessibilityRole="button" accessibilityLabel="زِد ألف" style={{ width: 44, height: 44, borderRadius: 12, borderWidth: 1, borderColor: color.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.text, fontSize: 22, fontWeight: '900' }}>+</Text></Pressable>
             </View>
-            <View style={{ flexDirection: 'row-reverse', gap: 6 }}>{[10000, 15000, 20000, 25000].map((amount) => <Pressable key={amount} onPress={() => setFee(String(amount))} accessibilityRole="button" style={{ flex: 1, minHeight: 38, borderRadius: 10, borderWidth: 1, borderColor: fee === String(amount) ? color.primary : color.border, backgroundColor: fee === String(amount) ? color.raised : color.surface, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: fee === String(amount) ? color.primary : color.muted, fontSize: 12.5, fontWeight: '800' }}>{numberFormatter.format(amount)}</Text></Pressable>)}</View>
+            <View style={{ flexDirection: 'row', gap: 6 }}>{[10000, 15000, 20000, 25000].map((amount) => <Pressable key={amount} onPress={() => setFee(String(amount))} accessibilityRole="button" style={{ flex: 1, minHeight: 38, borderRadius: 10, borderWidth: 1, borderColor: fee === String(amount) ? color.primary : color.border, backgroundColor: fee === String(amount) ? color.raised : color.surface, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: fee === String(amount) ? color.primary : color.muted, fontSize: 12.5, fontWeight: '800' }}>{numberFormatter.format(amount)}</Text></Pressable>)}</View>
             <View style={{ height: 1, backgroundColor: color.border, marginVertical: 2 }} />
-            <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>إرسال إلى</Text>
+            <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'left' }}>إرسال إلى</Text>
             <View style={{ flexDirection: 'row', gap: 7 }}>
               <Pressable onPress={() => setMode('all')} accessibilityRole="radio" accessibilityState={{ selected: mode === 'all' }} style={segment(mode === 'all')}><Text style={{ color: mode === 'all' ? color.background : color.text, fontSize: 13.5, fontWeight: '800' }}>كل المتاحين ({drivers.length})</Text></Pressable>
               <Pressable onPress={() => setMode('driver')} accessibilityRole="radio" accessibilityState={{ selected: mode === 'driver' }} style={segment(mode === 'driver')}><Text style={{ color: mode === 'driver' ? color.background : color.text, fontSize: 13.5, fontWeight: '800' }}>سائق محدد</Text></Pressable>
             </View>
-            {mode === 'driver' && (drivers.length ? <View style={{ gap: 6 }}>{drivers.map((driver) => { const on = driverId === driver.user_id; return <Pressable key={driver.user_id} onPress={() => setDriverId(driver.user_id)} accessibilityRole="radio" accessibilityState={{ selected: on }} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 9, minHeight: 46, paddingHorizontal: 11, borderRadius: 12, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.raised : color.surface }}><Text style={{ fontSize: 15 }}>{on ? '✅' : '🛵'}</Text><Text style={{ flex: 1, color: color.text, fontSize: 13.5, fontWeight: '800', textAlign: 'right' }}>{nameOf(driver.user_id)}</Text><Text style={{ color: color.muted, fontSize: 12 }}>{driver.vehicle_description || 'بدون وصف'}</Text></Pressable>; })}</View> : <Text style={{ color: '#F0CC83', fontSize: 13, textAlign: 'right' }}>ما في سائق متاح حالياً. فيك ترسل للجميع لما يتوفر سائق.</Text>)}
-          <Text style={{ color: color.muted, fontSize: 12.5, lineHeight: 20, textAlign: 'right' }}>الزبون بيدفع ثمن المشتريات + أجرة التوصيل{Number(fee) > 0 ? ` (${numberFormatter.format(Number(fee))} ل.س)` : ''}.</Text>
+            {mode === 'driver' && (drivers.length ? <View style={{ gap: 6 }}>{drivers.map((driver) => { const on = driverId === driver.user_id; return <Pressable key={driver.user_id} onPress={() => setDriverId(driver.user_id)} accessibilityRole="radio" accessibilityState={{ selected: on }} style={{ flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 46, paddingHorizontal: 11, borderRadius: 12, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.raised : color.surface }}><Text style={{ fontSize: 15 }}>{on ? '✅' : '🛵'}</Text><Text style={{ flex: 1, color: color.text, fontSize: 13.5, fontWeight: '800', textAlign: 'left' }}>{nameOf(driver.user_id)}</Text><Text style={{ color: color.muted, fontSize: 12 }}>{driver.vehicle_description || 'بدون وصف'}</Text></Pressable>; })}</View> : <Text style={{ color: '#F0CC83', fontSize: 13, textAlign: 'left' }}>ما في سائق متاح حالياً. فيك ترسل للجميع لما يتوفر سائق.</Text>)}
+          <Text style={{ color: color.muted, fontSize: 12.5, lineHeight: 20, textAlign: 'left' }}>الزبون بيدفع ثمن المشتريات + أجرة التوصيل{Number(fee) > 0 ? ` (${numberFormatter.format(Number(fee))} ل.س)` : ''}.</Text>
           </ScrollView>
           <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 18 + insets.bottom, borderTopWidth: 1, borderTopColor: color.border }}>
             <Pressable disabled={busy || !online} onPress={() => void priceAndRoute()} accessibilityRole="button" style={{ minHeight: 54, borderRadius: 17, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', opacity: busy || !online ? 0.55 : 1 }}><Text style={{ color: color.background, fontSize: 16, fontWeight: '900' }}>{busy ? 'عم نحفظ ونرسل…' : mode === 'driver' ? (chosenDriver ? `تحديد الأجرة وإسناد ${nameOf(chosenDriver.user_id)}` : 'تحديد الأجرة وإسناد السائق') : 'تحديد الأجرة وإرسال للجميع'}</Text></Pressable>
@@ -2861,7 +2863,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   const cancelledCount = orders.filter((order) => order.status === 'cancelled').length;
   const filtersOn = !!filterDriver || filterPeriod !== 'all' || filter !== 'all';
   const clearFilters = () => { setFilter('all'); setFilterDriver(''); setFilterPeriod('all'); setVisible(25); setFinishedShown(12); };
-  const filterPill = (key: 'driver' | 'period' | 'status', label: string, on: boolean) => <Pressable key={key} onPress={() => setOpenFilter(key)} accessibilityRole="button" accessibilityLabel={label} style={{ flex: 1, minWidth: 0, minHeight: 42, borderRadius: 21, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? 'rgba(183,255,48,0.14)' : color.surface, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: 8 }}>
+  const filterPill = (key: 'driver' | 'period' | 'status', label: string, on: boolean) => <Pressable key={key} onPress={() => setOpenFilter(key)} accessibilityRole="button" accessibilityLabel={label} style={{ flex: 1, minWidth: 0, minHeight: 42, borderRadius: 21, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? 'rgba(183,255,48,0.14)' : color.surface, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: 8 }}>
     <Text numberOfLines={1} ellipsizeMode="tail" style={{ flexShrink: 1, color: on ? color.primary : color.text, fontSize: 14, fontWeight: on ? '900' : '700' }}>{label}</Text>
     <Text style={{ color: on ? color.primary : color.muted, fontSize: 10 }}>⌄</Text>
   </Pressable>;
@@ -2871,13 +2873,13 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
     const total = cancelled ? null : collected ?? purchase + order.delivery_fee_minor;
     const barColor = cancelled ? adminTone.bad.fg : order.status === 'settled' ? color.primary : adminTone.ok.fg;
     const parsed = splitPickup(order.request_text);
-    const row = (label: string, value: string, tint?: string) => <View key={label} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', paddingVertical: 6 }}><Text style={{ color: color.muted, fontSize: 14 }}>{label}</Text><Text style={{ color: tint ?? color.text, fontSize: 14, fontWeight: '900' }}>{value}</Text></View>;
+    const row = (label: string, value: string, tint?: string) => <View key={label} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}><Text style={{ color: color.muted, fontSize: 14 }}>{label}</Text><Text style={{ color: tint ?? color.text, fontSize: 14, fontWeight: '900' }}>{value}</Text></View>;
     return <View key={order.id} style={{ borderTopWidth: index ? 1 : 0, borderTopColor: color.border }}>
-      <Pressable onPress={() => setOpenFinished(open ? null : order.id)} accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityLabel={`طلب #${order.id.slice(0, 6)}، ${statusLabel(order)}`} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 12, padding: 13 }}>
+      <Pressable onPress={() => setOpenFinished(open ? null : order.id)} accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityLabel={`طلب #${order.id.slice(0, 6)}، ${statusLabel(order)}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 13 }}>
         <View style={{ width: 5, alignSelf: 'stretch', borderRadius: 3, backgroundColor: barColor }} />
         <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-          <Text numberOfLines={1} style={{ color: color.text, fontSize: 16.5, fontWeight: '900', textAlign: 'right' }}>{parsed.body}</Text>
-          <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 7 }}>
+          <Text numberOfLines={1} style={{ color: color.text, fontSize: 16.5, fontWeight: '900', textAlign: 'left' }}>{parsed.body}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
             <View style={{ backgroundColor: tone.bg, borderRadius: 10, paddingHorizontal: 9, minHeight: 22, justifyContent: 'center' }}><Text style={{ color: tone.fg, fontSize: 12, fontWeight: '900' }}>{statusLabel(order)}</Text></View>
             <Text numberOfLines={1} style={{ flexShrink: 1, color: color.muted, fontSize: 12.5 }}>{timeAgo(order.created_at)} · #{order.id.slice(0, 6)}</Text>
           </View>
@@ -2885,16 +2887,16 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
         <View style={{ alignItems: 'flex-start' }}>{total === null ? <Text style={{ color: color.muted, fontSize: 16, fontWeight: '900' }}>—</Text> : <><Text style={{ color: color.text, fontSize: 16, fontWeight: '900' }}>{numberFormatter.format(total)}</Text><Text style={{ color: color.muted, fontSize: 11.5 }}>ل.س</Text></>}</View>
       </Pressable>
       {open ? <View style={{ borderTopWidth: 1, borderTopColor: color.border, backgroundColor: color.background, padding: 14, gap: 12 }}>
-        {!cancelled ? <View style={{ flexDirection: 'row-reverse', gap: 4 }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{adminStages.map((stage) => <View key={stage} style={{ flex: 1, height: 5, borderRadius: 3, backgroundColor: color.accent }} />)}</View> : null}
+        {!cancelled ? <View style={{ flexDirection: 'row', gap: 4 }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{adminStages.map((stage) => <View key={stage} style={{ flex: 1, height: 5, borderRadius: 3, backgroundColor: color.accent }} />)}</View> : null}
         <View style={{ gap: 7 }}>
-          <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 9 }}><View style={{ width: 11, height: 11, borderRadius: 6, borderWidth: 2, borderColor: color.primary }} /><Text numberOfLines={1} style={{ flex: 1, color: color.text, fontSize: 14.5, textAlign: 'right' }}>{parsed.pickup ? `من ${parsed.pickup}` : 'من أقرب محل للسائق'}</Text></View>
-          <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 9 }}><View style={{ width: 11, height: 11, borderRadius: 6, backgroundColor: color.primary }} /><Text numberOfLines={1} style={{ flex: 1, color: color.text, fontSize: 14.5, textAlign: 'right' }}>إلى {order.address_id && addresses[order.address_id] ? `${addresses[order.address_id].neighborhood}، ${addresses[order.address_id].city}` : '—'}</Text></View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}><View style={{ width: 11, height: 11, borderRadius: 6, borderWidth: 2, borderColor: color.primary }} /><Text numberOfLines={1} style={{ flex: 1, color: color.text, fontSize: 14.5, textAlign: 'left' }}>{parsed.pickup ? `من ${parsed.pickup}` : 'من أقرب محل للسائق'}</Text></View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}><View style={{ width: 11, height: 11, borderRadius: 6, backgroundColor: color.primary }} /><Text numberOfLines={1} style={{ flex: 1, color: color.text, fontSize: 14.5, textAlign: 'left' }}>إلى {order.address_id && addresses[order.address_id] ? `${addresses[order.address_id].neighborhood}، ${addresses[order.address_id].city}` : '—'}</Text></View>
         </View>
-        <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 12, backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 14, padding: 10 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 14, padding: 10 }}>
           <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
-            <Text numberOfLines={1} style={{ color: color.muted, fontSize: 14, textAlign: 'right' }}>العميل · <Text style={{ color: color.text, fontWeight: '900' }}>{customerLabel(order)}</Text></Text>
-            {order.driver_id ? <Text numberOfLines={1} style={{ color: color.muted, fontSize: 14, textAlign: 'right' }}>السائق · <Text style={{ color: color.text, fontWeight: '900' }}>{nameOf(order.driver_id)}</Text></Text> : null}
-            {!cancelled && order.delivered_at ? <Text style={{ color: adminTone.ok.fg, fontSize: 12.5, fontWeight: '700', textAlign: 'right' }}>✓ تسليم {timeAgo(order.delivered_at)}</Text> : null}
+            <Text numberOfLines={1} style={{ color: color.muted, fontSize: 14, textAlign: 'left' }}>العميل · <Text style={{ color: color.text, fontWeight: '900' }}>{customerLabel(order)}</Text></Text>
+            {order.driver_id ? <Text numberOfLines={1} style={{ color: color.muted, fontSize: 14, textAlign: 'left' }}>السائق · <Text style={{ color: color.text, fontWeight: '900' }}>{nameOf(order.driver_id)}</Text></Text> : null}
+            {!cancelled && order.delivered_at ? <Text style={{ color: adminTone.ok.fg, fontSize: 12.5, fontWeight: '700', textAlign: 'left' }}>✓ تسليم {timeAgo(order.delivered_at)}</Text> : null}
           </View>
           <AdminImageStrip orderId={order.id} bucket={cancelled ? 'order-images' : 'delivery-proofs'} proofPath={order.delivery_proof_path} size={56} />
         </View>
@@ -2910,64 +2912,64 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   return <SafeAreaView edges={['top']} style={[style.safe, { flex: 1 }]}>
     {header}
     <KeyboardScroll contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 12 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void manualRefresh()} tintColor={color.primary} colors={[color.primary]} progressBackgroundColor={color.surface} />}>
-      <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}>
-        <View><Text style={{ color: color.text, fontSize: 24, fontWeight: '900', textAlign: 'right' }}>الطلبات</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', marginTop: 2 }}>{counts.action ? `${counts.action} طلب بانتظار إجراء منك` : 'ما في طلبات بانتظار إجراء'}</Text></View>
-        <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <View><Text style={{ color: color.text, fontSize: 24, fontWeight: '900', textAlign: 'left' }}>الطلبات</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'left', marginTop: 2 }}>{counts.action ? `${counts.action} طلب بانتظار إجراء منك` : 'ما في طلبات بانتظار إجراء'}</Text></View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Pressable onPress={() => { if (searchOpen || search) { setSearchOpen(false); setSearch(''); } else setSearchOpen(true); }} accessibilityRole="button" accessibilityLabel="بحث" style={{ width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface, alignItems: 'center', justifyContent: 'center' }}><SymbolView name={searchOpen || search ? { ios: 'xmark', android: 'close', web: 'close' } : { ios: 'magnifyingglass', android: 'search', web: 'search' }} tintColor={color.primary} size={18} /></Pressable>
           <Pressable disabled={refreshing} onPress={() => void manualRefresh()} accessibilityRole="button" style={[pill(false), refreshing && { opacity: 0.6 }]}><Text style={{ color: color.primary, fontSize: 12, fontWeight: '800' }}>{refreshing ? 'لحظة…' : '↻ تحديث'}</Text></Pressable>
         </View>
       </View>
       {searchOpen || search ? <TextInput value={search} autoFocus={searchOpen && !search} onChangeText={(value) => { setSearch(value); setVisible(25); }} placeholder="ابحث برقم الطلب أو النص أو اسم العميل" placeholderTextColor={color.muted} style={input} accessibilityLabel="بحث في الطلبات" /> : null}
-      <View style={{ flexDirection: 'row-reverse', gap: 8 }}>
+      <View style={{ flexDirection: 'row', gap: 8 }}>
         {filterPill('driver', filterDriver ? nameOf(filterDriver).split(' ')[0] : 'السائق', !!filterDriver)}
         {filterPill('period', filterPeriod === 'all' ? 'الفترة' : adminPeriodLabels[filterPeriod], filterPeriod !== 'all')}
         {filterPill('status', filter === 'all' ? 'الحالة' : adminStatusLabels[filter], filter !== 'all')}
       </View>
-      {filtersOn ? <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13 }}><Text style={{ color: color.text, fontWeight: '900' }}>{list.length}</Text> طلب</Text><Pressable onPress={clearFilters} hitSlop={8} accessibilityRole="button"><Text style={{ color: color.primary, fontSize: 13, fontWeight: '900' }}>مسح الفلاتر</Text></Pressable></View> : null}
+      {filtersOn ? <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13 }}><Text style={{ color: color.text, fontWeight: '900' }}>{list.length}</Text> طلب</Text><Pressable onPress={clearFilters} hitSlop={8} accessibilityRole="button"><Text style={{ color: color.primary, fontSize: 13, fontWeight: '900' }}>مسح الفلاتر</Text></Pressable></View> : null}
       {openFilter === 'driver' ? <FilterSheet title="السائق" value={filterDriver} options={[{ key: '', label: 'كل السائقين', sub: String(orders.filter((order) => order.driver_id).length) }, ...Object.keys(driverCounts).map((id) => ({ key: id, label: nameOf(id), sub: String(driverCounts[id]), initial: nameOf(id).slice(0, 1) }))]} onSelect={(key) => { setFilterDriver(key); setVisible(25); setFinishedShown(12); }} onClose={() => setOpenFilter(null)} /> : null}
       {openFilter === 'period' ? <FilterSheet title="الفترة" value={filterPeriod} options={(Object.keys(adminPeriodLabels) as AdminPeriod[]).map((key) => ({ key, label: adminPeriodLabels[key] }))} onSelect={(key) => { setFilterPeriod(key as AdminPeriod); setVisible(25); setFinishedShown(12); }} onClose={() => setOpenFilter(null)} /> : null}
       {openFilter === 'status' ? <FilterSheet title="الحالة" value={filter} options={[{ key: 'all', label: adminStatusLabels.all, sub: String(orders.length) }, { key: 'action', label: adminStatusLabels.action, sub: String(counts.action) }, { key: 'active', label: adminStatusLabels.active, sub: String(counts.active + counts.searching) }, { key: 'done', label: adminStatusLabels.done, sub: String(counts.done) }, { key: 'cancelled', label: adminStatusLabels.cancelled, sub: String(cancelledCount) }]} onSelect={(key) => { setFilter(key as AdminFilter); setVisible(25); setFinishedShown(12); }} onClose={() => setOpenFilter(null)} /> : null}
-      {counts.action > 0 && !search ? <Pressable onPress={() => { setFilter(filter === 'action' ? 'all' : 'action'); setVisible(25); }} accessibilityRole="button" style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10, backgroundColor: adminTone.warn.bg, borderColor: adminTone.warn.fg, borderWidth: 1, borderRadius: 16, paddingHorizontal: 14, minHeight: 50 }}>
+      {counts.action > 0 && !search ? <Pressable onPress={() => { setFilter(filter === 'action' ? 'all' : 'action'); setVisible(25); }} accessibilityRole="button" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: adminTone.warn.bg, borderColor: adminTone.warn.fg, borderWidth: 1, borderRadius: 16, paddingHorizontal: 14, minHeight: 50 }}>
         <View style={{ backgroundColor: adminTone.warn.fg, borderRadius: 12, minWidth: 26, paddingHorizontal: 8, minHeight: 24, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 13.5, fontWeight: '900' }}>{counts.action}</Text></View>
-        <Text style={{ flex: 1, color: adminTone.warn.fg, fontSize: 15, fontWeight: '900', textAlign: 'right' }}>{counts.action === 1 ? 'طلب يحتاج إجراءك' : 'طلبات تحتاج إجراءك'}</Text>
+        <Text style={{ flex: 1, color: adminTone.warn.fg, fontSize: 15, fontWeight: '900', textAlign: 'left' }}>{counts.action === 1 ? 'طلب يحتاج إجراءك' : 'طلبات تحتاج إجراءك'}</Text>
         <Text style={{ color: adminTone.warn.fg, fontSize: 13.5, fontWeight: '900' }}>{filter === 'action' ? 'عرض الكل' : 'عرض ›'}</Text>
       </Pressable> : null}
-      {loading ? [0, 1, 2].map((item) => <SkeletonCard key={item} style={{ gap: 12 }}><View style={[skRow, { justifyContent: 'space-between' }]}>{sk(90, 26, { borderRadius: 13 })}{sk(70, 12)}</View>{sk('90%', 12, { alignSelf: 'flex-end' })}{sk('60%', 12, { alignSelf: 'flex-end' })}<View style={[skRow, { justifyContent: 'space-between' }]}>{sk(110, 12)}{sk(80, 36, { borderRadius: 12 })}</View></SkeletonCard>)
+      {loading ? [0, 1, 2].map((item) => <SkeletonCard key={item} style={{ gap: 12 }}><View style={[skRow, { justifyContent: 'space-between' }]}>{sk(90, 26, { borderRadius: 13 })}{sk(70, 12)}</View>{sk('90%', 12, { alignSelf: 'flex-start' })}{sk('60%', 12, { alignSelf: 'flex-start' })}<View style={[skRow, { justifyContent: 'space-between' }]}>{sk(110, 12)}{sk(80, 36, { borderRadius: 12 })}</View></SkeletonCard>)
         : list.length ? <>
-          {activeList.length && finishedList.length ? <Text style={{ color: color.muted, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>جارية · <Text style={{ color: color.text }}>{activeList.length}</Text></Text> : null}
+          {activeList.length && finishedList.length ? <Text style={{ color: color.muted, fontSize: 14, fontWeight: '900', textAlign: 'left' }}>جارية · <Text style={{ color: color.text }}>{activeList.length}</Text></Text> : null}
           {activeList.slice(0, visible).map((order) => {
             const tone = toneForOrder(order); const hasReport = !!openDisputes[order.id] || order.status === 'disputed'; const needs = groupOf(order) === 'action' && ['requested', 'quoted', 'searching'].includes(order.status); const declinedNames = (declines[order.id] ?? []).map((id) => nameOf(id)); const pendingOffers = liveOffers(order.id); const silent = noResponse(order); const delayLabel = order.status === 'shopping' && order.shopping_admin_alerted_at ? 'متأخر بالتسوّق' : order.status === 'delivering' && order.delivery_admin_alerted_at ? 'متأخر بالتوصيل' : null;
             return <Pressable key={order.id} onPress={() => openSheet(order)} accessibilityRole="button" accessibilityLabel={`طلب #${order.id.slice(0, 6)}، ${orderStatus[order.status] ?? order.status}`} style={{ backgroundColor: color.surface, borderColor: order.is_urgent ? '#F5A623' : needs || hasReport ? '#C98A2B' : color.border, borderWidth: order.is_urgent ? 2 : 1, borderRadius: 20, padding: order.is_urgent ? 13 : 14, gap: 9 }}>
               {order.is_urgent ? <UrgentStrip /> : null}
-              <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <View style={{ backgroundColor: tone.bg, borderRadius: 12, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: tone.fg, fontSize: 12, fontWeight: '900' }}>{statusLabel(order)}</Text></View>
                 <Text style={{ color: color.muted, fontSize: 11.5 }}>{timeAgo(order.created_at)} · #{order.id.slice(0, 6)}</Text>
               </View>
-              {delayLabel ? <View style={{ alignSelf: 'flex-end', backgroundColor: '#451E21', borderRadius: 10, paddingHorizontal: 9, paddingVertical: 5 }}><Text style={{ color: '#FF8A8A', fontSize: 11.5, fontWeight: '900' }}>{delayLabel}</Text></View> : null}
-              <View style={{ flexDirection: 'row-reverse', gap: 11, alignItems: 'flex-start' }}>
+              {delayLabel ? <View style={{ alignSelf: 'flex-start', backgroundColor: '#451E21', borderRadius: 10, paddingHorizontal: 9, paddingVertical: 5 }}><Text style={{ color: '#FF8A8A', fontSize: 11.5, fontWeight: '900' }}>{delayLabel}</Text></View> : null}
+              <View style={{ flexDirection: 'row', gap: 11, alignItems: 'flex-start' }}>
                 <AdminOrderThumb orderId={order.id} bucket={adminStatusGroup(order.status) === 'done' ? 'delivery-proofs' : 'order-images'} proofPath={order.delivery_proof_path} />
-                <Text numberOfLines={3} style={{ flex: 1, color: color.text, fontSize: 15, fontWeight: '800', lineHeight: 23, textAlign: 'right' }}>{splitPickup(order.request_text).body}</Text>
+                <Text numberOfLines={3} style={{ flex: 1, color: color.text, fontSize: 15, fontWeight: '800', lineHeight: 23, textAlign: 'left' }}>{splitPickup(order.request_text).body}</Text>
               </View>
               <View style={{ gap: 6 }}>
-                <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}><View style={{ width: 10, height: 10, borderRadius: 5, borderWidth: 2, borderColor: color.primary }} /><Text numberOfLines={1} style={{ flex: 1, color: color.text, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>{splitPickup(order.request_text).pickup ? `من ${splitPickup(order.request_text).pickup}` : 'من أقرب محل للسائق'}</Text></View>
-                <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}><View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: color.primary }} /><Text numberOfLines={1} style={{ flex: 1, color: color.muted, fontSize: 12.5, textAlign: 'right' }}>إلى {order.address_id && addresses[order.address_id] ? `${addresses[order.address_id].neighborhood}، ${addresses[order.address_id].city}` : '—'}</Text></View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><View style={{ width: 10, height: 10, borderRadius: 5, borderWidth: 2, borderColor: color.primary }} /><Text numberOfLines={1} style={{ flex: 1, color: color.text, fontSize: 12.5, fontWeight: '800', textAlign: 'left' }}>{splitPickup(order.request_text).pickup ? `من ${splitPickup(order.request_text).pickup}` : 'من أقرب محل للسائق'}</Text></View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: color.primary }} /><Text numberOfLines={1} style={{ flex: 1, color: color.muted, fontSize: 12.5, textAlign: 'left' }}>إلى {order.address_id && addresses[order.address_id] ? `${addresses[order.address_id].neighborhood}، ${addresses[order.address_id].city}` : '—'}</Text></View>
               </View>
-              {order.status !== 'cancelled' ? <View style={{ flexDirection: 'row-reverse', gap: 4 }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{adminStages.map((stage, step) => { const doneSteps = adminDoneSteps[order.status] ?? 0; return <View key={stage} style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: step < doneSteps ? color.accent : step === doneSteps ? color.primary : color.raised }} />; })}</View> : null}
-              <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                <Text numberOfLines={1} style={{ color: color.muted, fontSize: 12.5, flex: 1, textAlign: 'right' }}>👤 {customerLabel(order)}</Text>
+              {order.status !== 'cancelled' ? <View style={{ flexDirection: 'row', gap: 4 }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{adminStages.map((stage, step) => { const doneSteps = adminDoneSteps[order.status] ?? 0; return <View key={stage} style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: step < doneSteps ? color.accent : step === doneSteps ? color.primary : color.raised }} />; })}</View> : null}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <Text numberOfLines={1} style={{ color: color.muted, fontSize: 12.5, flex: 1, textAlign: 'left' }}>👤 {customerLabel(order)}</Text>
                 <Text style={{ color: color.primary, fontSize: 13, fontWeight: '900' }}>{order.delivery_quote_set_at ? numberFormatter.format(order.delivery_fee_minor) + ' ل.س' : 'بلا أجرة'}</Text>
               </View>
-              {order.driver_id ? <Text numberOfLines={1} style={{ color: adminStatusGroup(order.status) === 'done' ? color.accent : color.muted, fontSize: 12.5, fontWeight: adminStatusGroup(order.status) === 'done' ? '800' : '400', textAlign: 'right' }}>{adminStatusGroup(order.status) === 'done' ? `✅ سلّمه ${nameOf(order.driver_id)}${order.delivered_at ? ' · ' + timeAgo(order.delivered_at) : ''}${(cashCollected[order.id] ?? null) !== null ? ' · استلم ' + numberFormatter.format(cashCollected[order.id] as number) : ''}` : `🛵 ${nameOf(order.driver_id)}`}</Text> : null}
-              {hasReport ? <View style={{ backgroundColor: 'rgba(240,204,131,0.12)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 }}><Text style={{ color: '#F0CC83', fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>⚠️ بلاغ مفتوح على هالطلب</Text></View> : null}
-              {declinedNames.length ? <View style={{ backgroundColor: 'rgba(255,138,138,0.12)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 }}><Text style={{ color: '#FF8A8A', fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>⚠️ اعتذر {declinedNames.length} ({declinedNames.join('، ')})</Text></View> : null}
-              {silent ? <View style={{ backgroundColor: 'rgba(240,204,131,0.12)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 }}><Text style={{ color: '#F0CC83', fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>⏰ ما حدا من السائقين رد من {Math.floor((clock - Date.parse(order.delivery_quote_set_at ?? order.created_at)) / 60000)} دقيقة. أعد الإرسال للكل أو أسنده لسائق.</Text></View> : null}
-              {order.status === 'searching' && pendingOffers.length ? <View style={{ backgroundColor: 'rgba(240,204,131,0.12)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 }}><Text style={{ color: '#F0CC83', fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>{pendingOffers.length === 1 ? `⏳ ${nameOf(pendingOffers[0].driver_id)} · باقي ${minutesLeft(pendingOffers[0].expires_at)} د للرد` : `⏳ بانتظار رد ${pendingOffers.length} سائقين`}</Text></View> : null}
+              {order.driver_id ? <Text numberOfLines={1} style={{ color: adminStatusGroup(order.status) === 'done' ? color.accent : color.muted, fontSize: 12.5, fontWeight: adminStatusGroup(order.status) === 'done' ? '800' : '400', textAlign: 'left' }}>{adminStatusGroup(order.status) === 'done' ? `✅ سلّمه ${nameOf(order.driver_id)}${order.delivered_at ? ' · ' + timeAgo(order.delivered_at) : ''}${(cashCollected[order.id] ?? null) !== null ? ' · استلم ' + numberFormatter.format(cashCollected[order.id] as number) : ''}` : `🛵 ${nameOf(order.driver_id)}`}</Text> : null}
+              {hasReport ? <View style={{ backgroundColor: 'rgba(240,204,131,0.12)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 }}><Text style={{ color: '#F0CC83', fontSize: 12.5, fontWeight: '800', textAlign: 'left' }}>⚠️ بلاغ مفتوح على هالطلب</Text></View> : null}
+              {declinedNames.length ? <View style={{ backgroundColor: 'rgba(255,138,138,0.12)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 }}><Text style={{ color: '#FF8A8A', fontSize: 12.5, fontWeight: '800', textAlign: 'left' }}>⚠️ اعتذر {declinedNames.length} ({declinedNames.join('، ')})</Text></View> : null}
+              {silent ? <View style={{ backgroundColor: 'rgba(240,204,131,0.12)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 }}><Text style={{ color: '#F0CC83', fontSize: 12.5, fontWeight: '800', textAlign: 'left' }}>⏰ ما حدا من السائقين رد من {Math.floor((clock - Date.parse(order.delivery_quote_set_at ?? order.created_at)) / 60000)} دقيقة. أعد الإرسال للكل أو أسنده لسائق.</Text></View> : null}
+              {order.status === 'searching' && pendingOffers.length ? <View style={{ backgroundColor: 'rgba(240,204,131,0.12)', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8 }}><Text style={{ color: '#F0CC83', fontSize: 12.5, fontWeight: '800', textAlign: 'left' }}>{pendingOffers.length === 1 ? `⏳ ${nameOf(pendingOffers[0].driver_id)} · باقي ${minutesLeft(pendingOffers[0].expires_at)} د للرد` : `⏳ بانتظار رد ${pendingOffers.length} سائقين`}</Text></View> : null}
               {needs ? <View style={{ minHeight: 42, borderRadius: 14, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.background, fontSize: 14, fontWeight: '900' }}>{order.status === 'searching' ? 'إعادة الإرسال أو إسناد سائق ←' : order.delivery_quote_set_at ? 'إرسال الطلب للسائقين ←' : 'تحديد الأجرة وإرسال ←'}</Text></View> : null}
             </Pressable>;
           })}
           {finishedList.length ? <>
             {(() => { const shown = finishedList.slice(0, finishedShown); const groups: { label: string; items: AdminMobileOrder[] }[] = []; for (const order of shown) { const label = dayLabel(order.delivered_at ?? order.created_at); const last = groups[groups.length - 1]; if (last && last.label === label) last.items.push(order); else groups.push({ label, items: [order] }); } return groups.map((group) => <View key={`${group.label}-${group.items[0].id}`} style={{ gap: 6 }}>
-              <Text style={{ color: color.muted, fontSize: 13, fontWeight: '900', textAlign: 'right', paddingHorizontal: 2 }}>{group.label}</Text>
+              <Text style={{ color: color.muted, fontSize: 13, fontWeight: '900', textAlign: 'left', paddingHorizontal: 2 }}>{group.label}</Text>
               <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, overflow: 'hidden' }}>{group.items.map((order, index) => renderFinished(order, index))}</View>
             </View>); })()}
             {finishedList.length > finishedShown ? <Pressable onPress={() => setFinishedShown((value) => value + 25)} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.text, fontSize: 14, fontWeight: '800' }}>عرض المزيد ({finishedList.length - finishedShown})</Text></Pressable> : null}
