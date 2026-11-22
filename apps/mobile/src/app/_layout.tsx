@@ -7,6 +7,7 @@ import { ActivityIndicator, I18nManager, Platform, View } from 'react-native';
 if (Platform.OS !== 'web') {
   I18nManager.allowRTL(true);
   I18nManager.forceRTL(true);
+  I18nManager.swapLeftAndRightInRTL(false);
 }
 
 // Load only the weights used by AppText; importing the package entry loads
