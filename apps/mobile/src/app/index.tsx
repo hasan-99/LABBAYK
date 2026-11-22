@@ -2898,7 +2898,10 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
             {order.driver_id ? <Text numberOfLines={1} style={{ color: color.muted, fontSize: 14, textAlign: 'left' }}>السائق · <Text style={{ color: color.text, fontWeight: '900' }}>{nameOf(order.driver_id)}</Text></Text> : null}
             {!cancelled && order.delivered_at ? <Text style={{ color: adminTone.ok.fg, fontSize: 12.5, fontWeight: '700', textAlign: 'left' }}>✓ تسليم {timeAgo(order.delivered_at)}</Text> : null}
           </View>
-          <AdminImageStrip orderId={order.id} bucket={cancelled ? 'order-images' : 'delivery-proofs'} proofPath={order.delivery_proof_path} size={56} />
+        </View>
+        <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 14, padding: 12, gap: 8 }}>
+          <Text style={{ color: color.muted, fontSize: 13, fontWeight: '800', textAlign: 'left' }}>{cancelled ? 'صور الطلب' : 'صورة التسليم'}</Text>
+          <AdminImageStrip orderId={order.id} bucket={cancelled ? 'order-images' : 'delivery-proofs'} proofPath={cancelled ? undefined : order.delivery_proof_path} size={84} emptyText={cancelled ? 'ما في صور مرفقة للطلب.' : 'ما في صورة تسليم مرفقة.'} />
         </View>
         {!cancelled ? <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 4 }}>
           {row('المشتريات', order.purchase_amount_minor === null ? '—' : numberFormatter.format(order.purchase_amount_minor) + ' ل.س')}
