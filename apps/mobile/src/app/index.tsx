@@ -46,7 +46,9 @@ function useMobileTheme() {
   return theme;
 }
 const mobileThemeKey = 'labbayk-theme';
-const buildStamp = Updates.isEmbeddedLaunch ? 'النسخة المثبّتة (بدون تحديث)' : `تحديث ${Updates.createdAt ? Updates.createdAt.toISOString().slice(0, 16).replace('T', ' ') : (Updates.updateId ?? '').slice(0, 8)}`;
+const buildStamp = Updates.createdAt
+  ? `آخر تحديث: ${new Intl.DateTimeFormat('ar-SY', { dateStyle: 'medium', timeStyle: 'short' }).format(Updates.createdAt)}`
+  : 'وقت التحديث غير متاح';
 const sessionStabilityReleaseNoteKey = 'labbayk:release-note:rtl-update-20261123';
 const lightPalette = { ...tokens.color, background: '#F5F7F2', surface: '#FFFFFF', raised: '#EFF5E8', surfaceRaised: '#EFF5E8', border: '#DCE4D8', text: '#20241F', muted: '#5D645B', primary: '#343A32', accent: '#287A55', danger: '#B42318' } as unknown as typeof tokens.color;
 const lightColorMap: Record<string, string> = {
@@ -2437,6 +2439,7 @@ function AdminMoreTab({ email, theme, onToggleTheme, onSignOut }: { email: strin
       <View style={{ height: 1, backgroundColor: color.border }} />
       {row('تسجيل الخروج', null, () => { void confirmAction('تسجيل الخروج؟', 'رح تحتاج تدخل ببريد الإدارة وكلمة السر مرة ثانية.', 'خروج').then((ok) => { if (ok) onSignOut(); }); }, adminTone.bad.fg)}
     </View>
+    <Text style={{ color: color.muted, fontSize: 11, textAlign: 'center', marginTop: 14, marginBottom: 8, opacity: 0.8 }}>{buildStamp}</Text>
     <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>أقسام بلوحة الويب فقط حالياً</Text>
     <View style={box}>{webOnly.map((title, index) => <View key={title}>{index ? <View style={{ height: 1, backgroundColor: color.border }} /> : null}{row(title, 'متاح على لوحة الويب، مو بالتطبيق بعد', null)}</View>)}</View>
   </AdminTabShell>;
@@ -3511,6 +3514,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
         <PushStatusCard userId={userId} />
         <LegalLinksSection theme={theme}/>
         <Pressable onPress={onSignOut} style={[s.profileLogout,{marginTop:64,borderColor:c.border}]} accessibilityRole="button"><SymbolView name={{ ios: 'rectangle.portrait.and.arrow.right', android: 'logout', web: 'logout' }} tintColor={c.muted} size={19}/><Text style={[s.profileLogoutText,{color:c.muted}]}>تسجيل الخروج</Text></Pressable>
+        <Text style={s.versionStamp}>{buildStamp}</Text>
         {showDriverFlow && <DriverApplicationFlow key={inviteToken ?? 'driver-application'} userId={userId} initialToken={inviteToken} knownStatus={driverStatus}/>}
       </StaggeredSections></View>}
       </StaggeredSections>
