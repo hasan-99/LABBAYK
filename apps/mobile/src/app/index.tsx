@@ -47,6 +47,7 @@ function useMobileTheme() {
 }
 const mobileThemeKey = 'labbayk-theme';
 const buildStamp = Updates.isEmbeddedLaunch ? 'النسخة المثبّتة (بدون تحديث)' : `تحديث ${Updates.createdAt ? Updates.createdAt.toISOString().slice(0, 16).replace('T', ' ') : (Updates.updateId ?? '').slice(0, 8)}`;
+const sessionStabilityReleaseNoteKey = 'labbayk:release-note:session-stability-20261122';
 const lightPalette = { ...tokens.color, background: '#F5F7F2', surface: '#FFFFFF', raised: '#EFF5E8', surfaceRaised: '#EFF5E8', border: '#DCE4D8', text: '#20241F', muted: '#5D645B', primary: '#343A32', accent: '#287A55', danger: '#B42318' } as unknown as typeof tokens.color;
 const lightColorMap: Record<string, string> = {
   '#0B1411':'#F5F7F2','#101A14':'#F5F7F2','#0F1A13':'#F5F7F2','#111c16':'#F5F7F2','#121d16':'#F5F7F2',
@@ -3579,6 +3580,32 @@ function NetworkStatusBanner() {
   </View>;
 }
 
+function SessionStabilityReleaseNote({ visible, theme, onDismiss }: { visible: boolean; theme: 'dark' | 'light'; onDismiss: () => void }) {
+  const colors = theme === 'light' ? lightPalette : tokens.color;
+  const dark = theme === 'dark';
+  return <Modal visible={visible} transparent statusBarTranslucent navigationBarTranslucent animationType="fade" onRequestClose={onDismiss}>
+    <View accessibilityViewIsModal style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 22, backgroundColor: 'rgba(5, 12, 8, 0.78)' }}>
+      <View accessibilityRole="summary" accessibilityLabel="تحديث جديد: حسّنا ثبات تسجيل الدخول واستعادة الجلسة" style={{ width: '100%', maxWidth: 430, padding: 21, borderRadius: 25, borderWidth: 1.5, borderColor: dark ? '#57763D' : '#B7D66C', backgroundColor: colors.surface, shadowColor: '#000', shadowOpacity: dark ? 0.4 : 0.16, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 12 }}>
+        <View style={{ alignItems: 'center' }}>
+          <View style={{ width: 66, height: 66, alignItems: 'center', justifyContent: 'center', borderRadius: 22, backgroundColor: '#B7FF30', borderWidth: 1, borderColor: '#A5E522' }}>
+            <Text style={{ color: '#0B1411', fontSize: 34, lineHeight: 40, fontWeight: '900' }}>✓</Text>
+          </View>
+          <View style={{ marginTop: 16, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: dark ? '#344629' : '#EFF5E8', borderWidth: 1, borderColor: dark ? '#58753B' : '#C9D9A7' }}>
+            <Text style={{ color: dark ? '#DFFFAD' : '#385616', fontSize: 12, fontWeight: '900', textAlign: 'center' }}>تحديث جديد</Text>
+          </View>
+          <Text style={{ color: colors.text, fontSize: 21, lineHeight: 30, fontWeight: '900', textAlign: 'center', marginTop: 13 }}>حسّنا ثبات تسجيل الدخول</Text>
+          <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 25, textAlign: 'center', marginTop: 9 }}>
+            عالجنا استعادة الجلسة عند الرجوع للتطبيق أو ضعف الاتصال، لتقليل طلب تسجيل الدخول من جديد.
+          </Text>
+        </View>
+        <Pressable onPress={onDismiss} accessibilityRole="button" accessibilityLabel="إغلاق ملاحظات التحديث" style={{ minHeight: 52, alignItems: 'center', justifyContent: 'center', marginTop: 22, borderRadius: 15, backgroundColor: '#B7FF30', borderWidth: 1, borderColor: '#A5E522' }}>
+          <Text style={{ color: '#0B1411', fontSize: 15, fontWeight: '900' }}>تمام، شكرًا</Text>
+        </Pressable>
+      </View>
+    </View>
+  </Modal>;
+}
+
 export default function HomeScreen() {
   const { invite: rawInvite, openOrder: rawOpenOrder } = useLocalSearchParams<{ invite?: string | string[]; openOrder?: string | string[] }>();
   const router = useRouter();
@@ -3588,6 +3615,7 @@ export default function HomeScreen() {
   const [session, setSession] = useState<Session | null>(null);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [sessionReleaseNoteVisible, setSessionReleaseNoteVisible] = useState(false);
   const [ready, setReady] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const colors = theme === 'light' ? lightPalette : tokens.color;
@@ -3603,6 +3631,18 @@ export default function HomeScreen() {
       if (active && savedTheme === 'light') setTheme('light');
     }).catch(() => {});
     return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    if (!Updates.isEnabled || Updates.isEmbeddedLaunch || !Updates.updateId) return;
+    let active = true;
+    void AsyncStorage.getItem(sessionStabilityReleaseNoteKey).then((seen) => {
+      if (active && seen !== 'seen') setSessionReleaseNoteVisible(true);
+    }).catch(() => { if (active) setSessionReleaseNoteVisible(true); });
+    return () => { active = false; };
+  }, []);
+  const dismissSessionReleaseNote = useCallback(() => {
+    setSessionReleaseNoteVisible(false);
+    void AsyncStorage.setItem(sessionStabilityReleaseNoteKey, 'seen').catch(() => {});
   }, []);
   useEffect(() => {
     if (typeof document !== 'undefined') { document.documentElement.dataset.theme = theme; document.documentElement.style.colorScheme = theme; }
@@ -3704,7 +3744,7 @@ export default function HomeScreen() {
             await supabase?.auth.signOut({ scope: 'local' });
           } finally { setSigningOut(false); }
         }} theme={theme} onToggleTheme={() => applyTheme(theme === 'dark' ? 'light' : 'dark')} />;
-  return <MobileThemeContext.Provider value={themeContext}><ToastProvider theme={theme}><View style={{ flex: 1, backgroundColor: colors.background }}><NetworkStatusBanner />{screen}{signingOut ? <View accessibilityRole="progressbar" accessibilityLabel="جاري تسجيل الخروج" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 14, backgroundColor: 'rgba(11,20,17,0.88)', zIndex: 9999 }}><ActivityIndicator size="large" color="#B7FF30" /><Text style={{ color: '#EEF3EE', fontSize: 16, fontWeight: '800' }}>جاري تسجيل الخروج…</Text></View> : null}</View></ToastProvider></MobileThemeContext.Provider>;
+  return <MobileThemeContext.Provider value={themeContext}><ToastProvider theme={theme}><View style={{ flex: 1, backgroundColor: colors.background }}><NetworkStatusBanner />{screen}{signingOut ? <View accessibilityRole="progressbar" accessibilityLabel="جاري تسجيل الخروج" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 14, backgroundColor: 'rgba(11,20,17,0.88)', zIndex: 9999 }}><ActivityIndicator size="large" color="#B7FF30" /><Text style={{ color: '#EEF3EE', fontSize: 16, fontWeight: '800' }}>جاري تسجيل الخروج…</Text></View> : null}</View><SessionStabilityReleaseNote visible={sessionReleaseNoteVisible} theme={theme} onDismiss={dismissSessionReleaseNote} /></ToastProvider></MobileThemeContext.Provider>;
 }
 
 const styleDefinitions = {
