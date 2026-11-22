@@ -1,4 +1,4 @@
-import { StyleSheet, Text, type TextProps } from 'react-native';
+import { I18nManager, Platform, StyleSheet, Text, type TextProps } from 'react-native';
 
 const families: Record<string, string> = {
   '400': 'Tajawal_400Regular',
@@ -18,5 +18,10 @@ export function AppText({ style, ...props }: TextProps) {
     : props.children;
   const writingDirection = textStyle?.writingDirection
     ?? (typeof childrenText === 'string' && /[\u0600-\u06FF]/u.test(childrenText) ? 'rtl' : undefined);
-  return <Text {...props} style={[writingDirection ? { writingDirection } : null, style, { fontFamily: family }]} />;
+  // React Native Android reverses left/right Text alignment when its layout is RTL.
+  // Compensate here so a right-aligned label occupies the same side as on web.
+  const androidAlign: 'left' | 'right' | undefined = Platform.OS === 'android' && I18nManager.isRTL && writingDirection === 'rtl'
+    ? textStyle?.textAlign === 'right' ? 'left' : textStyle?.textAlign === 'left' ? 'right' : undefined
+    : undefined;
+  return <Text {...props} style={[writingDirection ? { writingDirection } : null, style, { fontFamily: family }, androidAlign ? { textAlign: androidAlign } : null]} />;
 }
