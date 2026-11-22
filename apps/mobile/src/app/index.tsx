@@ -3614,25 +3614,76 @@ export default function HomeScreen() {
   }, [inviteFromLink, router]);
   useEffect(() => {
     if (!supabase) { setReady(true); return; }
+    const authClient = supabase;
     let active = true;
     let resolved = false;
+    let authEventResolvedSession = false;
     const readyTimeout = setTimeout(() => { if (active) setReady(true); }, 5000);
+    const authErrorCode = (error: unknown) => {
+      const value = error as { code?: unknown; status?: unknown; name?: unknown } | null;
+      return {
+        code: typeof value?.code === 'string' ? value.code : typeof value?.name === 'string' ? value.name : 'unknown',
+        status: typeof value?.status === 'number' ? value.status : undefined,
+      };
+    };
+    const { data: { subscription } } = authClient.auth.onAuthStateChange((event, value) => {
+      if (!active) return;
+      // INITIAL_SESSION(null) is not proof that a saved session is gone: Auth can
+      // emit it when a refresh cannot finish yet (for example, while offline).
+      // A real SIGNED_OUT or a non-empty session event is authoritative.
+      if (value) {
+        authEventResolvedSession = true;
+        console.info('[auth-diagnostic]', JSON.stringify({ event, platform: Platform.OS, hasSession: true }));
+        setSession(value);
+      } else if (event === 'SIGNED_OUT') {
+        authEventResolvedSession = true;
+        console.info('[auth-diagnostic]', JSON.stringify({ event, platform: Platform.OS, hasSession: false }));
+        setSession(null);
+      } else if (event !== 'INITIAL_SESSION') {
+        console.info('[auth-diagnostic]', JSON.stringify({ event, platform: Platform.OS, hasSession: false }));
+      }
+      if (event === 'PASSWORD_RECOVERY') setPasswordRecovery(true);
+    });
+    const appStateSubscription = Platform.OS === 'web' ? null : AppState.addEventListener('change', (state) => {
+      if (state === 'active') void authClient.auth.startAutoRefresh();
+      else void authClient.auth.stopAutoRefresh();
+    });
+    if (Platform.OS !== 'web' && AppState.currentState === 'active') void authClient.auth.startAutoRefresh();
+    else if (Platform.OS !== 'web' && AppState.currentState !== null) void authClient.auth.stopAutoRefresh();
     // Open instantly from the session saved on the device; getSession() (which may need the network
     // to refresh an expired token) confirms or replaces it below.
     const storedSessionPromise = readStoredSession().then((stored) => {
-      if (active && stored && !resolved) { setSession(stored); setReady(true); }
+      if (active && stored && !resolved && !authEventResolvedSession) { setSession(stored); setReady(true); }
       return stored;
     }).catch(() => null);
-    void supabase.auth.getSession()
-      .then(({ data }) => { resolved = true; if (active) setSession(data.session); })
-      .catch(async () => {
-        // A temporary auth/network failure must not discard a session already saved on this device.
+    void authClient.auth.getSession()
+      .then(async ({ data, error }) => {
+        resolved = true;
+        if (!active || authEventResolvedSession) return;
+        if (error) {
+          const cached = await storedSessionPromise;
+          console.warn('[auth-diagnostic]', JSON.stringify({ event: 'session_restore_failed', platform: Platform.OS, ...authErrorCode(error), hasCachedSession: !!cached }));
+          if (active && !authEventResolvedSession && cached) setSession(cached);
+          return;
+        }
+        if (data.session) {
+          setSession(data.session);
+          return;
+        }
+        // A delayed empty getSession result must not overwrite a session received
+        // from Auth events or the secure device cache while startup was in flight.
+        const cached = await storedSessionPromise;
+        if (active && !authEventResolvedSession) setSession(cached);
+      })
+      .catch(async (error: unknown) => {
+        // Temporary auth/network failures must not discard a session saved on this device.
         const stored = await storedSessionPromise;
-        if (active && stored) setSession(stored);
+        const diagnostic = authErrorCode(error);
+        console.warn('[auth-diagnostic]', JSON.stringify({ event: 'session_restore_threw', platform: Platform.OS, ...diagnostic, hasCachedSession: !!stored }));
+        if (active && !authEventResolvedSession && stored) setSession(stored);
       })
       .finally(() => { clearTimeout(readyTimeout); if (active) setReady(true); });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, value) => { if (event === 'PASSWORD_RECOVERY') setPasswordRecovery(true); setSession(value); });
-    return () => { active = false; clearTimeout(readyTimeout); subscription.unsubscribe(); };
+    return () => { active = false; clearTimeout(readyTimeout); subscription.unsubscribe(); appStateSubscription?.remove(); };
   }, []);
   const screen = !supabaseConfigured
     ? <AuthScreen inviteToken={inviteToken || undefined} theme={theme} />
