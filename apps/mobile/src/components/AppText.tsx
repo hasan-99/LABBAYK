@@ -10,7 +10,13 @@ const families: Record<string, string> = {
 };
 
 export function AppText({ style, ...props }: TextProps) {
-  const weight = StyleSheet.flatten(style)?.fontWeight;
+  const textStyle = StyleSheet.flatten(style);
+  const weight = textStyle?.fontWeight;
   const family = families[String(weight ?? '400')] ?? families['400'];
-  return <Text {...props} style={[style, { fontFamily: family }]} />;
+  const childrenText = Array.isArray(props.children)
+    ? props.children.filter((child): child is string => typeof child === 'string').join(' ')
+    : props.children;
+  const writingDirection = textStyle?.writingDirection
+    ?? (typeof childrenText === 'string' && /[\u0600-\u06FF]/u.test(childrenText) ? 'rtl' : undefined);
+  return <Text {...props} style={[writingDirection ? { writingDirection } : null, style, { fontFamily: family }]} />;
 }
