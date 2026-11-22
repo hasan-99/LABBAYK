@@ -2965,7 +2965,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
             </Pressable>;
           })}
           {finishedList.length ? <>
-            {(() => { const shown = finishedList.slice(0, finishedShown); const groups: { label: string; items: AdminMobileOrder[] }[] = []; for (const order of shown) { const label = dayLabel(order.delivered_at ?? order.created_at); const last = groups[groups.length - 1]; if (last && last.label === label) last.items.push(order); else groups.push({ label, items: [order] }); } return groups.map((group) => <View key={group.label} style={{ gap: 6 }}>
+            {(() => { const shown = finishedList.slice(0, finishedShown); const groups: { label: string; items: AdminMobileOrder[] }[] = []; for (const order of shown) { const label = dayLabel(order.delivered_at ?? order.created_at); const last = groups[groups.length - 1]; if (last && last.label === label) last.items.push(order); else groups.push({ label, items: [order] }); } return groups.map((group) => <View key={`${group.label}-${group.items[0].id}`} style={{ gap: 6 }}>
               <Text style={{ color: color.muted, fontSize: 13, fontWeight: '900', textAlign: 'right', paddingHorizontal: 2 }}>{group.label}</Text>
               <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, overflow: 'hidden' }}>{group.items.map((order, index) => renderFinished(order, index))}</View>
             </View>); })()}
