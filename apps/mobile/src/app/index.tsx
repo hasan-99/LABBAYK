@@ -47,7 +47,7 @@ function useMobileTheme() {
 }
 const mobileThemeKey = 'labbayk-theme';
 const buildStamp = Updates.isEmbeddedLaunch ? 'النسخة المثبّتة (بدون تحديث)' : `تحديث ${Updates.createdAt ? Updates.createdAt.toISOString().slice(0, 16).replace('T', ' ') : (Updates.updateId ?? '').slice(0, 8)}`;
-const sessionStabilityReleaseNoteKey = 'labbayk:release-note:session-stability-20261122';
+const sessionStabilityReleaseNoteKey = 'labbayk:release-note:rtl-update-20261123';
 const lightPalette = { ...tokens.color, background: '#F5F7F2', surface: '#FFFFFF', raised: '#EFF5E8', surfaceRaised: '#EFF5E8', border: '#DCE4D8', text: '#20241F', muted: '#5D645B', primary: '#343A32', accent: '#287A55', danger: '#B42318' } as unknown as typeof tokens.color;
 const lightColorMap: Record<string, string> = {
   '#0B1411':'#F5F7F2','#101A14':'#F5F7F2','#0F1A13':'#F5F7F2','#111c16':'#F5F7F2','#121d16':'#F5F7F2',
@@ -3597,7 +3597,7 @@ function SessionStabilityReleaseNote({ visible, theme, onDismiss }: { visible: b
   const dark = theme === 'dark';
   return <Modal visible={visible} transparent statusBarTranslucent navigationBarTranslucent animationType="fade" onRequestClose={onDismiss}>
     <View accessibilityViewIsModal style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 22, backgroundColor: 'rgba(5, 12, 8, 0.78)' }}>
-      <View accessibilityRole="summary" accessibilityLabel="تحديث جديد: حسّنا ثبات تسجيل الدخول واستعادة الجلسة" style={{ width: '100%', maxWidth: 430, padding: 21, borderRadius: 25, borderWidth: 1.5, borderColor: dark ? '#57763D' : '#B7D66C', backgroundColor: colors.surface, shadowColor: '#000', shadowOpacity: dark ? 0.4 : 0.16, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 12 }}>
+      <View accessibilityRole="summary" accessibilityLabel="تحديث جديد: حسّنا عرض التطبيق بالعربية على أجهزة Android وiPhone" style={{ width: '100%', maxWidth: 430, padding: 21, borderRadius: 25, borderWidth: 1.5, borderColor: dark ? '#57763D' : '#B7D66C', backgroundColor: colors.surface, shadowColor: '#000', shadowOpacity: dark ? 0.4 : 0.16, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 12 }}>
         <View style={{ alignItems: 'center' }}>
           <View style={{ width: 66, height: 66, alignItems: 'center', justifyContent: 'center', borderRadius: 22, backgroundColor: '#B7FF30', borderWidth: 1, borderColor: '#A5E522' }}>
             <Text style={{ color: '#0B1411', fontSize: 34, lineHeight: 40, fontWeight: '900' }}>✓</Text>
@@ -3605,9 +3605,9 @@ function SessionStabilityReleaseNote({ visible, theme, onDismiss }: { visible: b
           <View style={{ marginTop: 16, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: dark ? '#344629' : '#EFF5E8', borderWidth: 1, borderColor: dark ? '#58753B' : '#C9D9A7' }}>
             <Text style={{ color: dark ? '#DFFFAD' : '#385616', fontSize: 12, fontWeight: '900', textAlign: 'center' }}>تحديث جديد</Text>
           </View>
-          <Text style={{ color: colors.text, fontSize: 21, lineHeight: 30, fontWeight: '900', textAlign: 'center', marginTop: 13 }}>حسّنا ثبات تسجيل الدخول</Text>
+          <Text style={{ color: colors.text, fontSize: 21, lineHeight: 30, fontWeight: '900', textAlign: 'center', marginTop: 13 }}>تجربة أوضح بالعربي</Text>
           <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 25, textAlign: 'center', marginTop: 9 }}>
-            عالجنا استعادة الجلسة عند الرجوع للتطبيق أو ضعف الاتصال، لتقليل طلب تسجيل الدخول من جديد.
+            حسّنا عرض شاشة الدخول واتجاه الواجهة على أجهزة Android وiPhone. إذا ما ظهرت التغييرات، سكّر التطبيق وافتحه من جديد.
           </Text>
         </View>
         <Pressable onPress={onDismiss} accessibilityRole="button" accessibilityLabel="إغلاق ملاحظات التحديث" style={{ minHeight: 52, alignItems: 'center', justifyContent: 'center', marginTop: 22, borderRadius: 15, backgroundColor: '#B7FF30', borderWidth: 1, borderColor: '#A5E522' }}>
