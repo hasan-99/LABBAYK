@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Keyboard, KeyboardAvoidingView, NativeScrollEvent, NativeSyntheticEvent, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, I18nManager, Keyboard, KeyboardAvoidingView, NativeScrollEvent, NativeSyntheticEvent, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import type { ScrollViewInstance, TextInputInstance } from 'react-native';
 import { Image } from 'expo-image';
 import * as Linking from 'expo-linking';
@@ -180,7 +180,18 @@ const authStyleDefinitions = {
 };
 const authLightColors: Record<string,string> = {'#0B1411':'#F3F6F2','#142119':'#FFFFFF','#0F1A13':'#F3F6F2','#17251C':'#EDF3ED','#fff':'#18251C','#A9B9B0':'#58675D','#B8C8BE':'#58675D','#E4EEE7':'#24352A','#839188':'#65746A','#DFFFAD':'#365600','#DFFFAE':'#365600','#D3EFA4':'#365600','#2C4034':'#D5DFD6','#405449':'#C5D2C7','#F6D795':'#755A00','#FFD1D1':'#A33420','#451E21':'#FBE9E7','#263820':'#EAF3DF','#352D1D':'#FFF4D6'};
 function authStyles(theme: 'dark' | 'light'): Record<string, any> {
-  if (theme === 'dark') return StyleSheet.create(authStyleDefinitions as never) as Record<string, any>;
-  const styles = Object.fromEntries(Object.entries(authStyleDefinitions).map(([name, style]) => [name, Object.fromEntries(Object.entries(style).map(([key,value]) => [key, typeof value === 'string' && /color/i.test(key) ? (key === 'color' && value === '#0B1411' ? '#18251C' : authLightColors[value] ?? (key === 'borderColor' ? '#D5DFD6' : value)) : value]))]));
+  // Native RTL automatically swaps physical left/right styles. Counter that on
+  // this screen so its hero art and password eye stay on the same sides as web.
+  const definitions = Platform.OS !== 'web' && I18nManager.isRTL ? {
+    ...authStyleDefinitions,
+    heroText: { width: '56%', marginRight: 'auto', zIndex: 2 },
+    art: { position: 'absolute', right: -17, top: 0, bottom: 0, width: '39%', alignItems: 'center', justifyContent: 'center' },
+    artPin: { position: 'absolute', left: 0, top: 9, width: 35, height: 35, borderRadius: 12, backgroundColor: '#18251A', alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '15deg' }] },
+    artSpark: { position: 'absolute', right: 5, top: 26, width: 10, height: 10, borderRadius: 4, backgroundColor: '#F8FFE9' },
+    passwordInput: { paddingRight: 50, textAlign: 'right' },
+    passwordEye: { position: 'absolute', right: 14, width: 28, height: 40, alignItems: 'center', justifyContent: 'center' },
+  } : authStyleDefinitions;
+  if (theme === 'dark') return StyleSheet.create(definitions as never) as Record<string, any>;
+  const styles = Object.fromEntries(Object.entries(definitions).map(([name, style]) => [name, Object.fromEntries(Object.entries(style).map(([key,value]) => [key, typeof value === 'string' && /color/i.test(key) ? (key === 'color' && value === '#0B1411' ? '#18251C' : authLightColors[value] ?? (key === 'borderColor' ? '#D5DFD6' : value)) : value]))]));
   return StyleSheet.create(styles as never) as Record<string, any>;
 }
