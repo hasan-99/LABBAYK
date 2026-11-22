@@ -686,6 +686,7 @@ export type Database = {
           delivery_code_hash: string | null
           cash_collected_minor: number | null
           delivery_note: string | null
+          delivery_proof_path: string | null
           delivery_fee_minor: number
             delivery_quote_approved_at: string | null
             delivery_quote_set_at: string | null
@@ -726,6 +727,7 @@ export type Database = {
           delivery_code_hash?: string | null
           cash_collected_minor?: number | null
           delivery_note?: string | null
+          delivery_proof_path?: string | null
           delivery_fee_minor: number
             delivery_quote_approved_at?: string | null
             delivery_quote_set_at?: string | null
@@ -766,6 +768,7 @@ export type Database = {
           delivery_code_hash?: string | null
           cash_collected_minor?: number | null
           delivery_note?: string | null
+          delivery_proof_path?: string | null
           delivery_fee_minor?: number
             delivery_quote_approved_at?: string | null
             delivery_quote_set_at?: string | null

@@ -12,7 +12,7 @@ export type CustomerOrderDraft = {
   images?: CustomerOrderImageDraft[];
 };
 
-type OrderSummary = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'>;
+type OrderSummary = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'delivery_proof_path'>;
 export type CustomerOrderSnapshot = { schemaVersion: 1; orders: OrderSummary[]; syncedAt: string };
 
 const storageKey = (userId: string) => `labbayk:customer-order-draft:${userId}`;

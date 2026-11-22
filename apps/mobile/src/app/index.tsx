@@ -181,7 +181,7 @@ export function generateMetadata(): Metadata {
 }
 type Address = Database['public']['Tables']['addresses']['Row'];
 type DriverOfferAddress = Pick<Address, 'id'|'label'|'street'|'city'|'neighborhood'|'building'|'landmark'>;
-type CustomerOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'> & { driver_id?: string | null; delivered_at?: string | null; is_urgent?: boolean };
+type CustomerOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'delivery_proof_path'> & { driver_id?: string | null; delivered_at?: string | null; is_urgent?: boolean };
 type DriverOfferCard = { id: string; expires_at: string; order: Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'address_id'> & { is_urgent?: boolean; address: DriverOfferAddress | null } };
 type DriverActiveOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'address_id'> & { is_urgent?: boolean; address: Pick<Address, 'id'|'label'|'street'|'city'|'neighborhood'|'contact_phone'|'building'|'landmark'> | null };
 const newRequestKey = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => { const value = Math.random() * 16 | 0; return (char === 'x' ? value : (value & 3 | 8)).toString(16); });
@@ -901,7 +901,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   const loadHistory = useCallback(async () => {
     if (!supabase || (!online && !forceNetworkRefresh.current)) return;
     // Cash and note columns come with the main query; addresses follow in one more request.
-    const { data, error } = await supabase.from('orders').select('id,request_text,status,delivery_fee_minor,purchase_amount_minor,delivered_at,created_at,address_id,cash_collected_minor,delivery_note').eq('driver_id', userId).in('status', ['delivered', 'settled']).order('delivered_at', { ascending: false }).limit(100);
+    const { data, error } = await supabase.from('orders').select('id,request_text,status,delivery_fee_minor,purchase_amount_minor,delivered_at,delivery_proof_path,created_at,address_id,cash_collected_minor,delivery_note').eq('driver_id', userId).in('status', ['delivered', 'settled']).order('delivered_at', { ascending: false }).limit(100);
     if (error) { setMessage('ما قدرنا نحمّل سجل طلباتك. جرّب مرة ثانية.'); return; }
     const rows = data ?? [];
     // Cancelled orders are detached from the driver, so they come from their own call (older databases just return nothing).
@@ -1033,6 +1033,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
               const plain = await supabase!.storage.from('delivery-proofs').upload(path, body, { contentType: mimeType, cacheControl: '3600', upsert: false });
               if (plain.error) throw plain.error;
             }
+            forgetOrderImages('delivery-proofs', orderId);
             live({ status: 'done', progress: 1, path });
             return path;
           } catch {
@@ -1087,7 +1088,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       if (missing(error)) ({ error } = await supabase.rpc('confirm_order_delivery_with_photo', { p_order_id: orderId, p_proof_path: path }));
       if (error) throw error;
       const finished = activeOrders.find((order) => order.id === orderId);
-      if (finished) setDeliveredReceipt({ id: finished.id, createdAt: finished.created_at, deliveredAt: new Date().toISOString(), request: finished.request_text, address: finished.address ?? null, purchase: finished.purchase_amount_minor, fee: finished.delivery_fee_minor, collected, note });
+      if (finished) setDeliveredReceipt({ id: finished.id, createdAt: finished.created_at, deliveredAt: new Date().toISOString(), deliveryProofPath: path, request: finished.request_text, address: finished.address ?? null, purchase: finished.purchase_amount_minor, fee: finished.delivery_fee_minor, collected, note });
       setBusy(false); setPendingAction(''); closeDeliveryDraft(); setActiveOrders((current) => current.filter((order) => order.id !== orderId)); setActiveOrdersCount((count) => Math.max(0, count - 1)); setMessage('تم تسليم الطلب وحُفظت صورة الإثبات.'); void refreshNow();
     } catch {
       setBusy(false); setPendingAction(''); setMessage('ما قدرنا نأكد التسليم. تأكد من الاتصال وجرّب مرة ثانية.');
@@ -1129,7 +1130,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
             </View>
             <View style={{ alignItems: 'flex-start' }}><Text style={{ color: c.primary, fontSize: 15.5, fontWeight: '900' }}>{numberFormatter.format(order.delivery_fee_minor)}</Text><Text style={{ color: c.accent, fontSize: 11, fontWeight: '800', marginTop: 2 }}>{order.status === 'settled' ? '✅ تمت التسوية' : '✅ تم التوصيل'}</Text></View>
           </Pressable>
-          {open && <OrderReceipt data={{ id: order.id, createdAt: order.created_at, deliveredAt: order.delivered_at, request: order.request_text, address: addr ?? null, purchase: order.purchase_amount_minor, fee: order.delivery_fee_minor, collected: extra?.cash ?? null, note: extra?.note ?? null }} />}
+          {open && <OrderReceipt data={{ id: order.id, createdAt: order.created_at, deliveredAt: order.delivered_at, deliveryProofPath: order.delivery_proof_path, request: order.request_text, address: addr ?? null, purchase: order.purchase_amount_minor, fee: order.delivery_fee_minor, collected: extra?.cash ?? null, note: extra?.note ?? null }} />}
         </View>; })}
       </View>)}
       {entries.length > historyVisible ? <Pressable onPress={() => setHistoryVisible((count) => count + 20)} accessibilityRole="button" style={{ minHeight: 44, borderRadius: 14, borderWidth: 1, borderColor: c.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: c.primary, fontSize: 13.5, fontWeight: '800' }}>عرض المزيد ({entries.length - historyVisible})</Text></Pressable> : null}
@@ -1675,7 +1676,7 @@ function SignedInHome({ userId, email, inviteToken, openOrderId, onSignOut, them
   return <DriverWorkspace userId={userId} email={email} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
 }
 
-type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'customer_id'|'address_id'|'delivered_at'|'purchase_amount_minor'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'created_at'|'cash_collected_minor'|'delivery_note'|'shopping_admin_alerted_at'|'delivery_admin_alerted_at'> & { is_urgent?: boolean };
+type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'customer_id'|'address_id'|'delivered_at'|'delivery_proof_path'|'purchase_amount_minor'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'created_at'|'cash_collected_minor'|'delivery_note'|'shopping_admin_alerted_at'|'delivery_admin_alerted_at'> & { is_urgent?: boolean };
 type AdminMobileDriver = Pick<Database['public']['Tables']['driver_profiles']['Row'], 'user_id'|'vehicle_description'>;
 
 const pickupPrefix = 'الشراء من: ';
@@ -1686,10 +1687,10 @@ type CachedImage = { path: string; url: string; key: string };
 /** Remote avatars get a stable cache key so the photo is downloaded once; local drafts don't. */
 const avatarSource = (uri: string, path: string | null) => path && !uri.startsWith('file:') && !uri.startsWith('blob:') && !uri.startsWith('data:') ? { uri, cacheKey: imageCacheKey('profile-avatars', path) } : { uri };
 /** Order photos with cached listing + signed URLs; renders instantly when this order was seen before. */
-function useOrderImages(bucket: 'order-images' | 'delivery-proofs', orderId: string, enabled = true) {
+function useOrderImages(bucket: 'order-images' | 'delivery-proofs', orderId: string, enabled = true, proofPath?: string | null) {
   const online = useInternetAvailable();
   const fromCache = () => {
-    const paths = peekOrderImagePaths(bucket, orderId);
+    const paths = bucket === 'delivery-proofs' && proofPath ? [proofPath] : peekOrderImagePaths(bucket, orderId);
     if (!paths) return null;
     const images = paths.flatMap((path) => { const url = peekSignedImageUrl(bucket, path); return url ? [{ path, url, key: imageCacheKey(bucket, path) }] : []; });
     return images.length === paths.length ? images : null;
@@ -1699,18 +1700,18 @@ function useOrderImages(bucket: 'order-images' | 'delivery-proofs', orderId: str
     if (!enabled || !online) return;
     let active = true;
     void (async () => {
-      const paths = await listOrderImagePaths(bucket, orderId);
+      const paths = bucket === 'delivery-proofs' && proofPath ? [proofPath] : await listOrderImagePaths(bucket, orderId);
       if (!active) return;
       if (!paths) { setImages((current) => current ?? []); return; }
       const urls = paths.length ? await signedImageUrls(bucket, paths) : {};
       if (active) setImages(paths.flatMap((path) => urls[path] ? [{ path, url: urls[path], key: imageCacheKey(bucket, path) }] : []));
     })().catch(() => { if (active) setImages((current) => current ?? []); });
     return () => { active = false; };
-  }, [bucket, enabled, online, orderId]);
+  }, [bucket, enabled, online, orderId, proofPath]);
   return images;
 }
 
-type ReceiptData = { id: string; createdAt: string | null; deliveredAt: string | null; request: string; address: { neighborhood: string; city: string } | null; purchase: number | null; fee: number; collected: number | null; note: string | null; driverName?: string; customerName?: string };
+type ReceiptData = { id: string; createdAt: string | null; deliveredAt: string | null; deliveryProofPath?: string | null; request: string; address: { neighborhood: string; city: string } | null; purchase: number | null; fee: number; collected: number | null; note: string | null; driverName?: string; customerName?: string };
 // A paper-style receipt for a finished order. Commission is read here (admins from the settlement, drivers from their own wallet).
 function CustomerHomeSkeleton() {
   return <View style={{ gap: 14, marginTop: 4 }} accessibilityLabel="عم نحمّل الصفحة">
@@ -1838,14 +1839,14 @@ function OrderReceipt({ data, admin = false }: { data: ReceiptData; admin?: bool
       {row(admin ? 'إجمالي ربح السائق' : 'إجمالي ربحي من الطلب', money(net + (data.collected === null ? 0 : diff)), { big: true, tint: good })}
     </View> : null}
     <View style={section}>
-      <AdminImageStrip orderId={data.id} bucket="delivery-proofs" size={84} emptyText="ما في صورة تسليم لهذا الطلب." />
+      <AdminImageStrip orderId={data.id} bucket="delivery-proofs" proofPath={data.deliveryProofPath} size={84} emptyText="ما في صورة تسليم لهذا الطلب." />
       {data.note ? <Text style={{ color: muted, fontSize: 12.5, lineHeight: 20, textAlign: 'right' }}>ملاحظة: {data.note}</Text> : null}
     </View>
   </View>;
 }
-function AdminOrderThumb({ orderId, bucket = 'order-images' }: { orderId: string; bucket?: 'order-images' | 'delivery-proofs' }) {
+function AdminOrderThumb({ orderId, bucket = 'order-images', proofPath }: { orderId: string; bucket?: 'order-images' | 'delivery-proofs'; proofPath?: string | null }) {
   const { colors: c } = useMobileTheme();
-  const images = useOrderImages(bucket, orderId);
+  const images = useOrderImages(bucket, orderId, true, proofPath);
   if (!images?.length) return null;
   return <View style={{ width: 68, height: 68 }}>
     <Image source={{ uri: images[0].url, cacheKey: images[0].key }} style={{ width: 68, height: 68, borderRadius: 15, backgroundColor: c.raised }} contentFit="cover" cachePolicy="memory-disk" recyclingKey={images[0].key} transition={120} />
@@ -1853,9 +1854,9 @@ function AdminOrderThumb({ orderId, bucket = 'order-images' }: { orderId: string
   </View>;
 }
 
-function AdminImageStrip({ orderId, bucket = 'order-images', size = 64, emptyText }: { orderId: string; bucket?: 'order-images' | 'delivery-proofs'; size?: number; emptyText?: string }) {
+function AdminImageStrip({ orderId, bucket = 'order-images', proofPath, size = 64, emptyText }: { orderId: string; bucket?: 'order-images' | 'delivery-proofs'; proofPath?: string | null; size?: number; emptyText?: string }) {
   const { colors: c } = useMobileTheme();
-  const images = useOrderImages(bucket, orderId);
+  const images = useOrderImages(bucket, orderId, true, proofPath);
   const [open, setOpen] = useState<CachedImage | null>(null);
   if (images === null) return <View style={{ flexDirection: 'row-reverse' }}><SkeletonBlock width={size} height={size} style={{ alignSelf: 'auto', borderRadius: 12 }} /></View>;
   if (!images.length) return emptyText ? <Text style={{ color: c.muted, fontSize: 12.5, textAlign: 'right' }}>{emptyText}</Text> : null;
@@ -1904,7 +1905,7 @@ function CustomerDriverRow({ orderId, status }: { orderId: string; status: strin
 }
 
 type DriverCancelledOrder = { id: string; request_text: string; delivery_fee_minor: number; created_at: string; cancelled_at: string | null };
-type HistoryOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'  | 'request_text' | 'status' | 'delivery_fee_minor' | 'purchase_amount_minor'  | 'delivered_at' | 'created_at' | 'address_id'>;
+type HistoryOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'  | 'request_text' | 'status' | 'delivery_fee_minor' | 'purchase_amount_minor'  | 'delivered_at' | 'delivery_proof_path' | 'created_at' | 'address_id'>;
 type HistoryPeriod = 'today' | 'week' | 'all';
 function historyCutoff(period: HistoryPeriod) {
   if (period === 'all') return 0;
@@ -2573,7 +2574,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
       // the admin refreshes. It is idempotent and only flags orders that are already overdue.
       void supabase.rpc('flag_unanswered_orders').then(() => undefined, () => undefined);
       const [orderResult, driverResult, disputeResult, nameMap] = await Promise.all([
-        supabase.from('orders').select('id,is_urgent,customer_id,address_id,delivered_at,purchase_amount_minor,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,created_at,cash_collected_minor,delivery_note,shopping_admin_alerted_at,delivery_admin_alerted_at').order('created_at', { ascending: false }).limit(150),
+        supabase.from('orders').select('id,is_urgent,customer_id,address_id,delivered_at,delivery_proof_path,purchase_amount_minor,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,created_at,cash_collected_minor,delivery_note,shopping_admin_alerted_at,delivery_admin_alerted_at').order('created_at', { ascending: false }).limit(150),
         supabase.from('driver_profiles').select('user_id,vehicle_description').eq('review_status', 'approved').eq('is_online', true).order('created_at'),
         supabase.from('order_disputes').select('order_id').is('resolved_at', null),
         loadAdminNames(),
@@ -2793,7 +2794,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
           </View>
           {delivered && <View style={[card, { borderColor: color.accent, gap: 9 }]}>
             <Text style={{ color: color.accent, fontSize: 14.5, fontWeight: '900', textAlign: 'right' }}>✅ إيصال الطلب</Text>
-            <OrderReceipt admin data={{ id: sheet.id, createdAt: sheet.created_at, deliveredAt: sheet.delivered_at, request: sheet.request_text, address: sheet.address_id ? addresses[sheet.address_id] ?? null : null, purchase: sheet.purchase_amount_minor, fee: sheet.delivery_fee_minor, collected: cashCollected[sheet.id] ?? null, note: deliveryNotes[sheet.id] ?? null, driverName: nameOf(sheet.driver_id), customerName: customerLabel(sheet) }} />
+            <OrderReceipt admin data={{ id: sheet.id, createdAt: sheet.created_at, deliveredAt: sheet.delivered_at, deliveryProofPath: sheet.delivery_proof_path, request: sheet.request_text, address: sheet.address_id ? addresses[sheet.address_id] ?? null : null, purchase: sheet.purchase_amount_minor, fee: sheet.delivery_fee_minor, collected: cashCollected[sheet.id] ?? null, note: deliveryNotes[sheet.id] ?? null, driverName: nameOf(sheet.driver_id), customerName: customerLabel(sheet) }} />
             {sheet.driver_id && driverPhones[sheet.driver_id] ? <Pressable onPress={() => void Linking.openURL(`tel:${driverPhones[sheet.driver_id!]}`)} accessibilityRole="button" accessibilityLabel="اتصال بالسائق" style={{ minHeight: 44, borderRadius: 13, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 14, fontWeight: '900' }}>📞 اتصال بالسائق · {ltrPhone(driverPhones[sheet.driver_id])}</Text></Pressable> : null}
           </View>}
           {(sheet.status === 'disputed' || openDisputes[sheet.id]) && <View style={[card, { borderColor: '#C98A2B', gap: 8 }]}>
@@ -2895,7 +2896,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
             {order.driver_id ? <Text numberOfLines={1} style={{ color: color.muted, fontSize: 14, textAlign: 'right' }}>السائق · <Text style={{ color: color.text, fontWeight: '900' }}>{nameOf(order.driver_id)}</Text></Text> : null}
             {!cancelled && order.delivered_at ? <Text style={{ color: adminTone.ok.fg, fontSize: 12.5, fontWeight: '700', textAlign: 'right' }}>✓ تسليم {timeAgo(order.delivered_at)}</Text> : null}
           </View>
-          <AdminImageStrip orderId={order.id} bucket={cancelled ? 'order-images' : 'delivery-proofs'} size={56} />
+          <AdminImageStrip orderId={order.id} bucket={cancelled ? 'order-images' : 'delivery-proofs'} proofPath={order.delivery_proof_path} size={56} />
         </View>
         {!cancelled ? <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 4 }}>
           {row('المشتريات', order.purchase_amount_minor === null ? '—' : numberFormatter.format(order.purchase_amount_minor) + ' ل.س')}
@@ -2944,7 +2945,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
               </View>
               {delayLabel ? <View style={{ alignSelf: 'flex-end', backgroundColor: '#451E21', borderRadius: 10, paddingHorizontal: 9, paddingVertical: 5 }}><Text style={{ color: '#FF8A8A', fontSize: 11.5, fontWeight: '900' }}>{delayLabel}</Text></View> : null}
               <View style={{ flexDirection: 'row-reverse', gap: 11, alignItems: 'flex-start' }}>
-                <AdminOrderThumb orderId={order.id} bucket={adminStatusGroup(order.status) === 'done' ? 'delivery-proofs' : 'order-images'} />
+                <AdminOrderThumb orderId={order.id} bucket={adminStatusGroup(order.status) === 'done' ? 'delivery-proofs' : 'order-images'} proofPath={order.delivery_proof_path} />
                 <Text numberOfLines={3} style={{ flex: 1, color: color.text, fontSize: 15, fontWeight: '800', lineHeight: 23, textAlign: 'right' }}>{splitPickup(order.request_text).body}</Text>
               </View>
               <View style={{ gap: 6 }}>
@@ -3173,7 +3174,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     if (!supabase || !online) return null;
     // A customer with an order that has waited 15+ minutes also triggers the server-side check (fallback when
     // pg_cron isn't available); at most once a minute.
-    const { data, error } = await supabase.from('orders').select('id,is_urgent,status,request_text,delivery_fee_minor,delivery_quote_set_at,delivery_quote_approved_at,purchase_amount_minor,purchase_approved_at,created_at,driver_id,delivered_at').order('created_at', { ascending: false }).limit(30);
+    const { data, error } = await supabase.from('orders').select('id,is_urgent,status,request_text,delivery_fee_minor,delivery_quote_set_at,delivery_quote_approved_at,purchase_amount_minor,purchase_approved_at,created_at,driver_id,delivered_at,delivery_proof_path').order('created_at', { ascending: false }).limit(30);
     if (error) return null;
     const rows = data ?? [];
     const overdue = rows.some((order) => order.status === 'searching' && !!order.delivery_quote_set_at && Date.now() - Date.parse(order.delivery_quote_set_at) >= 15 * 60 * 1000);
@@ -3465,7 +3466,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
             <View style={{ flex: 1, backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 14, paddingVertical: 7, paddingHorizontal: 11 }}><Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>أجرة التوصيل</Text><Text style={{ color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{ordersAreStale ? '—' : order.delivery_quote_set_at ? numberFormatter.format(order.delivery_fee_minor) + ' ل.س' : 'قيد التحديد'}</Text></View>
             {order.purchase_amount_minor !== null ? <View style={{ flex: 1, backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 14, paddingVertical: 7, paddingHorizontal: 11 }}><Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>مبلغ المشتريات</Text><Text style={{ color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{ordersAreStale ? '—' : numberFormatter.format(order.purchase_amount_minor ?? 0) + ' ل.س'}</Text></View> : null}
           </View>}
-          {done && !ordersAreStale && <View style={{ borderColor: c.accent, borderWidth: 1, borderRadius: 16, padding: 9, gap: 7 }}><Text style={{ color: c.accent, fontSize: 13.5, fontWeight: '900', textAlign: 'right' }}>صورة التسليم{order.delivered_at ? ' · ' + shortDateTimeFormatter.format(new Date(order.delivered_at)) : ''}</Text><AdminImageStrip orderId={order.id} bucket="delivery-proofs" size={84} emptyText="ما في صورة تسليم لهذا الطلب." /></View>}
+          {done && !ordersAreStale && <View style={{ borderColor: c.accent, borderWidth: 1, borderRadius: 16, padding: 9, gap: 7 }}><Text style={{ color: c.accent, fontSize: 13.5, fontWeight: '900', textAlign: 'right' }}>صورة التسليم{order.delivered_at ? ' · ' + shortDateTimeFormatter.format(new Date(order.delivered_at)) : ''}</Text><AdminImageStrip orderId={order.id} bucket="delivery-proofs" proofPath={order.delivery_proof_path} size={84} emptyText="ما في صورة تسليم لهذا الطلب." /></View>}
           {(['requested','quoted','searching','accepted','assigned','awaiting_approval'].includes(order.status) || (order.status === 'shopping' && order.purchase_amount_minor === null)) && <Pressable disabled={orderActionBusy === order.id || !online || ordersAreStale} onPress={() => setCancelTarget({ id: order.id, label: `طلب #${order.id.slice(0, 6)} · ${splitPickup(order.request_text).body}` })} style={[s.cancelOrder, (orderActionBusy === order.id || !online || ordersAreStale) && s.disabled]} accessibilityRole="button"><Text style={s.cancelOrderText}>{orderActionBusy === order.id ? 'عم نلغي الطلب…' : 'إلغاء الطلب'}</Text></Pressable>}
           <SupportIssueForm orderId={order.id} status={order.status} disabled={ordersAreStale} userId={userId}/>
         </View>; }) : <View style={s.empty}>
