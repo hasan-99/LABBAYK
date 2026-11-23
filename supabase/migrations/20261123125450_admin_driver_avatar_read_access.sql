@@ -1,0 +1,12 @@
+drop policy if exists profile_avatars_read_own on storage.objects;
+
+create policy profile_avatars_read_self_or_admin
+on storage.objects for select to authenticated
+using (
+  bucket_id = 'profile-avatars'
+  and array_length(storage.foldername(name), 1) = 1
+  and (
+    (storage.foldername(name))[1] = (select auth.uid())::text
+    or (select private.is_admin())
+  )
+);
