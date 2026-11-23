@@ -27,8 +27,8 @@ export async function shrinkPhoto(asset: { uri: string; width?: number; height?:
     const context = module.ImageManipulator.manipulate(asset.uri);
     const width = asset.width ?? 0;
     const height = asset.height ?? 0;
-    // Only shrink, never enlarge; unknown dimensions are resized by width.
-    if (!width || !height || Math.max(width, height) > maxSide) {
+    // Without known dimensions we cannot prove resizing will not enlarge the source image.
+    if (width > 0 && height > 0 && Math.max(width, height) > maxSide) {
       context.resize(width >= height ? { width: maxSide } : { height: maxSide });
     }
     const image = await context.renderAsync();

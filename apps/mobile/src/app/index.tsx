@@ -832,10 +832,8 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   const refresh = useCallback(async () => {
     if (!supabase) { setOperationsAreStale(true); setLoadedScreens({ home: true, orders: true }); setLoading(false); return; }
     try {
-    // The local snapshot is only needed offline (or as a fallback); reading it no longer delays the network.
-    const snapshotPromise = loadDriverOrdersSnapshot(userId);
     if (!online && !forceNetworkRefresh.current) {
-      const cachedSnapshot = await snapshotPromise;
+      const cachedSnapshot = await loadDriverOrdersSnapshot(userId);
       if (cachedSnapshot) {
         // The cache has hidden values (zero amounts, no address), so it is shown only when offline.
         setOrdersSyncedAt(cachedSnapshot.syncedAt);
@@ -871,13 +869,11 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     }
     const syncFailed = !!driver.error || !!offerRows.error || !!assigned.error;
     setOperationsAreStale(syncFailed);
-    if (!syncFailed) setMessage('');
-    if (syncFailed && !currentOrders) { const cachedSnapshot = await snapshotPromise; if (cachedSnapshot) setActiveOrders(cachedSnapshot.orders); }
+    if (!syncFailed) { setMessage(''); driverLastSync.set(userId, Date.now()); }
     } catch {
       setOperationsAreStale(true);
     } finally {
       // Home and orders show the same data, so one load serves both screens.
-      driverLastSync.set(userId, Date.now());
       setLoadedScreens({ home: true, orders: true });
       setLoading(false);
     }
@@ -2347,7 +2343,7 @@ function AdminReportsTab({ userId, active, onBadge, onOpenOrder }: { userId: str
   const channelKey = useRef(newRequestKey());
   const refresh = useCallback(async () => {
     if (!supabase) return;
-    const [reportResult, nameMap] = await Promise.all([supabase.from('order_disputes').select('*').order('created_at', { ascending: false }).limit(100), loadAdminNames()]);
+    const [reportResult, nameMap] = await Promise.all([supabase.from('order_disputes').select('id,order_id,opened_by,reason,details,created_at,resolved_at,resolution,idempotency_key,previous_order_status,resolved_by').order('created_at', { ascending: false }).limit(100), loadAdminNames()]);
     if (reportResult.error) setMessage('ما قدرنا نحمّل البلاغات.');
     else {
       const rows = reportResult.data ?? [];
@@ -2585,6 +2581,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   const [busy, setBusy] = useState(false);
   const [pricingOpen, setPricingOpen] = useState(false);
   const initialised = useRef(false);
+  const lastUnansweredOrderCheck = useRef(0);
 
   // Last known screen data: shown instantly on open (also after an app restart), then refreshed.
   type AdminOrdersSnapshot = { orders: AdminMobileOrder[]; drivers: AdminMobileDriver[]; names: Record<string, string>; addresses: Record<string, AdminAddress>; driverPhones: Record<string, string>; declines: Record<string, string[]>; pending: Record<string, { driver_id: string; expires_at: string }[]>; openDisputes: Record<string, boolean> };
@@ -2611,9 +2608,12 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   const refresh = useCallback(async () => {
     if (!supabase) return;
     try {
-      // Fallback for projects without pg_cron: checking for orders nobody answered also happens whenever
-      // the admin refreshes. It is idempotent and only flags orders that are already overdue.
-      void supabase.rpc('flag_unanswered_orders').then(() => undefined, () => undefined);
+      // Keep the fallback for projects without pg_cron, but do not run it on every list refresh.
+      // Production's scheduled job checks once per minute; this client fallback is also capped at once/minute.
+      if (Date.now() - lastUnansweredOrderCheck.current >= 60_000) {
+        lastUnansweredOrderCheck.current = Date.now();
+        void supabase.rpc('flag_unanswered_orders').then(() => undefined, () => undefined);
+      }
       const [orderResult, driverResult, disputeResult, nameMap] = await Promise.all([
         supabase.from('orders').select('id,is_urgent,customer_id,address_id,delivered_at,delivery_proof_path,purchase_amount_minor,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,created_at,cash_collected_minor,delivery_note,shopping_admin_alerted_at,delivery_admin_alerted_at').order('created_at', { ascending: false }).limit(150),
         supabase.from('driver_profiles').select('user_id,vehicle_description').eq('review_status', 'approved').eq('is_online', true).order('created_at'),
@@ -2681,7 +2681,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   const manualRefresh = async () => {
     if (refreshing) return;
     if (!online && !(await recheckBackend())) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; }
-    setRefreshing(true); await loadAdminNames(true); await refreshNow(); setRefreshing(false); setMessage('تم تحديث الطلبات.');
+    setRefreshing(true); await loadAdminNames(true); await refreshNow(); setRefreshing(false);
   };
   // Offers that already ran out of time are still "pending" in the database until the next send, so
   // only the ones whose time has not passed count as waiting for an answer.

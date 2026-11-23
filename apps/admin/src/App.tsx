@@ -30,7 +30,7 @@ type DriverApplication = Pick<Database['public']['Tables']['driver_profiles']['R
 type DriverInvite = Pick<Database['public']['Tables']['driver_invites']['Row'], 'id'|'expires_at'|'redeemed_at'|'revoked_at'|'created_at'>
 type PricingAudit = Pick<Database['public']['Tables']['admin_audit_log']['Row'], 'id'|'action'|'entity_type'|'entity_id'|'reason'|'before_data'|'after_data'|'created_at'>
 type AdminDirectoryUser = Database['public']['Functions']['admin_list_users']['Returns'][number]
-type Access = 'loading' | 'signed-out' | 'unauthorized' | 'admin'
+type Access = 'loading' | 'signed-out' | 'unauthorized' | 'admin' | 'error'
 const orderStates = [{ value:'requested', label:'وارد جديد' }, { value:'searching', label:'عم ندور على سائق' }, { value:'accepted', label:'قبل السائق الطلب' }, { value:'quoted', label:'تم التسعير' }, { value:'assigned', label:'تم تعيين سائق' }, { value:'shopping', label:'قيد التسوق' }, { value:'awaiting_approval', label:'بانتظار الموافقة' }, { value:'purchased', label:'تم الشراء' }, { value:'delivering', label:'قيد التوصيل' }, { value:'delivered', label:'تم التسليم' }, { value:'settled', label:'تمت التسوية' }, { value:'disputed', label:'قيد مراجعة الدعم' }, { value:'cancelled', label:'ملغي' }]
 
 function AppContent() {
@@ -52,6 +52,9 @@ function AppContent() {
   const [authMessageTone, setAuthMessageTone] = useState<'success' | 'error'>('success')
   const [authCooldown, setAuthCooldown] = useState(0)
   const authRequestInFlight = useRef(false)
+  const verifiedAdminUserId = useRef<string | null>(null)
+  const accessCheckSequence = useRef(0)
+  const checkAccessRef = useRef<((nextUser: User | null) => void) | null>(null)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -72,15 +75,40 @@ function AppContent() {
     let alive = true
     const checkAccess = async (nextUser: User | null) => {
       if (!alive) return
+      const sequence = ++accessCheckSequence.current
       setUser(nextUser)
-      if (!nextUser) { setAccess('signed-out'); return }
-      setAccess('loading')
+      if (!nextUser) { verifiedAdminUserId.current = null; setAccess('signed-out'); return }
+      const previouslyVerifiedAdmin = verifiedAdminUserId.current === nextUser.id
+      if (!previouslyVerifiedAdmin) setAccess('loading')
       const { data, error } = await client.from('user_roles').select('role').eq('user_id', nextUser.id).eq('role', 'super_admin').maybeSingle()
-      if (alive) setAccess(!error && data ? 'admin' : 'unauthorized')
+      if (!alive || sequence !== accessCheckSequence.current) return
+      if (error) {
+        // A transient query failure is not proof that an already-authorized admin lost access.
+        if (!previouslyVerifiedAdmin) setAccess('error')
+        return
+      }
+      if (data) { verifiedAdminUserId.current = nextUser.id; setAccess('admin') }
+      else { verifiedAdminUserId.current = null; setAccess('unauthorized') }
     }
-    void client.auth.getSession().then(({ data }) => checkAccess(data.session?.user ?? null))
-    const { data: { subscription } } = client.auth.onAuthStateChange((event, session) => { if (event === 'PASSWORD_RECOVERY') setPasswordRecovery(true); setTimeout(() => { void checkAccess(session?.user ?? null) }, 0) })
-    return () => { alive = false; subscription.unsubscribe() }
+    checkAccessRef.current = (nextUser) => { void checkAccess(nextUser) }
+    const startupSequence = accessCheckSequence.current
+    void client.auth.getSession().then(({ data, error }) => {
+      if (!alive || startupSequence !== accessCheckSequence.current) return
+      if (error) { setAccess(verifiedAdminUserId.current ? 'admin' : 'error'); return }
+      void checkAccess(data.session?.user ?? null)
+    }).catch(() => {
+      if (alive && startupSequence === accessCheckSequence.current) setAccess(verifiedAdminUserId.current ? 'admin' : 'error')
+    })
+    const { data: { subscription } } = client.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') setPasswordRecovery(true)
+      if (!['INITIAL_SESSION', 'SIGNED_IN', 'SIGNED_OUT', 'USER_UPDATED', 'PASSWORD_RECOVERY'].includes(event)) return
+      const sequence = ++accessCheckSequence.current
+      if (event === 'SIGNED_OUT') verifiedAdminUserId.current = null
+      setTimeout(() => {
+        if (alive && sequence === accessCheckSequence.current) void checkAccess(session?.user ?? null)
+      }, 0)
+    })
+    return () => { alive = false; checkAccessRef.current = null; subscription.unsubscribe() }
   }, [])
 
   const signInAdmin = async (event: FormEvent) => {
@@ -172,7 +200,9 @@ function AppContent() {
         <div className="gate-icon">↗</div><h1>كلمة سر جديدة</h1><p>اختر كلمة سر من 8 أحرف على الأقل.</p>
         <form className="auth-form" noValidate onSubmit={saveNewPassword}><label>كلمة السر الجديدة<input value={newPassword} onChange={(event) => setNewPassword(event.target.value)} autoComplete="new-password" type="password" minLength={8} required /></label><button className="primary-button full-button" disabled={authBusy}>{authBusy ? 'عم نحفظ…' : 'حفظ كلمة السر'}</button></form>
         {authMessage && <p className={`auth-message ${authMessageTone}`} role={authMessageTone === 'error' ? 'alert' : 'status'} aria-live={authMessageTone === 'error' ? 'assertive' : 'polite'}>{authMessage}</p>}
-      </> : access === 'loading' ? <GateNotice title="عم نتحقق من صلاحية الحساب" detail="لحظة واحدة، عم نتأكد من الجلسة ودور الحساب." /> : access === 'unauthorized' ? <>
+      </> : access === 'loading' ? <GateNotice title="عم نتحقق من صلاحية الحساب" detail="لحظة واحدة، عم نتأكد من الجلسة ودور الحساب." /> : access === 'error' ? <>
+        <div className="gate-icon">⌁</div><h1>تعذر التحقق من صلاحية الحساب</h1><p>الاتصال غير مستقر حالياً. الحسابات التي سبق التحقق منها تبقى مفتوحة؛ جرّب إعادة التحقق.</p><button className="primary-button full-button" onClick={() => { setAccess('loading'); checkAccessRef.current?.(user) }}>إعادة المحاولة</button>
+      </> : access === 'unauthorized' ? <>
         <div className="gate-icon">⌁</div><h1>الحساب ما عنده صلاحية إدارة</h1><p>تم تسجيل الدخول، بس هاللوحة مخصصة لحساب مدير لَبّيك.</p><button className="secondary-button full-button" onClick={() => void supabase?.auth.signOut()}>تسجيل الخروج</button>
       </> : forgotPassword ? <>
         <div className="gate-icon">↗</div><h1>{recoveryCodeSent ? 'رمز تغيير كلمة السر' : 'نسيت كلمة السر؟'}</h1>
@@ -462,14 +492,17 @@ function SettlementPanel() {
   },[reportFrom,reportTo,setReportMessage])
   const refresh=useCallback(async()=>{
     if(!supabase)return; if(!hasLoaded.current)setLoading(true)
-    const [driverRows,orderRows,settlementRows,balanceRows,ledgerRows,reversalRows]=await Promise.all([
+    const [driverRows,orderRows,settlementRows,balanceRows,ledgerRows]=await Promise.all([
       supabase.from('driver_profiles').select('user_id,review_status').eq('review_status','approved').order('created_at',{ascending:false}),
       supabase.from('orders').select('id,driver_id,purchase_amount_minor,delivery_fee_minor,status,created_at').eq('status','delivered').order('delivered_at',{ascending:false}).limit(100),
       supabase.from('cash_settlements').select('id,order_id,driver_id,purchase_amount_minor,delivery_fee_minor,commission_amount_minor,driver_earning_minor,cash_collected_minor,created_at').order('created_at',{ascending:false}).limit(50),
       supabase.rpc('get_driver_wallet_balances'),
       supabase.from('driver_wallet_ledger').select('id,driver_id,amount_minor,entry_type,order_id,reversal_of_entry_id,reason,created_at').order('created_at',{ascending:false}).limit(50),
-      supabase.from('cash_settlement_reversals').select('settlement_id'),
     ])
+    const settlementIds=(settlementRows.data??[]).map(row=>row.id)
+    const reversalRows=settlementIds.length
+      ? await supabase.from('cash_settlement_reversals').select('settlement_id').in('settlement_id',settlementIds)
+      : {data:[],error:null}
     const error=driverRows.error||orderRows.error||settlementRows.error||balanceRows.error||ledgerRows.error||reversalRows.error
     if(error)setMessage('تعذر تحميل بيانات المحفظة والتسويات.')
     else {setDrivers(driverRows.data??[]);setOrders(orderRows.data??[]);setSettlements(settlementRows.data??[]);setLedgerEntries(ledgerRows.data??[]);setReversedSettlementIds((reversalRows.data??[]).map(row=>row.settlement_id));setWalletBalances(Object.fromEntries((balanceRows.data??[]).map(row=>[row.driver_id,row.balance_minor])));setSelectedDriver((current)=>current || driverRows.data?.[0]?.user_id || '');hasLoaded.current=true}

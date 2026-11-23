@@ -72,7 +72,14 @@ Deno.serve(async (request) => {
   const asset = Array.isArray(assets) ? assets[0] : assets;
   if (!asset) return json({ error: "تعذر العثور على بيانات الحساب. تواصل مع الدعم." }, 409);
   const orderIds = Array.isArray(asset.order_ids) ? asset.order_ids.filter((id: unknown): id is string => typeof id === "string") : [];
-  const avatarPath = typeof asset.profile_avatar_path === "string" ? asset.profile_avatar_path : null;
+  const candidateAvatarPath = typeof asset.profile_avatar_path === "string" ? asset.profile_avatar_path : null;
+  const avatarPath = candidateAvatarPath
+    && candidateAvatarPath.startsWith(`${authData.user.id}/`)
+    && candidateAvatarPath.split("/").length === 2
+    && candidateAvatarPath.length <= 160
+    && !candidateAvatarPath.includes("..")
+    ? candidateAvatarPath
+    : null;
 
   try {
     if (avatarPath) {

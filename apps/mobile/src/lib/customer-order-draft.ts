@@ -26,9 +26,15 @@ const enqueue = <T,>(operation: () => Promise<T>): Promise<T> => {
 };
 
 export const loadCustomerOrderDraft = (userId: string) => enqueue(async (): Promise<CustomerOrderDraft | null> => {
+  let raw: string | null;
   try {
-    const raw = await getOfflineItem(storageKey(userId));
-    if (!raw) return null;
+    raw = await getOfflineItem(storageKey(userId));
+  } catch {
+    // A temporary storage failure must not destroy a draft the customer has not sent yet.
+    return null;
+  }
+  if (!raw) return null;
+  try {
     const value: unknown = JSON.parse(raw);
     if (!value || typeof value !== 'object') { await removeOfflineItem(storageKey(userId)); return null; }
     const draft = value as Partial<CustomerOrderDraft>;
@@ -48,6 +54,7 @@ export const loadCustomerOrderDraft = (userId: string) => enqueue(async (): Prom
     const pendingOrderId = typeof draft.pendingOrderId === 'string' && /^[a-f0-9-]{36}$/i.test(draft.pendingOrderId) ? draft.pendingOrderId : undefined;
     return { schemaVersion: 1, savedAt: new Date(savedAt).toISOString(), request: draft.request, addressId: draft.addressId, idempotencyKey: draft.idempotencyKey, pendingOrderId, images };
   } catch {
+    // This catch only covers parsing/validation. Storage read failures are handled above.
     await removeOfflineItem(storageKey(userId)).catch(() => {});
     return null;
   }

@@ -30,9 +30,15 @@ export const clearDriverOrdersSnapshot = (userId: string) => enqueue(async () =>
 });
 
 export const loadDriverOrdersSnapshot = (userId: string) => enqueue(async (): Promise<DriverOrdersSnapshot | null> => {
+  let raw: string | null;
   try {
-    const raw = await getOfflineItem(key(userId));
-    if (!raw) return null;
+    raw = await getOfflineItem(key(userId));
+  } catch {
+    // Keep the snapshot intact if the device's storage is temporarily unavailable.
+    return null;
+  }
+  if (!raw) return null;
+  try {
     const value: unknown = JSON.parse(raw);
     if (!value || typeof value !== 'object') return null;
     const snapshot = value as Partial<DriverOrdersSnapshot>;
@@ -48,9 +54,10 @@ export const loadDriverOrdersSnapshot = (userId: string) => enqueue(async (): Pr
     const sanitized = orders.slice(0, 20).map((order) => ({ ...order, request_text: '', address_id: null, address: null, budget_ceiling_minor: 0, delivery_fee_minor: 0, purchase_amount_minor: null, purchase_approved_at: null }));
     const result: DriverOrdersSnapshot = { schemaVersion: 1, orders: sanitized, syncedAt: new Date(syncedAt).toISOString() };
     const hadSensitiveFields = snapshot.schemaVersion !== 1 || orders.some((order) => order.request_text !== '' || order.address_id !== null || order.address !== null || order.budget_ceiling_minor !== 0 || order.delivery_fee_minor !== 0 || order.purchase_amount_minor !== null || order.purchase_approved_at !== null);
-    if (hadSensitiveFields) await setOfflineItem(key(userId), JSON.stringify(result));
+    if (hadSensitiveFields) await setOfflineItem(key(userId), JSON.stringify(result)).catch(() => {});
     return result;
   } catch {
+    // Only malformed data is discarded; transient reads/writes must preserve the saved copy.
     await removeOfflineItem(key(userId)).catch(() => {});
     return null;
   }
