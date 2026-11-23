@@ -2514,7 +2514,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
   ];
   const pane = (key: AdminTabKey) => ({ flex: 1, display: tab === key ? 'flex' : 'none' } as const);
   return <View style={{ flex: 1, backgroundColor: color.background }}>
-    <View style={pane('orders')}><AdminOrdersTab userId={userId} onBadge={setBadge} onDetail={setInDetail} focusOrderId={focusOrderId} onFocusHandled={clearFocus} /></View>
+    <View style={pane('orders')}><AdminOrdersTab userId={userId} active={tab === 'orders'} onBadge={setBadge} onDetail={setInDetail} focusOrderId={focusOrderId} onFocusHandled={clearFocus} /></View>
     {visited.drivers ? <View style={pane('drivers')}><AdminDriversTab userId={userId} active={tab === 'drivers'} onBadge={setBadge} /></View> : null}
     {visited.money ? <View style={pane('money')}><AdminMoneyTab userId={userId} active={tab === 'money'} onBadge={setBadge} onOpenOrder={(id) => { setFocusOrderId(id); openTab('orders'); }} /></View> : null}
     {visited.reports ? <View style={pane('reports')}><AdminReportsTab userId={userId} active={tab === 'reports'} onBadge={setBadge} onOpenOrder={(id) => { setFocusOrderId(id); openTab('orders'); }} /></View> : null}
@@ -2533,7 +2533,7 @@ function AdminWorkspace({ userId, email, onSignOut, theme, onToggleTheme }: { us
   </View>;
 }
 
-function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandled }: { userId: string; onBadge: AdminBadgeSetter; onDetail: (open: boolean) => void; focusOrderId: string | null; onFocusHandled: () => void }) {
+function AdminOrdersTab({ userId, active, onBadge, onDetail, focusOrderId, onFocusHandled }: { userId: string; active: boolean; onBadge: AdminBadgeSetter; onDetail: (open: boolean) => void; focusOrderId: string | null; onFocusHandled: () => void }) {
   const insets = useSafeAreaInsets();
   const { colors: color, styles: style } = useMobileTheme();
   const online = useInternetAvailable();
@@ -2667,16 +2667,16 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   const scheduleRefresh = useCallback(() => { schedulerRef.current?.schedule(); }, []);
   const refreshNow = useCallback(() => schedulerRef.current?.now() ?? refresh(), [refresh]);
 
-  useEffect(() => { if (online) void refreshNow(); }, [online, refreshNow]);
+  useEffect(() => { if (active && online) void refreshNow(); }, [active, online, refreshNow]);
   useEffect(() => {
-    if (!supabase || !online) return;
+    if (!supabase || !online || !active) return;
     const channel = supabase.channel(`admin-mobile-orders-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleRefresh).on('postgres_changes', { event: '*', schema: 'public', table: 'driver_profiles' }, scheduleRefresh).on('postgres_changes', { event: '*', schema: 'public', table: 'order_offers' }, scheduleRefresh).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_events' }, (payload) => { const row = payload.new as { event_type?: string; order_id?: string; actor_id?: string | null }; if (row.event_type === 'driver_declined_offer') { showToast(`اعتذر ${row.actor_id ? namesRef.current[row.actor_id] ?? 'سائق' : 'سائق'} عن الطلب #${(row.order_id ?? '').slice(0, 6)}. ما زال عند باقي السائقين.`, 'warning'); scheduleRefresh(); } else if (row.event_type === 'no_driver_response') { showToast(`ما حدا رد على الطلب #${(row.order_id ?? '').slice(0, 6)}. أعد إرساله أو أسنده لسائق.`, 'warning'); scheduleRefresh(); } else if (row.event_type === 'customer_cancelled' || row.event_type === 'admin_cancelled') { showToast(`تم إلغاء الطلب #${(row.order_id ?? '').slice(0, 6)}. تم تحديث قائمة الإدارة.`, 'warning'); scheduleRefresh(); } }).subscribe();
     return () => { void supabase?.removeChannel(channel); };
-  }, [online, scheduleRefresh, showToast, userId]);
+  }, [active, online, scheduleRefresh, showToast, userId]);
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', (state) => { if (state === 'active') scheduleRefresh(); });
+    const subscription = AppState.addEventListener('change', (state) => { if (active && state === 'active') scheduleRefresh(); });
     return () => subscription.remove();
-  }, [scheduleRefresh]);
+  }, [active, scheduleRefresh]);
 
   const manualRefresh = async () => {
     if (refreshing) return;
@@ -3082,6 +3082,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   const [pickup, setPickup] = useState('');
   const [tab, setTab] = useState(() => inviteToken ? 'profile' : 'home');
   const [tabHistory, setTabHistory] = useState<string[]>([]);
+  const handledOpenOrderId = useRef<string | null>(null);
   const [notificationCount,setNotificationCount]=useState(0);
   const [notificationOrderId,setNotificationOrderId]=useState<string|null>(null);
   const [orderFilter,setOrderFilter]=useState<'all'|'live'|'done'>('all');
@@ -3123,7 +3124,11 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     Animated.spring(tabScale, { toValue: 1, useNativeDriver: true, speed: 22, bounciness: 7 }).start();
   }, [tab, tabScale]);
   useEffect(() => {
-    if (openOrderId) navigate('orders');
+    if (!openOrderId) { handledOpenOrderId.current = null; return; }
+    if (handledOpenOrderId.current === openOrderId) return;
+    handledOpenOrderId.current = openOrderId;
+    setNotificationOrderId(openOrderId);
+    navigate('orders');
   }, [openOrderId, navigate]);
   const goBack = () => {
     const previous = tabHistory[tabHistory.length - 1] ?? 'home';
