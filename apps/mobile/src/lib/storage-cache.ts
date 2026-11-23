@@ -18,11 +18,14 @@ const signSeconds: Record<ImageBucket, number> = {
 };
 const refreshMarginMs = 10 * 60 * 1000;
 const avatarStorageKey = 'labbayk:avatar-urls:v1';
+const imageListStorageKey = 'labbayk:image-path-lists:v1';
 
 const urlCache = new Map<string, { url: string; expiresAt: number }>();
 const listCache = new Map<string, { paths: string[]; at: number }>();
 const inflight = new Map<string, Promise<unknown>>();
 let avatarsLoaded: Promise<void> | null = null;
+let imageListsLoaded: Promise<void> | null = null;
+let imageListWriteQueue: Promise<void> = Promise.resolve();
 
 export const imageCacheKey = (bucket: ImageBucket, path: string) => `${bucket}/${path}`;
 
@@ -49,6 +52,34 @@ const loadPersistedAvatars = async () => {
 const persistAvatars = () => {
   const entries = [...urlCache.entries()].filter(([key]) => key.startsWith('profile-avatars/')).slice(-50);
   void AsyncStorage.setItem(avatarStorageKey, JSON.stringify(Object.fromEntries(entries))).catch(() => undefined);
+};
+
+const loadPersistedImageLists = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(imageListStorageKey);
+    if (!raw) return;
+    const saved = JSON.parse(raw) as Record<string, { paths: unknown; at: unknown }>;
+    const now = Date.now();
+    for (const [key, entry] of Object.entries(saved)) {
+      const [bucket, orderId] = key.split(':');
+      if ((bucket !== 'order-images' && bucket !== 'delivery-proofs')
+        || !/^[a-f0-9-]{36}$/i.test(orderId ?? '')
+        || typeof entry?.at !== 'number'
+        || !Array.isArray(entry.paths)
+        || entry.paths.length > 3
+        || entry.paths.some((path) => typeof path !== 'string' || !path.startsWith(`${orderId}/`) || path.includes('..'))) continue;
+      const paths = entry.paths as string[];
+      const ttl = paths.length ? 30 * 60 * 1000 : 60 * 1000;
+      if (now - entry.at <= ttl) listCache.set(key, { paths, at: entry.at });
+    }
+  } catch { /* a corrupt cache only costs one extra Storage request */ }
+};
+
+const persistImageLists = () => {
+  const entries = [...listCache.entries()].slice(-50);
+  imageListWriteQueue = imageListWriteQueue.catch(() => undefined).then(() =>
+    AsyncStorage.setItem(imageListStorageKey, JSON.stringify(Object.fromEntries(entries))),
+  ).catch(() => undefined);
 };
 
 /** Signed URLs for the given paths, reusing unexpired ones. Missing paths are signed in one request. */
@@ -90,6 +121,7 @@ export function peekSignedImageUrl(bucket: ImageBucket, path: string): string | 
 /** File paths (folder/name) inside an order's folder. Returns null when the listing failed. */
 export async function listOrderImagePaths(bucket: 'order-images' | 'delivery-proofs', orderId: string): Promise<string[] | null> {
   const key = `${bucket}:${orderId}`;
+  await (imageListsLoaded ??= loadPersistedImageLists());
   const cached = listCache.get(key);
   // Uploaded photos never change, so a non-empty listing stays valid; an empty one is re-checked soon
   // because a delivery proof can be added later.
@@ -100,6 +132,8 @@ export async function listOrderImagePaths(bucket: 'order-images' | 'delivery-pro
     if (error) return null;
     const paths = (data ?? []).map((file) => `${orderId}/${file.name}`);
     listCache.set(key, { paths, at: Date.now() });
+    while (listCache.size > 100) listCache.delete(listCache.keys().next().value!);
+    persistImageLists();
     return paths;
   });
 }
@@ -110,10 +144,17 @@ export function peekOrderImagePaths(bucket: 'order-images' | 'delivery-proofs', 
 
 /** Drops a cached listing, e.g. right after photos were uploaded to that order. */
 export function forgetOrderImages(bucket: 'order-images' | 'delivery-proofs', orderId: string) {
-  listCache.delete(`${bucket}:${orderId}`);
+  const key = `${bucket}:${orderId}`;
+  listCache.delete(key);
+  void (async () => {
+    await (imageListsLoaded ??= loadPersistedImageLists());
+    listCache.delete(key);
+    persistImageLists();
+  })();
 }
 
 export function clearImageCaches() {
-  urlCache.clear(); listCache.clear(); avatarsLoaded = null;
+  urlCache.clear(); listCache.clear(); avatarsLoaded = null; imageListsLoaded = null;
   void AsyncStorage.removeItem(avatarStorageKey).catch(() => undefined);
+  imageListWriteQueue = imageListWriteQueue.catch(() => undefined).then(() => AsyncStorage.removeItem(imageListStorageKey)).catch(() => undefined);
 }
