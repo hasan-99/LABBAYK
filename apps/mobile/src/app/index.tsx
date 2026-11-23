@@ -2557,6 +2557,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [timeline, setTimeline] = useState<{ id: number; event_type: string; actor_id: string | null; created_at: string; details: Record<string, unknown> | null }[] | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [openingAdminReview, setOpeningAdminReview] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [pending, setPending] = useState<Record<string, { driver_id: string; expires_at: string }[]>>({});
   const showToast = useAppToast();
@@ -2747,8 +2748,23 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
     setCancelling(true);
     const { error } = await supabase.rpc('cancel_admin_order', { p_order_id: sheet.id, p_reason: reason });
     setCancelling(false);
-    if (error) { setCancelOpen(false); setMessage('ما قدرنا نلغي الطلب. إذا السائق اشترى الأغراض لازم يكون في بلاغ مفتوح على الطلب.'); return; }
+    if (error) { setCancelOpen(false); setMessage(error.message.includes('Order requires a dispute') ? 'الإلغاء بعد الشراء يحتاج متابعة إدارية مفتوحة. افتح متابعة من تفاصيل الطلب أولاً.' : 'ما قدرنا نلغي الطلب. إذا السائق اشترى الأغراض لازم يكون في بلاغ مفتوح على الطلب.'); return; }
     setCancelOpen(false); setSheet(null); await refreshNow(); setMessage('تم إلغاء الطلب.');
+  };
+  const openAdminReview = async () => {
+    if (!supabase || !sheet) return;
+    if (!(await confirmAction('فتح متابعة إدارية؟', 'سينتقل الطلب إلى قيد المراجعة ويتوقف مؤقتاً. ستبقى المشتريات والسائق مسجلين؛ تواصل مع العميل لتأكيد الاستلام قبل أن تقرر الإلغاء.', 'فتح متابعة'))) return;
+    const reason = 'تعذر التواصل مع السائق';
+    const details = 'تأخر التوصيل وتعذر التواصل مع السائق. يلزم التواصل مع العميل للتأكد من استلامه قبل اتخاذ قرار الإلغاء.';
+    setOpeningAdminReview(true);
+    const { data, error } = await supabase.rpc('admin_open_order_dispute', { p_order_id: sheet.id, p_reason: reason, p_details: details, p_idempotency_key: newRequestKey() });
+    setOpeningAdminReview(false);
+    if (error || !data) { setMessage(error?.message.includes('active report') ? 'في متابعة مفتوحة لهذا الطلب بالفعل. حدّث الصفحة لمراجعتها.' : 'ما قدرنا نفتح المتابعة الإدارية. حدّث الطلب وحاول مرة ثانية.'); return; }
+    setOpenDisputes((current) => ({ ...current, [sheet.id]: true }));
+    setDispute({ id: data, reason, details, opened_by: userId, created_at: new Date().toISOString() });
+    setSheet((current) => current?.id === sheet.id ? { ...current, status: 'disputed' } : current);
+    await refreshNow();
+    setMessage('انفتحت متابعة إدارية وتوقف الطلب مؤقتاً. ما تغيّرت المشتريات أو بيانات السائق. بعد التأكد من العميل، فيك تلغي الطلب أو تحل المتابعة وترجّعه.');
   };
   const pauseOrder = async () => {
     if (!supabase || !dispute) return;
@@ -2836,7 +2852,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
             {sheet.driver_id && driverPhones[sheet.driver_id] ? <Pressable onPress={() => void Linking.openURL(`tel:${driverPhones[sheet.driver_id!]}`)} accessibilityRole="button" accessibilityLabel="اتصال بالسائق" style={{ minHeight: 44, borderRadius: 13, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 14, fontWeight: '900' }}>📞 اتصال بالسائق · {ltrPhone(driverPhones[sheet.driver_id])}</Text></Pressable> : null}
           </View>}
           {(sheet.status === 'disputed' || openDisputes[sheet.id]) && <View style={[card, { borderColor: '#C98A2B', gap: 8 }]}>
-            <Text style={{ color: '#F0CC83', fontSize: 14.5, fontWeight: '900', textAlign: 'right', writingDirection: 'rtl' }}>⚠️ بلاغ من {dispute ? (dispute.opened_by === sheet.customer_id ? 'العميل' : 'السائق') + ' ' + nameOf(dispute.opened_by) : '…'}</Text>
+            <Text style={{ color: '#F0CC83', fontSize: 14.5, fontWeight: '900', textAlign: 'right', writingDirection: 'rtl' }}>⚠️ بلاغ من {dispute ? dispute.opened_by === userId ? 'الإدارة' : (dispute.opened_by === sheet.customer_id ? 'العميل' : 'السائق') + ' ' + nameOf(dispute.opened_by) : '…'}</Text>
             {dispute ? <>
               <Text style={{ color: color.text, fontSize: 14, fontWeight: '800', textAlign: 'right', writingDirection: 'rtl' }}>{dispute.reason} · <Text style={{ color: color.muted, fontWeight: '500' }}>{timeAgo(dispute.created_at)}</Text></Text>
               <Text selectable style={{ color: color.text, fontSize: 14, lineHeight: 23, textAlign: 'right', writingDirection: 'rtl' }}>{dispute.details}</Text>
@@ -2854,10 +2870,14 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
             <Pressable onPress={() => setTimelineOpen((value) => !value)} accessibilityRole="button" accessibilityState={{ expanded: timelineOpen }} style={{ direction: 'rtl', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 38 }}><Text style={{ color: color.text, fontSize: 14, fontWeight: '900', textAlign: 'right', writingDirection: 'rtl' }}>🕘 سجل الطلب</Text><Text style={{ color: color.primary, fontSize: 12.5, fontWeight: '900' }}>{timelineOpen ? 'إخفاء ⌃' : 'عرض ⌄'}</Text></Pressable>
             {timelineOpen ? (timeline === null ? <Text style={{ color: color.muted, fontSize: 13, textAlign: 'right', writingDirection: 'rtl' }}>عم نحمّل السجل…</Text> : timeline.length ? timeline.map((event) => { const detail = event.details ?? {}; const from = typeof detail.previous_status === 'string' ? detail.previous_status : typeof detail.previous_order_status === 'string' ? detail.previous_order_status : ''; const reason = ['admin_cancelled', 'customer_cancelled'].includes(event.event_type) && typeof detail.reason === 'string' ? detail.reason.trim() : ''; return <View key={event.id} style={{ direction: 'rtl', flexDirection: 'row', justifyContent: 'space-between', gap: 8, borderTopWidth: 1, borderTopColor: color.border, paddingTop: 6 }}><View style={{ flex: 1, alignItems: 'flex-start' }}><Text style={{ color: color.text, fontSize: 13.5, fontWeight: '800', textAlign: 'right', writingDirection: 'rtl' }}>{eventLabels[event.event_type] ?? event.event_type}{from ? ` (من: ${orderStatus[from] ?? from})` : ''}</Text><Text style={{ color: color.muted, fontSize: 11.5, textAlign: 'right', writingDirection: 'rtl' }}>{event.actor_id ? nameOf(event.actor_id) : 'النظام'}</Text>{reason ? <Text style={{ color: color.muted, fontSize: 12, lineHeight: 18, textAlign: 'right', writingDirection: 'rtl', marginTop: 3 }}>السبب: {reason}</Text> : null}</View><Text style={{ color: color.muted, fontSize: 11.5, textAlign: 'left', writingDirection: 'ltr' }}>{shortDateTimeFormatter.format(new Date(event.created_at))}</Text></View>; }) : <Text style={{ color: color.muted, fontSize: 13, textAlign: 'right', writingDirection: 'rtl' }}>ما في أحداث مسجلة.</Text>) : null}
           </View>
+          {sheet.status !== 'disputed' && !openDisputes[sheet.id] && ['shopping', 'purchased', 'delivering'].includes(sheet.status) && sheet.purchase_amount_minor !== null ? <View style={[card, { gap: 8, borderColor: '#735F32' }]}>
+            <Text style={{ color: color.text, fontSize: 13.5, lineHeight: 21, textAlign: 'right', writingDirection: 'rtl' }}>إذا تأخر السائق بعد الشراء وما عاد يرد، افتح متابعة إدارية لتوقيف الطلب والتحقق من العميل. المتابعة ما تلغي الطلب ولا تمسح مبالغه.</Text>
+            <Pressable disabled={openingAdminReview || !online} onPress={() => void openAdminReview()} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 13, borderWidth: 1, borderColor: '#C98A2B', alignItems: 'center', justifyContent: 'center', opacity: openingAdminReview || !online ? 0.55 : 1 }}><Text style={{ color: '#F0CC83', fontSize: 14, fontWeight: '900' }}>{openingAdminReview ? 'عم نفتح المتابعة…' : '⚠️ فتح متابعة إدارية'}</Text></Pressable>
+          </View> : null}
           {!['delivered', 'settled', 'cancelled'].includes(sheet.status) && <View style={[card, { gap: 8 }]}>
             <Pressable disabled={cancelling || !online} onPress={() => setCancelOpen(true)} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: '#FF8A8A', alignItems: 'center', justifyContent: 'center', opacity: cancelling || !online ? 0.55 : 1 }}><Text style={{ color: '#FF8A8A', fontSize: 14.5, fontWeight: '900' }}>🚫 إلغاء الطلب</Text></Pressable>
           </View>}
-          <CancelReasonSheet target={cancelOpen ? { id: sheet.id, label: `طلب #${sheet.id.slice(0, 6)} · ${sheet.request_text}` } : null} busy={cancelling} warning={sheet.purchase_amount_minor !== null || ['purchased', 'delivering'].includes(sheet.status) ? 'السائق اشترى الأغراض أصلاً. الإلغاء بعد الشراء بيحتاج بلاغاً مفتوحاً على الطلب، وبتضل المبالغ مسجلة للتسوية اليدوية.' : undefined} onClose={() => setCancelOpen(false)} onConfirm={(reason) => void cancelOrder(reason)} />
+          <CancelReasonSheet target={cancelOpen ? { id: sheet.id, label: `طلب #${sheet.id.slice(0, 6)} · ${sheet.request_text}` } : null} busy={cancelling} warning={sheet.purchase_amount_minor !== null || ['purchased', 'delivering'].includes(sheet.status) ? 'الإلغاء بعد الشراء يحتاج متابعة مفتوحة. افتح متابعة إدارية من تفاصيل الطلب أولاً؛ وتبقى المبالغ مسجلة للتسوية اليدوية.' : undefined} onClose={() => setCancelOpen(false)} onConfirm={(reason) => void cancelOrder(reason)} />
           {!delivered && !actionable && <View style={card}><Text style={{ color: color.muted, fontSize: 13.5, textAlign: 'right', writingDirection: 'rtl', lineHeight: 22 }}>{sheet.driver_id ? `الطلب مع السائق ${nameOf(sheet.driver_id)} ولا يحتاج إجراء منك.` : 'ما في إجراءات متاحة لهالطلب حالياً.'}</Text></View>}
           <Modal visible={actionable && pricingOpen} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => setPricingOpen(false)}>
           <KeyboardAvoidingView style={{ flex: 1, justifyContent: 'flex-end' }} behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined}>

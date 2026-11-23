@@ -945,6 +945,15 @@ export type Database = {
         Args: { p_order_id: string; p_reason: string }
         Returns: undefined
       }
+      admin_open_order_dispute: {
+        Args: {
+          p_order_id: string
+          p_reason: string
+          p_details: string
+          p_idempotency_key: string
+        }
+        Returns: string
+      }
       cancel_customer_order: {
         Args: { p_order_id: string; p_reason: string }
         Returns: undefined
