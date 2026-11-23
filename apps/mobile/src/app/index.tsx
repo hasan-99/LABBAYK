@@ -25,7 +25,6 @@ import { SUPPORT_EMAIL } from '@/lib/legal-contact';
 import { ltrPhone, prettyPhone, useSupportContact, whatsappUrl } from '@/lib/support-contact';
 import { clearImageCaches, forgetOrderImages, imageCacheKey, listOrderImagePaths, peekOrderImagePaths, peekSignedImageUrl, signedImageUrl, signedImageUrls } from '@/lib/storage-cache';
 import { shrinkPhoto } from '@/lib/image-compress';
-import { uploadWithProgress } from '@/lib/storage-upload';
 import { cacheKey, clearUserCache, createRefreshScheduler, isFresh, readMemory, readPersisted, writeMemory, writePersisted } from '@/lib/data-cache';
 import { AppText as Text } from '@/components/AppText';
 import { ToastProvider, useAppToast, useToastMessage } from '@/components/Toast';
@@ -1024,17 +1023,15 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     const task = (async (): Promise<string | null> => {
       try {
         const body = await fetch(uri).then((response) => response.arrayBuffer());
-        if (body.byteLength > 5 * 1024 * 1024) { live({ status: 'error' }); return null; }
+        if (body.byteLength < 1024 || body.byteLength > 5 * 1024 * 1024) { live({ status: 'error' }); return null; }
         for (let attempt = 1; attempt <= 3; attempt += 1) {
           live({ status: 'uploading', progress: 0, attempt });
           const path = `${orderId}/${Date.now()}.jpg`;
           try {
-            // Attempts 1 and 2 report progress; the last attempt uses the plain upload as a safety net.
-            if (attempt < 3) await uploadWithProgress({ bucket: 'delivery-proofs', path, body, contentType: mimeType, onProgress: (fraction) => live({ progress: fraction }) });
-            else {
-              const plain = await supabase!.storage.from('delivery-proofs').upload(path, body, { contentType: mimeType, cacheControl: '3600', upsert: false });
-              if (plain.error) throw plain.error;
-            }
+            const { error } = await supabase!.storage.from('delivery-proofs').upload(path, body, { contentType: mimeType, cacheControl: '3600', upsert: false });
+            if (error) throw error;
+            const { data: uploaded, error: infoError } = await supabase!.storage.from('delivery-proofs').info(path);
+            if (infoError || typeof uploaded?.size !== 'number' || uploaded.size < 1024) throw new Error('Uploaded delivery photo is invalid');
             forgetOrderImages('delivery-proofs', orderId);
             live({ status: 'done', progress: 1, path });
             return path;
