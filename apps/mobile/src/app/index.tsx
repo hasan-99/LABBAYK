@@ -796,7 +796,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   const [historyPeriod, setHistoryPeriod] = useState<HistoryPeriod>('today');
   const [historyVisible, setHistoryVisible] = useState(20);
   const [historyOpen, setHistoryOpen] = useState<string | null>(null);
-  const [historyAddresses, setHistoryAddresses] = useState<Record<string, { neighborhood: string; city: string; street: string | null; building: string | null; landmark: string | null }>>({});
+  const [historyAddresses, setHistoryAddresses] = useState<Record<string, Pick<Address, 'label' | 'contact_phone' | 'neighborhood' | 'city' | 'street' | 'building' | 'landmark'>>>({});
   const [historyExtra, setHistoryExtra] = useState<Record<string, { cash: number | null; note: string | null }>>({});
   const [dismissedOfferId, setDismissedOfferId] = useState<string | null>(null);
   const [imagesOpen, setImagesOpen] = useState<Record<string, boolean>>({});
@@ -912,7 +912,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     setHistoryExtra(Object.fromEntries(rows.map((row) => [row.id, { cash: row.cash_collected_minor, note: row.delivery_note }])));
     const addressIds = [...new Set(rows.flatMap((order) => order.address_id ? [order.address_id] : []))];
     if (addressIds.length) {
-      const { data: addressRows } = await supabase.from('addresses').select('id,neighborhood,city,street,building,landmark').in('id', addressIds);
+      const { data: addressRows } = await supabase.from('addresses').select('id,label,contact_phone,neighborhood,city,street,building,landmark').in('id', addressIds);
       setHistoryAddresses(Object.fromEntries((addressRows ?? []).map((row) => [row.id, row])));
     }
   }, [online, userId, setMessage]);
@@ -1710,7 +1710,7 @@ function useOrderImages(bucket: 'order-images' | 'delivery-proofs', orderId: str
   return images;
 }
 
-type ReceiptData = { id: string; createdAt: string | null; deliveredAt: string | null; deliveryProofPath?: string | null; request: string; address: { neighborhood: string; city: string } | null; purchase: number | null; fee: number; collected: number | null; note: string | null; driverName?: string; customerName?: string };
+type ReceiptData = { id: string; createdAt: string | null; deliveredAt: string | null; deliveryProofPath?: string | null; request: string; address: Pick<Address, 'label' | 'contact_phone' | 'neighborhood' | 'city'> | null; purchase: number | null; fee: number; collected: number | null; note: string | null; driverName?: string; customerName?: string };
 // A paper-style receipt for a finished order. Commission is read here (admins from the settlement, drivers from their own wallet).
 function CustomerHomeSkeleton() {
   return <View style={{ gap: 14, marginTop: 4 }} accessibilityLabel="عم نحمّل الصفحة">
@@ -1809,6 +1809,8 @@ function OrderReceipt({ data, admin = false }: { data: ReceiptData; admin?: bool
   const money = (value: number) => numberFormatter.format(value) + ' ل.س';
   const section = { borderTopWidth: 1, borderTopColor: line, paddingTop: 10, marginTop: 10, gap: 2 } as const;
   const net = commission === null ? null : data.fee - commission;
+  const recipientLabel = data.address?.label.trim();
+  const recipientPhone = data.address?.contact_phone.trim();
   return <View accessibilityLabel={`إيصال الطلب ${data.id.slice(0, 6)}`} style={{ backgroundColor: '#F6F4EC', borderRadius: 18, padding: 16 }}>
     <View style={{ flexDirection: rowDirection, justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
       <View style={{ flex: 1 }}>
@@ -1818,6 +1820,11 @@ function OrderReceipt({ data, admin = false }: { data: ReceiptData; admin?: bool
       </View>
       <View style={{ borderWidth: 1.5, borderColor: good, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 }}><Text style={{ color: good, fontSize: 11.5, fontWeight: '900' }}>تم التسليم</Text></View>
     </View>
+    {!admin && (recipientLabel || recipientPhone) ? <View style={{ backgroundColor: '#E9F3E8', borderColor: '#C8DDC5', borderWidth: 1, borderRadius: 12, padding: 11, marginTop: 11, gap: 3 }}>
+      <Text style={{ color: good, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>صاحب الطلب</Text>
+      {recipientLabel ? <Text style={{ color: ink, fontSize: 15, fontWeight: '900', textAlign: 'right' }}>{recipientLabel}</Text> : null}
+      {recipientPhone ? <Text style={{ color: muted, fontSize: 13, fontWeight: '700', textAlign: 'right' }}>رقم التواصل: <Text style={{ writingDirection: 'ltr' }}>{ltrPhone(recipientPhone)}</Text></Text> : null}
+    </View> : null}
     <View style={section}>
       <Text style={{ color: ink, fontSize: 14.5, fontWeight: '800', lineHeight: 22, textAlign: textSide }}>{body}</Text>
       <Text style={{ color: muted, fontSize: 12.5, textAlign: textSide }}>من: {pickup || 'أقرب محل للسائق'}</Text>
