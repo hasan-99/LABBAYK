@@ -2011,7 +2011,7 @@ function AdminTopBar({ right }: { right?: ReactNode }) {
   return <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6 }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
       <View style={s.brandMark}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={s.brandLogo} contentFit="contain" accessibilityLabel="شعار لَبّيك" /></View>
-      <View><Text style={s.brandName}>لَبّيك</Text><Text style={{ color: color.muted, fontSize: 11.5, textAlign: 'left' }}>الإدارة</Text></View>
+      <View><Text style={s.brandName}>لَبّيك</Text><Text style={{ color: color.muted, fontSize: 11.5, textAlign: 'right' }}>الإدارة</Text></View>
     </View>
     {right}
   </View>;
@@ -2035,7 +2035,7 @@ function AdminTabShell({ title, subtitle, onRefresh, refreshing, children }: { t
   return <SafeAreaView edges={['top']} style={[style.safe, { flex: 1 }]}>
     <AdminTopBar right={onRefresh ? <Pressable disabled={refreshing} onPress={onRefresh} accessibilityRole="button" accessibilityLabel="تحديث" style={{ width: 44, height: 44, borderRadius: 14, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface, alignItems: 'center', justifyContent: 'center', opacity: refreshing ? 0.6 : 1 }}><SymbolView name={{ ios: 'arrow.clockwise', android: 'refresh', web: 'refresh' }} tintColor={color.primary} size={18} /></Pressable> : undefined} />
     <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 12 }} keyboardShouldPersistTaps="handled" refreshControl={onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} tintColor={color.primary} colors={[color.primary]} progressBackgroundColor={color.surface} /> : undefined}>
-      <View><Text style={{ color: color.text, fontSize: 26, fontWeight: '900', textAlign: 'left' }}>{title}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'left', marginTop: 2 }}>{subtitle}</Text></View>
+      <View><Text style={{ color: color.text, fontSize: 26, fontWeight: '900', textAlign: 'right', writingDirection: 'rtl' }}>{title}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', writingDirection: 'rtl', marginTop: 2 }}>{subtitle}</Text></View>
       {children}
     </ScrollView>
   </SafeAreaView>;
@@ -2110,7 +2110,7 @@ function AdminDriversTab({ userId, active, onBadge }: { userId: string; active: 
       {pending.length ? <>
         <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>طلبات الانضمام · {pending.length}</Text>
         {pending.map((row) => <View key={row.user_id} style={{ backgroundColor: color.surface, borderColor: '#C98A2B', borderWidth: 1, borderRadius: 20, padding: 14, gap: 12 }}>
-          <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11 }}>{avatar(row.user_id)}<View style={{ flex: 1 }}><Text style={{ color: color.text, fontSize: 16, fontWeight: '900', textAlign: 'right' }}>{nameOf(row.user_id)}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>{row.vehicle_description || 'بدون وصف للمركبة'} · {timeAgo(row.created_at)}</Text></View></View>
+          <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11 }}>{avatar(row.user_id)}<View style={{ flex: 1 }}><Text style={{ color: color.text, fontSize: 16, fontWeight: '900', textAlign: 'right', writingDirection: 'rtl' }}>{nameOf(row.user_id)}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', writingDirection: 'rtl' }}>{row.vehicle_description || 'بدون وصف للمركبة'} · {timeAgo(row.created_at)}</Text></View></View>
           <View style={{ flexDirection: 'row-reverse', gap: 8 }}>
             <Pressable disabled={!!working || !online} onPress={() => void review(row.user_id, true)} accessibilityRole="button" style={{ flex: 1, minHeight: 44, borderRadius: 13, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', opacity: working || !online ? 0.55 : 1 }}><Text style={{ color: color.background, fontSize: 14, fontWeight: '900' }}>{working === row.user_id ? 'لحظة…' : 'اعتماد'}</Text></Pressable>
             <Pressable disabled={!!working || !online} onPress={() => void review(row.user_id, false)} accessibilityRole="button" style={{ flex: 1, minHeight: 44, borderRadius: 13, borderWidth: 1, borderColor: adminTone.bad.fg, alignItems: 'center', justifyContent: 'center', opacity: working || !online ? 0.55 : 1 }}><Text style={{ color: adminTone.bad.fg, fontSize: 14, fontWeight: '900' }}>رفض</Text></Pressable>
@@ -2120,7 +2120,7 @@ function AdminDriversTab({ userId, active, onBadge }: { userId: string; active: 
       <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>الفريق</Text>
       <AdminSegment items={[{ key: 'all', label: 'الكل' }, { key: 'on', label: 'متصل' }]} value={segment} onChange={setSegment} />
       {team.length ? <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 20, overflow: 'hidden' }}>
-        {team.map((row, index) => { const status = statusOf(row); return <View key={row.user_id} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11, padding: 12, borderTopWidth: index ? 1 : 0, borderTopColor: color.border }}>{avatar(row.user_id)}<View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 15, fontWeight: '800', textAlign: 'right' }}>{nameOf(row.user_id)}</Text><Text numberOfLines={1} style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>{row.vehicle_description || 'بدون وصف للمركبة'}</Text></View><AdminPill label={status.label} tone={status.tone} /></View>; })}
+        {team.map((row, index) => { const status = statusOf(row); return <View key={row.user_id} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11, padding: 12, borderTopWidth: index ? 1 : 0, borderTopColor: color.border }}>{avatar(row.user_id)}<View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 15, fontWeight: '800', textAlign: 'right', writingDirection: 'rtl' }}>{nameOf(row.user_id)}</Text><Text numberOfLines={1} style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', writingDirection: 'rtl' }}>{row.vehicle_description || 'بدون وصف للمركبة'}</Text></View><AdminPill label={status.label} tone={status.tone} /></View>; })}
       </View> : <AdminEmpty title="ما في سائقين هون" hint={segment === 'on' ? 'ما في سائق متصل حالياً.' : 'السائقين المسجلين بيظهروا هون.'} />}
     </>}
   </AdminTabShell>;
