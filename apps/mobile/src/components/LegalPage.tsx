@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Linking, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link, useRouter } from 'expo-router';
 import { AppText as Text } from '@/components/AppText';
@@ -170,7 +170,7 @@ export function LegalPage({ page }: { page: PageName }) {
   const contactSupport = () => {
     void Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('تواصل مع دعم لَبّيك')}`).catch(() => setMessage(`تعذر فتح تطبيق البريد. راسلنا على ${SUPPORT_EMAIL}.`));
   };
-  return <SafeAreaView style={s.safe}><ScrollView contentContainerStyle={s.scroll}>
+  return <SafeAreaView style={s.safe}><KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined}><ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'} contentContainerStyle={s.scroll}>
     <View style={s.page}>
       <Pressable onPress={() => router.canGoBack() ? router.back() : router.replace('/')} accessibilityRole="button" style={s.back}><Text style={s.backText}>← العودة إلى لَبّيك</Text></Pressable>
       <View style={s.hero}><Text style={s.brand}>لَبّيك</Text><Text accessibilityRole="header" style={s.title}>{content.title}</Text><Text style={s.subtitle}>{content.subtitle}</Text><Text style={s.updated}>{content.updated}</Text></View>
@@ -181,7 +181,7 @@ export function LegalPage({ page }: { page: PageName }) {
       {page !== 'delete-account' && content.sections.map((section) => <View key={section.title} style={s.card}><Text accessibilityRole="header" style={s.sectionTitle}>{section.title}</Text>{section.paragraphs.map((paragraph, index) => <Text key={index} selectable style={s.copy}>{paragraph}</Text>)}{section.bullets?.map((item) => <View key={item} style={s.bulletRow}><Text style={s.bullet}>•</Text><Text selectable style={s.bulletCopy}>{item}</Text></View>)}</View>)}
       <View style={s.links}><PageLink href="/privacy" label="سياسة الخصوصية" s={s}/><PageLink href="/terms" label="شروط الاستخدام" s={s}/><PageLink href="/support" label="الدعم" s={s}/><PageLink href="/delete-account" label="حذف الحساب" s={s}/></View>
     </View>
-  </ScrollView></SafeAreaView>;
+  </ScrollView></KeyboardAvoidingView></SafeAreaView>;
 }
 
 function PageLink({ href, label, s }: { href: '/privacy' | '/terms' | '/support' | '/delete-account'; label: string; s: ReturnType<typeof stylesFor> }) {

@@ -48,7 +48,7 @@ const mobileThemeKey = 'labbayk-theme';
 const buildStamp = Updates.createdAt
   ? `آخر تحديث: ${new Intl.DateTimeFormat('ar-SY', { dateStyle: 'medium', timeStyle: 'short' }).format(Updates.createdAt)}`
   : 'وقت التحديث غير متاح';
-const sessionStabilityReleaseNoteKey = 'labbayk:release-note:rtl-update-20261123';
+const sessionStabilityReleaseNoteKey = 'labbayk:release-note:admin-rtl-keyboard-20261123';
 const lightPalette = { ...tokens.color, background: '#F5F7F2', surface: '#FFFFFF', raised: '#EFF5E8', surfaceRaised: '#EFF5E8', border: '#DCE4D8', text: '#20241F', muted: '#5D645B', primary: '#343A32', accent: '#287A55', danger: '#B42318' } as unknown as typeof tokens.color;
 const lightColorMap: Record<string, string> = {
   '#0B1411':'#F5F7F2','#101A14':'#F5F7F2','#0F1A13':'#F5F7F2','#111c16':'#F5F7F2','#121d16':'#F5F7F2',
@@ -195,7 +195,7 @@ type ScrollHandle = React.ComponentRef<typeof ScrollView>;
 function KeyboardScroll(props: ScrollViewProps & { ref?: React.Ref<ScrollHandle> }) {
   const ios = Platform.OS === 'ios';
   const scroll = <ScrollView {...props} keyboardShouldPersistTaps="handled" keyboardDismissMode={ios ? 'interactive' : 'on-drag'} automaticallyAdjustKeyboardInsets={ios} />;
-  return Platform.OS === 'android' ? <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">{scroll}</KeyboardAvoidingView> : scroll;
+  return Platform.OS === 'android' ? <KeyboardAvoidingView style={{ flex: 1 }} behavior="height">{scroll}</KeyboardAvoidingView> : scroll;
 }
 
 function confirmAction(title: string, message: string, confirmLabel: string): Promise<boolean> {
@@ -1320,12 +1320,12 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       </SafeAreaView>
     </Modal>}
     {isActive&&<Modal visible={!!deliveryDraft} animationType="slide" onRequestClose={()=>{if(!busy)closeDeliveryDraft()}}>
-      <SafeAreaView style={[s.safe,{flex:1}]}><KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS==='ios'?'padding':undefined}>
+      <SafeAreaView style={[s.safe,{flex:1}]}><KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS==='ios'?'padding':Platform.OS==='android'?'height':undefined}>
         <View style={{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',paddingHorizontal:16,paddingVertical:12,borderBottomWidth:1,borderBottomColor:c.border}}>
           <Text style={{color:c.text,fontSize:19,fontWeight:'900'}}>تأكيد تسليم الطلب</Text>
           <Pressable disabled={busy} onPress={closeDeliveryDraft} accessibilityRole="button" accessibilityLabel="إغلاق" style={{width:40,height:40,borderRadius:20,borderWidth:1,borderColor:c.border,alignItems:'center',justifyContent:'center'}}><SymbolView name={{ios:'xmark',android:'close',web:'close'}} tintColor={c.muted} size={16}/></Pressable>
         </View>
-        <KeyboardScroll style={{flex:1}} contentContainerStyle={{padding:16,gap:12,paddingBottom:24}}>
+        <ScrollView style={{flex:1}} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={{padding:16,gap:12,paddingBottom:24}}>
           {deliveryDraft&&<Image source={{uri:deliveryDraft.uri}} contentFit="cover" style={{width:'100%',height:230,borderRadius:18,backgroundColor:c.raised}} accessibilityLabel="صورة التسليم"/>}
           {deliveryDraft&&deliveryUpload&&deliveryUpload.uri===deliveryDraft.uri&&<View style={{gap:6}} accessibilityRole="progressbar" accessibilityLabel="رفع صورة الإثبات">
             <View style={{flexDirection:'row-reverse',justifyContent:'space-between',alignItems:'center'}}>
@@ -1340,7 +1340,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
             <Text style={{color:c.muted,fontSize:12,textAlign:'right',lineHeight:19}}>معبّأ بالمبلغ المطلوب (المشتريات + الأجرة). عدّله إذا أعطاك الزبون زيادة (إكرامية) أو أقل.</Text></View>
           <View style={{gap:6}}><Text style={{color:c.text,fontSize:13.5,fontWeight:'800',textAlign:'right'}}>ملاحظة <Text style={{color:c.muted,fontWeight:'500'}}>اختياري</Text></Text>
             <TextInput value={deliveryNote} onChangeText={(value)=>setDeliveryNote(value.slice(0,300))} multiline maxLength={300} textAlign="right" textAlignVertical="top" placeholder="مثال: الزبون أعطاني إكرامية، أو سلّمته للجار" placeholderTextColor="#839188" style={[s.field,{minHeight:84}]} accessibilityLabel="ملاحظة التسليم"/></View>
-        </KeyboardScroll>
+        </ScrollView>
         <View style={{paddingHorizontal:16,paddingTop:8,paddingBottom:12,borderTopWidth:1,borderTopColor:c.border}}>
           <Pressable disabled={busy||!online} onPress={()=>void submitDelivery()} accessibilityRole="button" style={{minHeight:56,borderRadius:18,backgroundColor:'#B7FF30',alignItems:'center',justifyContent:'center',opacity:busy||!online?0.55:1}}><Text style={{color:'#0B1411',fontSize:17,fontWeight:'900'}}>{pendingAction==='delivery-upload'?`عم نرفع صورة الإثبات…${deliveryUpload&&deliveryUpload.status==='uploading'?' '+Math.round(deliveryUpload.progress*100)+'%':''}`:pendingAction==='delivery-confirm'?'عم نأكد التسليم…':busy?'عم نحفظ…':'✅ تم تسليم الطلب'}</Text></Pressable>
         </View>
@@ -1747,9 +1747,10 @@ function CancelReasonSheet({ target, busy, warning, onClose, onConfirm }: { targ
   useEffect(() => { if (targetId) setReason(''); }, [targetId]);
   const ready = reason.trim().length >= 5;
   return <Modal visible={!!target} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => { if (!busy) onClose(); }}>
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined}>
       <Pressable style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' }} onPress={() => { if (!busy) onClose(); }} accessibilityLabel="إغلاق">
-        <Pressable onPress={() => {}} style={{ backgroundColor: '#18241F', borderTopLeftRadius: 30, borderTopRightRadius: 30, borderWidth: 1, borderColor: '#2B3C34', paddingHorizontal: 18, paddingTop: 12, paddingBottom: 26, gap: 10 }}>
+        <Pressable onPress={() => {}} style={{ backgroundColor: '#18241F', borderTopLeftRadius: 30, borderTopRightRadius: 30, borderWidth: 1, borderColor: '#2B3C34', paddingHorizontal: 18, paddingTop: 12, paddingBottom: 26, maxHeight: '90%' }}>
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 10, paddingBottom: 8 }}>
           <View style={{ width: 44, height: 5, borderRadius: 3, backgroundColor: '#3A4B43', alignSelf: 'center', marginBottom: 6 }} />
           <Text style={{ color: '#FFFFFF', fontSize: 23, fontWeight: '900', textAlign: 'right' }}>إلغاء الطلب</Text>
           <Text numberOfLines={1} style={{ color: '#9DB3A8', fontSize: 14, textAlign: 'right' }}>{target?.label}</Text>
@@ -1759,6 +1760,7 @@ function CancelReasonSheet({ target, busy, warning, onClose, onConfirm }: { targ
           {warning ? <View style={{ backgroundColor: '#2A2216', borderColor: '#5A4620', borderWidth: 1, borderRadius: 14, padding: 10 }}><Text style={{ color: '#F5C062', fontSize: 13, textAlign: 'right', lineHeight: 20 }}>{warning}</Text></View> : null}
           <Pressable disabled={!ready || busy} onPress={() => onConfirm(reason.trim())} accessibilityRole="button" style={{ minHeight: 52, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: ready ? '#E5484D' : '#2A3430', marginTop: 4 }}><Text style={{ color: ready ? '#FFFFFF' : '#6B7C73', fontSize: 18, fontWeight: '900' }}>{busy ? 'لحظة…' : 'تأكيد الإلغاء'}</Text></Pressable>
           <Pressable disabled={busy} onPress={onClose} accessibilityRole="button" style={{ minHeight: 44, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#B7FF30', fontSize: 16, fontWeight: '900' }}>رجوع، لا تلغي</Text></Pressable>
+          </ScrollView>
         </Pressable>
       </Pressable>
     </KeyboardAvoidingView>
@@ -2030,12 +2032,12 @@ function AdminPill({ label, tone }: { label: string; tone: keyof typeof adminTon
   return <View style={{ backgroundColor: palette.bg, borderRadius: 13, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: palette.fg, fontSize: 12, fontWeight: '900' }}>{label}</Text></View>;
 }
 
-function AdminTabShell({ title, subtitle, onRefresh, refreshing, headerAction, children }: { title: string; subtitle: string; onRefresh?: () => void; refreshing?: boolean; headerAction?: ReactNode; children: ReactNode }) {
+function AdminTabShell({ title, subtitle, onRefresh, refreshing, headerAction, headerActionLeft = false, children }: { title: string; subtitle: string; onRefresh?: () => void; refreshing?: boolean; headerAction?: ReactNode; headerActionLeft?: boolean; children: ReactNode }) {
   const { colors: color, styles: style } = useMobileTheme();
   return <SafeAreaView edges={['top']} style={[style.safe, { flex: 1 }]}>
     <AdminTopBar right={onRefresh ? <Pressable disabled={refreshing} onPress={onRefresh} accessibilityRole="button" accessibilityLabel="تحديث" style={{ width: 44, height: 44, borderRadius: 14, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface, alignItems: 'center', justifyContent: 'center', opacity: refreshing ? 0.6 : 1 }}><SymbolView name={{ ios: 'arrow.clockwise', android: 'refresh', web: 'refresh' }} tintColor={color.primary} size={18} /></Pressable> : undefined} />
     <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 12 }} keyboardShouldPersistTaps="handled" refreshControl={onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} tintColor={color.primary} colors={[color.primary]} progressBackgroundColor={color.surface} /> : undefined}>
-      <View style={{ width: '100%', flexDirection: 'row-reverse', alignItems: 'center', gap: 10 }}><View style={{ flex: 1, alignItems: 'flex-start' }}><Text style={{ color: color.text, fontSize: 26, fontWeight: '900', textAlign: 'right', writingDirection: 'rtl' }}>{title}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', writingDirection: 'rtl', marginTop: 2 }}>{subtitle}</Text></View>{headerAction}</View>
+      <View style={{ width: '100%', flexDirection: headerActionLeft ? 'row' : 'row-reverse', alignItems: 'center', gap: 10 }}><View style={{ flex: 1, alignItems: 'flex-start' }}><Text style={{ color: color.text, fontSize: 26, fontWeight: '900', textAlign: 'right', writingDirection: 'rtl' }}>{title}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', writingDirection: 'rtl', marginTop: 2 }}>{subtitle}</Text></View>{headerAction}</View>
       {children}
     </ScrollView>
   </SafeAreaView>;
@@ -2183,7 +2185,8 @@ function AdminMoneyTab({ userId, active, onBadge, onOpenOrder }: { userId: strin
   }, [online, onRealtime]);
   const nameOf = (id: string | null) => id ? (names[id] ?? '#' + id.slice(0, 6)) : '—';
   const walletIds = useMemo(() => [...new Set([...drivers, ...Object.keys(balances)])], [drivers, balances]);
-  const dueTotal = walletIds.reduce((sum, id) => sum + Math.max(0, -(balances[id] ?? 0)), 0);
+  const driversWithDue = walletIds.filter((id) => (balances[id] ?? 0) < 0);
+  const dueTotal = driversWithDue.reduce((sum, id) => sum - (balances[id] ?? 0), 0);
   const manualRefresh = async () => { if (!online && !(await recheckBackend())) { setMessage('التحديث يحتاج اتصالاً بالإنترنت.'); return; } setRefreshing(true); await loadAdminNames(true); await refreshNow(); setRefreshing(false); };
   const submitTopUp = async () => {
     if (!supabase || !topUp) return;
@@ -2246,29 +2249,29 @@ function AdminMoneyTab({ userId, active, onBadge, onOpenOrder }: { userId: strin
     const visible = withBalance.filter(({ row }) => entryFilter === 'all' || (entryFilter === 'commission' ? row.entry_type === 'delivery_commission' : row.entry_type === 'cash_top_up'));
     const page = visible.slice(0, entriesShown);
     const days = [...new Set(page.map(({ row }) => dayLabel(row.created_at)))];
-    const sign = (n: number) => n < 0 ? '−' : '';
-    const sumBox = (value: string, label: string, tint?: string) => <View style={{ flex: 1, backgroundColor: color.raised, borderRadius: 12, paddingVertical: 8, paddingHorizontal: 4, alignItems: 'center' }}><Text style={{ color: tint ?? color.text, fontSize: 14, fontWeight: '900' }}>{value}</Text><Text style={{ color: color.muted, fontSize: 11, textAlign: 'center' }}>{label}</Text></View>;
+    const sign = (n: number) => n < 0 ? '\u200E−\u200E' : '';
+    const sumBox = (value: string, label: string, tint?: string) => <View style={{ flex: 1, backgroundColor: color.raised, borderRadius: 12, paddingVertical: 8, paddingHorizontal: 4, alignItems: 'center' }}><Text style={{ color: tint ?? color.text, fontSize: 14, fontWeight: '900', writingDirection: 'ltr', textAlign: 'center' }}>{value}</Text><Text style={{ color: color.muted, fontSize: 11, textAlign: 'center' }}>{label}</Text></View>;
     return <>
       <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 22, padding: 16, gap: 8 }}>
         <Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>{historyBalance < 0 ? 'عليه للشركة' : historyBalance > 0 ? 'رصيد عمولة' : 'الحساب مسدّد'}</Text>
         <Text style={{ color: historyBalance < 0 ? adminTone.bad.fg : historyBalance > 0 ? adminTone.ok.fg : color.text, fontSize: 34, fontWeight: '900', textAlign: 'left', writingDirection: 'ltr', alignSelf: 'stretch' }}>{sign(historyBalance)}{numberFormatter.format(Math.abs(historyBalance))} <Text style={{ fontSize: 14, color: color.muted }}>ل.س</Text></Text>
         <View style={{ flexDirection: 'row-reverse', gap: 6 }}>
-          {sumBox(numberFormatter.format(commissions), `عمولات (${commissionCount} طلب)`, adminTone.bad.fg)}
-          {sumBox(numberFormatter.format(payments), 'دفعات مسجّلة', adminTone.ok.fg)}
           {sumBox(sign(historyBalance) + numberFormatter.format(Math.abs(historyBalance)), 'الرصيد')}
+          {sumBox(numberFormatter.format(payments), 'دفعات مسجّلة', adminTone.ok.fg)}
+          {sumBox(numberFormatter.format(commissions), `عمولات (${commissionCount} طلب)`, adminTone.bad.fg)}
         </View>
         {others !== 0 ? <Text style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>عكس القيود والتعديلات اليدوية: {sign(others)}{numberFormatter.format(Math.abs(others))} ل.س (داخلة بالرصيد).</Text> : null}
         <Pressable onPress={() => { setTopUp({ id: historyFor }); setAmount(''); setReason(''); }} accessibilityRole="button" style={{ minHeight: 48, borderRadius: 15, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', marginTop: 4 }}><Text style={{ color: color.background, fontSize: 15, fontWeight: '900' }}>تسجيل دفعة من {nameOf(historyFor)}</Text></Pressable>
       </View>
-      <View style={{ flexDirection: 'row-reverse', gap: 8 }}>{([['all', 'الكل'], ['commission', 'عمولات'], ['payment', 'دفعات']] as const).map(([key, label]) => { const on = entryFilter === key; return <Pressable key={key} onPress={() => { setEntryFilter(key); setEntriesShown(30); }} accessibilityRole="button" accessibilityState={{ selected: on }} style={{ minHeight: 38, paddingHorizontal: 14, borderRadius: 12, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.primary : color.surface, justifyContent: 'center' }}><Text style={{ color: on ? color.background : color.text, fontSize: 13, fontWeight: '800' }}>{label}</Text></Pressable>; })}</View>
+      <View style={{ direction: 'rtl', flexDirection: 'row', gap: 8 }}>{([['all', 'الكل'], ['commission', 'عمولات'], ['payment', 'دفعات']] as const).map(([key, label]) => { const on = entryFilter === key; return <Pressable key={key} onPress={() => { setEntryFilter(key); setEntriesShown(30); }} accessibilityRole="button" accessibilityState={{ selected: on }} style={{ minHeight: 38, paddingHorizontal: 14, borderRadius: 12, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.primary : color.surface, justifyContent: 'center' }}><Text style={{ color: on ? color.background : color.text, fontSize: 13, fontWeight: '800' }}>{label}</Text></Pressable>; })}</View>
       {ledger === null ? <ActivityIndicator color={color.primary} style={{ margin: 24 }} /> : page.length ? days.map((day) => <View key={day} style={{ gap: 8 }}>
         <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>{day}</Text>
         {page.filter(({ row }) => dayLabel(row.created_at) === day).map(({ row, after }) => {
           const detail = row.order_id ? ledgerDetails[row.order_id] : undefined; const open = openEntry === row.id; const credit = row.amount_minor > 0;
           return <View key={row.id} style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, overflow: 'hidden' }}>
-            <Pressable onPress={() => setOpenEntry(open ? null : row.id)} accessibilityRole="button" accessibilityState={{ expanded: open }} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11, padding: 12 }}>
+            <Pressable onPress={() => setOpenEntry(open ? null : row.id)} accessibilityRole="button" accessibilityState={{ expanded: open }} style={{ direction: 'rtl', flexDirection: 'row', alignItems: 'center', gap: 11, padding: 12 }}>
               <View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 14.5, fontWeight: '800', textAlign: 'right' }}>{entryLabel(row)}</Text><Text style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>{notificationTimeFormatter.format(new Date(row.created_at))}</Text></View>
-              <View style={{ alignItems: 'flex-start' }}><Text style={{ color: credit ? adminTone.ok.fg : adminTone.bad.fg, fontSize: 15, fontWeight: '900' }}>{credit ? '+' : '−'}{numberFormatter.format(Math.abs(row.amount_minor))}</Text><Text style={{ color: color.muted, fontSize: 11.5 }}>الرصيد بعدها {sign(after)}{numberFormatter.format(Math.abs(after))}</Text></View>
+              <View style={{ alignItems: 'flex-start' }}><Text style={{ color: credit ? adminTone.ok.fg : adminTone.bad.fg, fontSize: 15, fontWeight: '900', writingDirection: 'ltr', textAlign: 'left' }}>{credit ? '+' : sign(row.amount_minor)}{numberFormatter.format(Math.abs(row.amount_minor))}</Text><Text style={{ color: color.muted, fontSize: 11.5, textAlign: 'left' }}>الرصيد بعدها <Text style={{ writingDirection: 'ltr' }}>{sign(after)}{numberFormatter.format(Math.abs(after))}</Text></Text></View>
             </Pressable>
             {open ? <View style={{ borderTopWidth: 1, borderTopColor: color.border, backgroundColor: color.background, padding: 12, gap: 7 }}>
               {row.entry_type === 'delivery_commission' ? <>
@@ -2291,27 +2294,27 @@ function AdminMoneyTab({ userId, active, onBadge, onOpenOrder }: { userId: strin
       {rows.length >= 300 ? <Text style={{ color: color.muted, fontSize: 12, textAlign: 'center' }}>معروض آخر 300 قيد.</Text> : null}
     </>;
   };
-  const line = (label: string, value: string, tint?: string) => <View key={label} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5, textAlign: 'right', writingDirection: 'rtl' }}>{label}</Text><Text style={{ color: tint ?? color.text, fontSize: 13.5, fontWeight: '900', textAlign: 'left', writingDirection: 'ltr' }}>{value}</Text></View>;
+  const line = (label: string, value: string, tint?: string) => <View key={label} style={{ direction: 'rtl', flexDirection: 'row', justifyContent: 'space-between' }}><Text style={{ color: color.muted, fontSize: 13.5, textAlign: 'right', writingDirection: 'rtl' }}>{label}</Text><Text style={{ color: tint ?? color.text, fontSize: 13.5, fontWeight: '900', textAlign: 'left', writingDirection: 'ltr' }}>{value}</Text></View>;
   const input = { minHeight: 50, paddingHorizontal: 14, borderRadius: 14, borderWidth: 1, borderColor: color.border, backgroundColor: color.raised, color: color.text, textAlign: 'right', fontSize: 15 } as const;
-  return <AdminTabShell title={historyFor ? nameOf(historyFor) : 'المال'} subtitle={historyFor ? 'سجل الحساب' : 'حسابات العمولة على السائقين'} onRefresh={() => void manualRefresh()} refreshing={refreshing} headerAction={historyFor ? <Pressable onPress={() => setHistoryFor(null)} accessibilityRole="button" accessibilityLabel="رجوع إلى محافظ العمولة" style={{ minHeight: 40, alignSelf: 'auto', flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface }}><Text style={{ color: color.primary, fontSize: 12, fontWeight: '800', textAlign: 'right' }}>رجوع</Text></Pressable> : undefined}>
+  return <AdminTabShell title={historyFor ? nameOf(historyFor) : 'المال'} subtitle={historyFor ? 'سجل الحساب' : 'حسابات العمولة على السائقين'} onRefresh={() => void manualRefresh()} refreshing={refreshing} headerActionLeft={!!historyFor} headerAction={historyFor ? <Pressable onPress={() => setHistoryFor(null)} accessibilityRole="button" accessibilityLabel="رجوع إلى محافظ العمولة" style={{ minHeight: 40, alignSelf: 'auto', flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface }}><Text style={{ color: color.primary, fontSize: 12, fontWeight: '800', textAlign: 'right' }}>رجوع</Text></Pressable> : undefined}>
     {historyFor ? renderHistory() : <>
       <View style={{ flexDirection: 'row-reverse', gap: 10 }}>
-      <View style={{ flex: 1, backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12 }}><Text style={{ color: color.text, fontSize: 24, fontWeight: '900', textAlign: 'right' }}>{numberFormatter.format(walletIds.filter((id) => (balances[id] ?? 0) < 0).length)}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>سائقين عليهم عمولة</Text></View>
       <View style={{ flex: 1, backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12 }}><Text style={{ color: adminTone.bad.fg, fontSize: 24, fontWeight: '900', textAlign: 'right' }}>{numberFormatter.format(dueTotal)}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>مستحق على السائقين · ل.س</Text></View>
+      <View style={{ flex: 1, backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, padding: 12 }}><Text style={{ color: color.text, fontSize: 24, fontWeight: '900', textAlign: 'right' }}>{numberFormatter.format(driversWithDue.length)}</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right' }}>سائقين عليهم عمولة</Text></View>
     </View>
     {loading ? <ActivityIndicator color={color.primary} style={{ margin: 24 }} /> : <>
       <Text style={{ color: color.muted, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>السالب مبلغ مستحق على السائق</Text>
-      {walletIds.length ? <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 20, overflow: 'hidden' }}>
-        {walletIds.map((id, index) => { const balance = balances[id] ?? 0; return <View key={id} style={{ direction: 'rtl', flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderTopWidth: index ? 1 : 0, borderTopColor: color.border }}>
+      {driversWithDue.length ? <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 20, overflow: 'hidden' }}>
+        {driversWithDue.map((id, index) => { const balance = balances[id] ?? 0; return <View key={id} style={{ direction: 'rtl', flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderTopWidth: index ? 1 : 0, borderTopColor: color.border }}>
           <Pressable onPress={() => openHistory(id)} accessibilityRole="button" accessibilityLabel={`سجل حساب ${nameOf(id)}`} style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: color.text, fontSize: 15, fontWeight: '800', textAlign: 'right' }}>{nameOf(id)}</Text><Text style={{ color: color.muted, fontSize: 12, textAlign: 'right' }}>{balance < 0 ? 'مستحق للشركة' : 'رصيد عمولة'} · سجل الحساب ›</Text></Pressable>
-          <Text style={{ color: balance < 0 ? adminTone.bad.fg : adminTone.ok.fg, fontSize: 15, fontWeight: '900' }}>{balance < 0 ? '−' : ''}{numberFormatter.format(Math.abs(balance))}</Text>
           <Pressable onPress={() => { setTopUp({ id }); setAmount(''); setReason(''); }} accessibilityRole="button" accessibilityLabel={`تسجيل دفعة من ${nameOf(id)}`} style={{ minHeight: 40, paddingHorizontal: 14, borderRadius: 12, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 13, fontWeight: '900' }}>دفعة</Text></Pressable>
+          <Text style={{ color: adminTone.bad.fg, fontSize: 15, fontWeight: '900', writingDirection: 'ltr', textAlign: 'left' }}>−{numberFormatter.format(Math.abs(balance))}</Text>
         </View>; })}
-      </View> : <AdminEmpty title="ما في محافظ" hint="محافظ السائقين المعتمدين بتظهر هون." />}
+      </View> : <AdminEmpty title="ما في عمولات مستحقة" hint="السائقون الذين عليهم مبالغ عمولة سيظهرون هون." />}
     </>}
     </>}
     <Modal visible={!!topUp} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => setTopUp(null)}>
-      <KeyboardAvoidingView style={{ flex: 1, justifyContent: 'flex-end' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={{ flex: 1, justifyContent: 'flex-end' }} behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' }} onPress={() => setTopUp(null)} accessibilityRole="button" accessibilityLabel="إغلاق" />
         <View style={{ backgroundColor: color.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderTopWidth: 1, borderColor: color.border, padding: 16, paddingBottom: 24 + insets.bottom, gap: 10 }}>
           <View style={{ alignSelf: 'center', width: 42, height: 4, borderRadius: 2, backgroundColor: color.border }} />
@@ -2615,7 +2618,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
         loadAdminNames(),
       ]);
       if (orderResult.error || driverResult.error) { setMessage('تعذر تحميل الطلبات أو السائقين. حدّث الصفحة عند عودة الاتصال.'); return; }
-      const rows = [...(orderResult.data ?? [])].sort((a, b) => Number(!!b.is_urgent) - Number(!!a.is_urgent));
+      const rows = [...(orderResult.data ?? [])];
       const searchingIds = rows.filter((order) => order.status === 'searching').map((order) => order.id);
       const driverIds = [...new Set(rows.flatMap((order) => order.driver_id ? [order.driver_id] : []))];
       const addressIds = [...new Set(rows.flatMap((order) => order.address_id ? [order.address_id] : []))];
@@ -2664,7 +2667,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   useEffect(() => { if (online) void refreshNow(); }, [online, refreshNow]);
   useEffect(() => {
     if (!supabase || !online) return;
-    const channel = supabase.channel(`admin-mobile-orders-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleRefresh).on('postgres_changes', { event: '*', schema: 'public', table: 'driver_profiles' }, scheduleRefresh).on('postgres_changes', { event: '*', schema: 'public', table: 'order_offers' }, scheduleRefresh).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_events' }, (payload) => { const row = payload.new as { event_type?: string; order_id?: string; actor_id?: string | null }; if (row.event_type === 'driver_declined_offer') { showToast(`اعتذر ${row.actor_id ? namesRef.current[row.actor_id] ?? 'سائق' : 'سائق'} عن الطلب #${(row.order_id ?? '').slice(0, 6)}. ما زال عند باقي السائقين.`, 'warning'); scheduleRefresh(); } else if (row.event_type === 'no_driver_response') { showToast(`ما حدا رد على الطلب #${(row.order_id ?? '').slice(0, 6)}. أعد إرساله أو أسنده لسائق.`, 'warning'); scheduleRefresh(); } }).subscribe();
+    const channel = supabase.channel(`admin-mobile-orders-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, scheduleRefresh).on('postgres_changes', { event: '*', schema: 'public', table: 'driver_profiles' }, scheduleRefresh).on('postgres_changes', { event: '*', schema: 'public', table: 'order_offers' }, scheduleRefresh).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_events' }, (payload) => { const row = payload.new as { event_type?: string; order_id?: string; actor_id?: string | null }; if (row.event_type === 'driver_declined_offer') { showToast(`اعتذر ${row.actor_id ? namesRef.current[row.actor_id] ?? 'سائق' : 'سائق'} عن الطلب #${(row.order_id ?? '').slice(0, 6)}. ما زال عند باقي السائقين.`, 'warning'); scheduleRefresh(); } else if (row.event_type === 'no_driver_response') { showToast(`ما حدا رد على الطلب #${(row.order_id ?? '').slice(0, 6)}. أعد إرساله أو أسنده لسائق.`, 'warning'); scheduleRefresh(); } else if (row.event_type === 'customer_cancelled' || row.event_type === 'admin_cancelled') { showToast(`تم إلغاء الطلب #${(row.order_id ?? '').slice(0, 6)}. تم تحديث قائمة الإدارة.`, 'warning'); scheduleRefresh(); } }).subscribe();
     return () => { void supabase?.removeChannel(channel); };
   }, [online, scheduleRefresh, showToast, userId]);
   useEffect(() => {
@@ -2709,8 +2712,8 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   }, [orders, filter, filterDriver, filterPeriod, search, names, groupOf]);
   const driverCounts = useMemo(() => { const map: Record<string, number> = {}; for (const order of orders) if (order.driver_id) map[order.driver_id] = (map[order.driver_id] ?? 0) + 1; return map; }, [orders]);
   const isFinished = useCallback((order: AdminMobileOrder) => (adminStatusGroup(order.status) === 'done' || order.status === 'cancelled') && !openDisputes[order.id] && order.status !== 'disputed', [openDisputes]);
-  const activeList = useMemo(() => list.filter((order) => !isFinished(order)), [list, isFinished]);
-  const finishedList = useMemo(() => list.filter((order) => isFinished(order)), [list, isFinished]);
+  const activeList = useMemo(() => list.filter((order) => !isFinished(order)).sort((a, b) => Number(!!b.is_urgent) - Number(!!a.is_urgent) || Date.parse(b.created_at) - Date.parse(a.created_at)), [list, isFinished]);
+  const finishedList = useMemo(() => list.filter(isFinished).sort((a, b) => Date.parse(b.status === 'cancelled' ? b.created_at : b.delivered_at ?? b.created_at) - Date.parse(a.status === 'cancelled' ? a.created_at : a.delivered_at ?? a.created_at)), [list, isFinished]);
 
   useEffect(() => { onBadge('orders', counts.action); }, [counts.action, onBadge]);
   useEffect(() => { if (counts.action === 0 && filter === 'action') setFilter('all'); }, [counts.action, filter]);
@@ -2800,7 +2803,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
     const segment = (on: boolean) => ({ flex: 1, minHeight: 46, borderRadius: 13, borderWidth: 1.5, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.primary : color.surface, alignItems: 'center' as const, justifyContent: 'center' as const });
     const chosenDriver = drivers.find((driver) => driver.user_id === driverId);
     return <SafeAreaView style={[style.safe, { flex: 1 }]}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined}>
         <View style={{ direction: 'rtl', flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: color.border }}>
           <Pressable onPress={() => setSheet(null)} accessibilityRole="button" accessibilityLabel="رجوع" style={{ width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface, alignItems: 'center', justifyContent: 'center' }}><SymbolView name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }} tintColor={color.text} size={18} /></Pressable>
           <View style={{ flex: 1, alignItems: 'flex-start' }}><Text style={{ color: color.muted, fontSize: 11.5, textAlign: 'right', writingDirection: 'rtl' }}>#{sheet.id.slice(0, 8)} · {timeAgo(sheet.created_at)}</Text><Text style={{ color: color.text, fontSize: 18, fontWeight: '900', textAlign: 'right', writingDirection: 'rtl' }}>طلب #{sheet.id.slice(0, 6)}</Text></View>
@@ -2857,7 +2860,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
           <CancelReasonSheet target={cancelOpen ? { id: sheet.id, label: `طلب #${sheet.id.slice(0, 6)} · ${sheet.request_text}` } : null} busy={cancelling} warning={sheet.purchase_amount_minor !== null || ['purchased', 'delivering'].includes(sheet.status) ? 'السائق اشترى الأغراض أصلاً. الإلغاء بعد الشراء بيحتاج بلاغاً مفتوحاً على الطلب، وبتضل المبالغ مسجلة للتسوية اليدوية.' : undefined} onClose={() => setCancelOpen(false)} onConfirm={(reason) => void cancelOrder(reason)} />
           {!delivered && !actionable && <View style={card}><Text style={{ color: color.muted, fontSize: 13.5, textAlign: 'right', writingDirection: 'rtl', lineHeight: 22 }}>{sheet.driver_id ? `الطلب مع السائق ${nameOf(sheet.driver_id)} ولا يحتاج إجراء منك.` : 'ما في إجراءات متاحة لهالطلب حالياً.'}</Text></View>}
           <Modal visible={actionable && pricingOpen} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={() => setPricingOpen(false)}>
-          <KeyboardAvoidingView style={{ flex: 1, justifyContent: 'flex-end' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <KeyboardAvoidingView style={{ flex: 1, justifyContent: 'flex-end' }} behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined}>
           <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' }} onPress={() => setPricingOpen(false)} accessibilityRole="button" accessibilityLabel="إغلاق" />
           <View style={{ backgroundColor: color.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderTopWidth: 1, borderColor: color.border, maxHeight: '88%' }}>
           <View style={{ alignSelf: 'center', width: 42, height: 4, borderRadius: 2, backgroundColor: color.border, marginTop: 10 }} />
@@ -2896,7 +2899,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
   const cancelledCount = orders.filter((order) => order.status === 'cancelled').length;
   const filtersOn = !!filterDriver || filterPeriod !== 'all' || filter !== 'all';
   const clearFilters = () => { setFilter('all'); setFilterDriver(''); setFilterPeriod('all'); setVisible(25); setFinishedShown(12); };
-  const filterPill = (key: 'driver' | 'period' | 'status', label: string, on: boolean) => <Pressable key={key} onPress={() => setOpenFilter(key)} accessibilityRole="button" accessibilityLabel={label} style={{ flex: 1, minWidth: 0, minHeight: 42, borderRadius: 21, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? 'rgba(183,255,48,0.14)' : color.surface, direction: 'rtl', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: 8 }}>
+  const filterPill = (key: 'driver' | 'period' | 'status', label: string, on: boolean) => <Pressable key={key} onPress={() => setOpenFilter(key)} accessibilityRole="button" accessibilityLabel={label} style={{ flex: 1, minWidth: 0, minHeight: 42, borderRadius: 12, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? 'rgba(183,255,48,0.14)' : color.surface, direction: 'rtl', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: 8 }}>
     <Text numberOfLines={1} ellipsizeMode="tail" style={{ flexShrink: 1, color: on ? color.primary : color.text, fontSize: 14, fontWeight: on ? '900' : '700' }}>{label}</Text>
     <Text style={{ color: on ? color.primary : color.muted, fontSize: 10 }}>⌄</Text>
   </Pressable>;
@@ -2946,7 +2949,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
     {header}
     <KeyboardScroll contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 12 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void manualRefresh()} tintColor={color.primary} colors={[color.primary]} progressBackgroundColor={color.surface} />}>
       <View style={{ direction: 'rtl', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        <View><Text style={{ color: color.text, fontSize: 24, fontWeight: '900', textAlign: 'right', writingDirection: 'rtl' }}>الطلبات</Text><Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', writingDirection: 'rtl', marginTop: 2 }}>{counts.action ? `${counts.action} طلب بانتظار إجراء منك` : 'ما في طلبات بانتظار إجراء'}</Text></View>
+        <View><Text style={{ color: color.text, fontSize: 24, fontWeight: '900', textAlign: 'right', writingDirection: 'rtl' }}>الطلبات</Text>{counts.action ? <Text style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', writingDirection: 'rtl', marginTop: 2 }}>{counts.action} طلب بانتظار إجراء منك</Text> : null}</View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Pressable onPress={() => { if (searchOpen || search) { setSearchOpen(false); setSearch(''); } else setSearchOpen(true); }} accessibilityRole="button" accessibilityLabel="بحث" style={{ width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface, alignItems: 'center', justifyContent: 'center' }}><SymbolView name={searchOpen || search ? { ios: 'xmark', android: 'close', web: 'close' } : { ios: 'magnifyingglass', android: 'search', web: 'search' }} tintColor={color.primary} size={18} /></Pressable>
           <Pressable disabled={refreshing} onPress={() => void manualRefresh()} accessibilityRole="button" style={[pill(false), refreshing && { opacity: 0.6 }]}><Text style={{ color: color.primary, fontSize: 12, fontWeight: '800' }}>{refreshing ? 'لحظة…' : '↻ تحديث'}</Text></Pressable>
@@ -3001,7 +3004,7 @@ function AdminOrdersTab({ userId, onBadge, onDetail, focusOrderId, onFocusHandle
             </Pressable>;
           })}
           {finishedList.length ? <>
-            {(() => { const shown = finishedList.slice(0, finishedShown); const groups: { label: string; items: AdminMobileOrder[] }[] = []; for (const order of shown) { const label = dayLabel(order.delivered_at ?? order.created_at); const last = groups[groups.length - 1]; if (last && last.label === label) last.items.push(order); else groups.push({ label, items: [order] }); } return groups.map((group) => <View key={`${group.label}-${group.items[0].id}`} style={{ gap: 6 }}>
+            {(() => { const shown = finishedList.slice(0, finishedShown); const groups: { label: string; items: AdminMobileOrder[] }[] = []; for (const order of shown) { const label = dayLabel(order.status === 'cancelled' ? order.created_at : order.delivered_at ?? order.created_at); const last = groups[groups.length - 1]; if (last && last.label === label) last.items.push(order); else groups.push({ label, items: [order] }); } return groups.map((group) => <View key={`${group.label}-${group.items[0].id}`} style={{ gap: 6 }}>
               <Text style={{ color: color.muted, fontSize: 13, fontWeight: '900', textAlign: 'right', writingDirection: 'rtl', paddingHorizontal: 2 }}>{group.label}</Text>
               <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 18, overflow: 'hidden' }}>{group.items.map((order, index) => renderFinished(order, index))}</View>
             </View>); })()}
@@ -3630,7 +3633,7 @@ function SessionStabilityReleaseNote({ visible, theme, onDismiss }: { visible: b
   const dark = theme === 'dark';
   return <Modal visible={visible} transparent statusBarTranslucent navigationBarTranslucent animationType="fade" onRequestClose={onDismiss}>
     <View accessibilityViewIsModal style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 22, backgroundColor: 'rgba(5, 12, 8, 0.78)' }}>
-      <View accessibilityRole="summary" accessibilityLabel="تحديث جديد: حسّنا عرض التطبيق بالعربية على أجهزة Android وiPhone" style={{ width: '100%', maxWidth: 430, padding: 21, borderRadius: 25, borderWidth: 1.5, borderColor: dark ? '#57763D' : '#B7D66C', backgroundColor: colors.surface, shadowColor: '#000', shadowOpacity: dark ? 0.4 : 0.16, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 12 }}>
+      <View accessibilityRole="summary" accessibilityLabel="تحديث جديد: حسّنا ترتيب صفحات الإدارة بالعربية، وعرض تفاصيل الطلبات، والكتابة مع لوحة المفاتيح" style={{ width: '100%', maxWidth: 430, padding: 21, borderRadius: 25, borderWidth: 1.5, borderColor: dark ? '#57763D' : '#B7D66C', backgroundColor: colors.surface, shadowColor: '#000', shadowOpacity: dark ? 0.4 : 0.16, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 12 }}>
         <View style={{ alignItems: 'center' }}>
           <View style={{ width: 66, height: 66, alignItems: 'center', justifyContent: 'center', borderRadius: 22, backgroundColor: '#B7FF30', borderWidth: 1, borderColor: '#A5E522' }}>
             <Text style={{ color: '#0B1411', fontSize: 34, lineHeight: 40, fontWeight: '900' }}>✓</Text>
@@ -3638,9 +3641,9 @@ function SessionStabilityReleaseNote({ visible, theme, onDismiss }: { visible: b
           <View style={{ marginTop: 16, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: dark ? '#344629' : '#EFF5E8', borderWidth: 1, borderColor: dark ? '#58753B' : '#C9D9A7' }}>
             <Text style={{ color: dark ? '#DFFFAD' : '#385616', fontSize: 12, fontWeight: '900', textAlign: 'center' }}>تحديث جديد</Text>
           </View>
-          <Text style={{ color: colors.text, fontSize: 21, lineHeight: 30, fontWeight: '900', textAlign: 'center', marginTop: 13 }}>تجربة أوضح بالعربي</Text>
+          <Text style={{ color: colors.text, fontSize: 21, lineHeight: 30, fontWeight: '900', textAlign: 'center', marginTop: 13 }}>تحديث صفحات الإدارة والطلبات</Text>
           <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 25, textAlign: 'center', marginTop: 9 }}>
-            حسّنا عرض شاشة الدخول واتجاه الواجهة على أجهزة Android وiPhone. إذا ما ظهرت التغييرات، سكّر التطبيق وافتحه من جديد.
+            رتّبنا اتجاه العربية في صفحات السائقين والطلبات والمال، وحسّنا عرض الأرقام وتفاصيل الطلب. وأصلحنا الكتابة مع لوحة المفاتيح في النماذج. إذا ما ظهرت التغييرات، سكّر التطبيق وافتحه من جديد.
           </Text>
         </View>
         <Pressable onPress={onDismiss} accessibilityRole="button" accessibilityLabel="إغلاق ملاحظات التحديث" style={{ minHeight: 52, alignItems: 'center', justifyContent: 'center', marginTop: 22, borderRadius: 15, backgroundColor: '#B7FF30', borderWidth: 1, borderColor: '#A5E522' }}>
