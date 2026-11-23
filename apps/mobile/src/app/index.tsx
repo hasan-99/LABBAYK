@@ -1901,9 +1901,10 @@ function CustomerDriverRow({ orderId, status }: { orderId: string; status: strin
   // Keep the row's space while the driver's details load so the card does not jump.
   if (!contact && !settled && online) return <SkeletonBlock width="100%" height={58} style={{ borderRadius: 16, alignSelf: 'stretch' }} />;
   if (!contact) return null;
-  return <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 11, backgroundColor: c.background, borderColor: c.border, borderWidth: 1, borderRadius: 16, paddingHorizontal: 11, paddingVertical: 9 }}>
+  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: c.background, borderColor: c.border, borderWidth: 1, borderRadius: 16, paddingHorizontal: 11, paddingVertical: 9 }}>
+    <View style={{ flexShrink: 1, minWidth: 0 }}><Text numberOfLines={1} style={{ color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{contact.display_name}</Text><Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>{['delivered', 'settled'].includes(status) ? 'سلّم طلبك' : 'سائقك'}</Text></View>
     <View style={{ width: 38, height: 38, borderRadius: 19, borderWidth: 2, borderColor: '#B7FF30', backgroundColor: c.raised, alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontSize: 17 }}>🛵</Text></View>
-    <View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{contact.display_name}</Text><Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>{['delivered', 'settled'].includes(status) ? 'سلّم طلبك' : 'سائقك'}</Text></View>
+    {contact.phone && !['delivered', 'settled'].includes(status) ? <View style={{ flex: 1 }} /> : null}
     {contact.phone && !['delivered', 'settled'].includes(status) ? <Pressable onPress={() => void Linking.openURL(`tel:${contact.phone}`)} accessibilityRole="button" accessibilityLabel="اتصال بالسائق" style={{ minHeight: 40, borderRadius: 12, backgroundColor: '#B7FF30', paddingHorizontal: 13, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#0B1411', fontSize: 13, fontWeight: '900' }}>📞 اتصال</Text></Pressable> : null}
   </View>;
 }
