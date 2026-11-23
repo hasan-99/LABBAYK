@@ -954,6 +954,14 @@ export type Database = {
         }
         Returns: string
       }
+      admin_confirm_disputed_order_delivery: {
+        Args: {
+          p_dispute_id: string
+          p_cash_collected_minor: number
+          p_resolution: string
+        }
+        Returns: undefined
+      }
       cancel_customer_order: {
         Args: { p_order_id: string; p_reason: string }
         Returns: undefined
