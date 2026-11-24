@@ -182,13 +182,13 @@ export function generateMetadata(): Metadata {
 }
 type Address = Database['public']['Tables']['addresses']['Row'];
 type DriverOfferAddress = Pick<Address, 'id'|'label'|'street'|'city'|'neighborhood'|'building'|'landmark'>;
-type CustomerOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'delivery_proof_path'> & { driver_id?: string | null; delivered_at?: string | null; is_urgent?: boolean };
+type CustomerOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'delivery_proof_path'|'loyalty_points_redeemed'|'loyalty_discount_minor'> & { driver_id?: string | null; delivered_at?: string | null; is_urgent?: boolean };
 type DriverOfferCard = { id: string; expires_at: string; order: Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'address_id'> & { is_urgent?: boolean; address: DriverOfferAddress | null } };
-type DriverActiveOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'address_id'> & { is_urgent?: boolean; address: Pick<Address, 'id'|'label'|'street'|'city'|'neighborhood'|'contact_phone'|'building'|'landmark'> | null };
+type DriverActiveOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'address_id'> & { loyalty_discount_minor?: number; is_urgent?: boolean; address: Pick<Address, 'id'|'label'|'street'|'city'|'neighborhood'|'contact_phone'|'building'|'landmark'> | null };
 const newRequestKey = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => { const value = Math.random() * 16 | 0; return (char === 'x' ? value : (value & 3 | 8)).toString(16); });
 type OrderImage = CustomerOrderImageDraft & { uri: string };
 type ProfileAvatarDraft = { uri: string; mimeType: string; extension: string };
-const orderStatus: Record<string, string> = { requested:'بانتظار تحديد أجرة التوصيل', quoted:'بانتظار سائق متاح', searching:'عم نفتش على سائق', accepted:'قبل السائق الطلب', assigned:'تم تعيين سائق', shopping:'عم نجهز طلبك', awaiting_approval:'بانتظار موافقتك', purchased:'تم الشراء', delivering:'بالطريق لعندك', delivered:'تم التوصيل', settled:'تمت التسوية', disputed:'قيد مراجعة الدعم', cancelled:'ملغي' };
+const orderStatus: Record<string, string> = { requested:'بانتظار تحديد أجرة التوصيل', quoted:'بانتظار سائق متاح', searching:'عم نفتش على سائق', accepted:'قبل السائق الطلب', assigned:'تم تعيين سائق', shopping:'عم نجهز طلبك', awaiting_approval:'عم نجهز طلبك', purchased:'تم الشراء', delivering:'بالطريق لعندك', delivered:'تم التوصيل', settled:'تمت التسوية', disputed:'قيد مراجعة الدعم', cancelled:'ملغي' };
 
 // Scroll container that keeps the focused input visible above the keyboard on every page.
 type ScrollHandle = React.ComponentRef<typeof ScrollView>;
@@ -848,7 +848,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       supabase.from('driver_profiles').select('is_online').eq('user_id', userId).single(),
       supabase.rpc('get_driver_wallet_balances'),
       supabase.from('order_offers').select('id,order_id,expires_at,order:orders(id,is_urgent,status,request_text,delivery_fee_minor,address_id,address:addresses(id,label,street,city,neighborhood,building,landmark))').eq('driver_id', userId).eq('status', 'pending').gt('expires_at', new Date().toISOString()).order('expires_at'),
-      supabase.from('orders').select('id,is_urgent,status,request_text,delivery_fee_minor,purchase_amount_minor,purchase_approved_at,created_at,address_id,address:addresses(id,label,street,city,neighborhood,contact_phone,building,landmark)').eq('driver_id', userId).neq('status', 'delivered').neq('status', 'settled').neq('status', 'cancelled').order('created_at', { ascending: false }),
+      supabase.from('orders').select('id,is_urgent,status,request_text,delivery_fee_minor,purchase_amount_minor,purchase_approved_at,created_at,address_id,loyalty_discount_minor,address:addresses(id,label,street,city,neighborhood,contact_phone,building,landmark)').eq('driver_id', userId).neq('status', 'delivered').neq('status', 'settled').neq('status', 'cancelled').order('created_at', { ascending: false }),
     ]);
     const { data: walletRows, error: walletError } = wallet;
     if (!walletError) { setWalletBalance(walletRows?.find((row) => row.driver_id === userId)?.balance_minor ?? 0); setWalletUnavailable(false); }
@@ -898,7 +898,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
   const loadHistory = useCallback(async () => {
     if (!supabase || (!online && !forceNetworkRefresh.current)) return;
     // Cash and note columns come with the main query; addresses follow in one more request.
-    const { data, error } = await supabase.from('orders').select('id,request_text,status,delivery_fee_minor,purchase_amount_minor,delivered_at,delivery_proof_path,created_at,address_id,cash_collected_minor,delivery_note').eq('driver_id', userId).in('status', ['delivered', 'settled']).order('delivered_at', { ascending: false }).limit(100);
+    const { data, error } = await supabase.from('orders').select('id,request_text,status,delivery_fee_minor,purchase_amount_minor,delivered_at,delivery_proof_path,created_at,address_id,cash_collected_minor,delivery_note,loyalty_discount_minor').eq('driver_id', userId).in('status', ['delivered', 'settled']).order('delivered_at', { ascending: false }).limit(100);
     if (error) { setMessage('ما قدرنا نحمّل سجل طلباتك. جرّب مرة ثانية.'); return; }
     const rows = data ?? [];
     // Cancelled orders are detached from the driver, so they come from their own call (older databases just return nothing).
@@ -1051,7 +1051,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
     const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.6, allowsEditing: false });
     if (result.canceled || !result.assets[0]) return;
     const target = activeOrders.find((order) => order.id === orderId);
-    setCollectDrafts((current) => ({ ...current, [orderId]: String((target?.purchase_amount_minor ?? 0) + (target?.delivery_fee_minor ?? 0)) }));
+    setCollectDrafts((current) => ({ ...current, [orderId]: String((target?.purchase_amount_minor ?? 0) + (target?.delivery_fee_minor ?? 0) - (target?.loyalty_discount_minor ?? 0)) }));
     setDeliveryNote('');
     // Proof of delivery does not need a large photo: a smaller one uploads quickly on a weak connection.
     const shrunk = await shrinkPhoto(result.assets[0], 1024, 0.6);
@@ -1083,7 +1083,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       if (missing(error)) ({ error } = await supabase.rpc('confirm_order_delivery_with_photo', { p_order_id: orderId, p_proof_path: path }));
       if (error) throw error;
       const finished = activeOrders.find((order) => order.id === orderId);
-      if (finished) setDeliveredReceipt({ id: finished.id, createdAt: finished.created_at, deliveredAt: new Date().toISOString(), deliveryProofPath: path, request: finished.request_text, address: finished.address ?? null, purchase: finished.purchase_amount_minor, fee: finished.delivery_fee_minor, collected, note });
+      if (finished) setDeliveredReceipt({ id: finished.id, createdAt: finished.created_at, deliveredAt: new Date().toISOString(), deliveryProofPath: path, request: finished.request_text, address: finished.address ?? null, purchase: finished.purchase_amount_minor, fee: finished.delivery_fee_minor, loyaltyDiscount: finished.loyalty_discount_minor, collected, note });
       setBusy(false); setPendingAction(''); closeDeliveryDraft(); setActiveOrders((current) => current.filter((order) => order.id !== orderId)); setActiveOrdersCount((count) => Math.max(0, count - 1)); setMessage('تم تسليم الطلب وحُفظت صورة الإثبات.'); void refreshNow();
     } catch {
       setBusy(false); setPendingAction(''); setMessage('ما قدرنا نأكد التسليم. تأكد من الاتصال وجرّب مرة ثانية.');
@@ -1125,13 +1125,13 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
             </View>
             <View style={{ alignItems: 'flex-start' }}><Text style={{ color: c.primary, fontSize: 15.5, fontWeight: '900' }}>{numberFormatter.format(order.delivery_fee_minor)}</Text><Text style={{ color: c.accent, fontSize: 11, fontWeight: '800', marginTop: 2 }}>{order.status === 'settled' ? '✅ تمت التسوية' : '✅ تم التوصيل'}</Text></View>
           </Pressable>
-          {open && <OrderReceipt data={{ id: order.id, createdAt: order.created_at, deliveredAt: order.delivered_at, deliveryProofPath: order.delivery_proof_path, request: order.request_text, address: addr ?? null, purchase: order.purchase_amount_minor, fee: order.delivery_fee_minor, collected: extra?.cash ?? null, note: extra?.note ?? null }} />}
+          {open && <OrderReceipt data={{ id: order.id, createdAt: order.created_at, deliveredAt: order.delivered_at, deliveryProofPath: order.delivery_proof_path, request: order.request_text, address: addr ?? null, purchase: order.purchase_amount_minor, fee: order.delivery_fee_minor, loyaltyDiscount: order.loyalty_discount_minor, collected: extra?.cash ?? null, note: extra?.note ?? null }} />}
         </View>; })}
       </View>)}
       {entries.length > historyVisible ? <Pressable onPress={() => setHistoryVisible((count) => count + 20)} accessibilityRole="button" style={{ minHeight: 44, borderRadius: 14, borderWidth: 1, borderColor: c.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: c.primary, fontSize: 13.5, fontWeight: '800' }}>عرض المزيد ({entries.length - historyVisible})</Text></Pressable> : null}
     </View>;
   };
-  const activeLabels: Record<string, string> = { accepted: 'بانتظار بدء التسوق', assigned: 'بانتظار بدء التسوق', shopping: 'مرحلة التسوق', awaiting_approval: 'بانتظار موافقة العميل', purchased: 'جاهز للتوصيل', delivering: 'قيد التوصيل', disputed: 'متوقف مؤقتاً' };
+  const activeLabels: Record<string, string> = { accepted: 'بانتظار بدء التسوق', assigned: 'بانتظار بدء التسوق', shopping: 'مرحلة التسوق', awaiting_approval: 'مرحلة التسوق', purchased: 'جاهز للتوصيل', delivering: 'قيد التوصيل', disputed: 'متوقف مؤقتاً' };
   const driverSteps = ['قبول', 'تسوق', 'توصيل', 'تسليم'];
   const renderActiveOrder = (order: DriverActiveOrder) => {
     const current = ['purchased', 'delivering'].includes(order.status) ? 2 : 1;
@@ -1209,7 +1209,8 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       <View style={{ flexDirection: 'row-reverse', backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 14, paddingVertical: 7, paddingHorizontal: 6 }}>
         {([...(order.purchase_amount_minor !== null && ['purchased', 'delivering'].includes(order.status) ? [['مشتريات دفعتها', numberFormatter.format(order.purchase_amount_minor), false]] as const : []), ['أجرة التوصيل', numberFormatter.format(order.delivery_fee_minor), true]] as const).map(([label, value, strong], index) => <View key={label} style={{ flex: 1, alignItems: 'center', borderLeftWidth: index ? 1 : 0, borderLeftColor: c.border }}><Text style={{ color: c.muted, fontSize: 10.5, fontWeight: '700' }}>{label}</Text><Text style={{ color: strong ? c.primary : c.text, fontSize: 13.5, fontWeight: '900', marginTop: 1 }}>{value}</Text></View>)}
       </View>
-      {['purchased', 'delivering'].includes(order.status) && order.purchase_amount_minor !== null && <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#B7FF30', borderRadius: 13, paddingHorizontal: 13, minHeight: 40 }}><Text style={{ color: '#0B1411', fontSize: 12.5, fontWeight: '800' }}>المطلوب تحصيله من الزبون</Text><Text style={{ color: '#0B1411', fontSize: 16, fontWeight: '900' }}>{numberFormatter.format(order.purchase_amount_minor + order.delivery_fee_minor)} ل.س</Text></View>}
+      {order.loyalty_discount_minor ? <Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>خصم النقاط على حساب لَبّيك، وعمولتك محسوبة على أجرة التوصيل كاملة.</Text> : null}
+      {['purchased', 'delivering'].includes(order.status) && order.purchase_amount_minor !== null && <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#B7FF30', borderRadius: 13, paddingHorizontal: 13, minHeight: 40 }}><Text style={{ color: '#0B1411', fontSize: 12.5, fontWeight: '800' }}>المطلوب تحصيله من الزبون</Text><Text style={{ color: '#0B1411', fontSize: 16, fontWeight: '900' }}>{numberFormatter.format(order.purchase_amount_minor + order.delivery_fee_minor - (order.loyalty_discount_minor ?? 0))} ل.س</Text></View>}
       <Pressable onPress={() => setImagesOpen((current) => ({ ...current, [order.id]: !current[order.id] }))} accessibilityRole="button" accessibilityState={{ expanded: !!imagesOpen[order.id] }} style={{ minHeight: 46, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 13, borderRadius: 15, borderWidth: 1.5, borderColor: c.border, backgroundColor: c.surface }}><Text style={{ color: c.text, fontSize: 13.5, fontWeight: '800' }}>📷 صور الطلب</Text><Text style={{ color: c.primary, fontSize: 12.5, fontWeight: '900' }}>{imagesOpen[order.id] ? 'إخفاء ⌃' : 'عرض ⌄'}</Text></Pressable>
       {imagesOpen[order.id] ? <AdminImageStrip orderId={order.id} size={76} emptyText="ما في صور بهالطلب." /> : null}
       {['accepted', 'assigned'].includes(order.status) && <Pressable disabled={locked} onPress={() => void startShopping(order.id)} accessibilityRole="button" style={bigButton}><Text style={bigText}>بدء التسوق ←</Text></Pressable>}
@@ -1218,7 +1219,6 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
         <TextInput value={purchaseDrafts[order.id] ?? (order.purchase_amount_minor !== null ? String(order.purchase_amount_minor) : '')} onChangeText={(value) => setPurchaseDrafts((current) => ({ ...current, [order.id]: value.replace(/\D/g, '') }))} keyboardType="number-pad" textAlign="left" placeholder="مثال: 25000" placeholderTextColor="#839188" style={[s.field, { fontSize: 20, fontWeight: '900', color: c.primary, textAlign: 'left', writingDirection: 'ltr' }]} accessibilityLabel="قيمة المشتريات" />
         <Pressable disabled={locked} onPress={() => void confirmPurchase(order.id)} accessibilityRole="button" style={bigButton}><Text style={bigText}>{busy ? 'لحظة…' : 'تأكيد الشراء ←'}</Text></Pressable>
       </View>}
-      {!operationsAreStale && order.status === 'awaiting_approval' && <View style={s.driverWaitNotice}><Text style={s.driverWaitTitle}>لا تشتري بعد</Text><Text style={s.driverWaitCopy}>المبلغ المقترح {numberFormatter.format(order.purchase_amount_minor ?? 0)} ل.س، وبانتظار موافقة العميل.</Text></View>}
       {!operationsAreStale && order.status === 'purchased' && <Pressable disabled={locked} onPress={() => void startDelivery(order.id)} accessibilityRole="button" style={bigButton}><Text style={bigText}>بدء التوصيل ←</Text></Pressable>}
       {order.status === 'delivering' && <Pressable disabled={locked} onPress={() => void startDeliveryPhoto(order.id)} accessibilityRole="button" style={bigButton}><Text style={bigText}>📷 تصوير التسليم</Text></Pressable>}
       <SupportIssueForm orderId={order.id} status={order.status} disabled={operationsAreStale} userId={userId} />
@@ -1333,7 +1333,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
           <Pressable disabled={busy} onPress={()=>{const id=deliveryDraft?.orderId;closeDeliveryDraft();if(id)setTimeout(()=>void startDeliveryPhoto(id),450)}} accessibilityRole="button" style={{minHeight:44,borderRadius:14,borderWidth:1,borderColor:c.border,alignItems:'center',justifyContent:'center'}}><Text style={{color:c.primary,fontSize:13.5,fontWeight:'800'}}>📷 إعادة التصوير</Text></Pressable>
           <View style={{gap:6}}><Text style={{color:c.text,fontSize:13.5,fontWeight:'800',textAlign:'right'}}>المبلغ اللي استلمته من الزبون · ل.س</Text>
             <TextInput value={deliveryDraft?collectDrafts[deliveryDraft.orderId]??'':''} onChangeText={(value)=>{if(deliveryDraft)setCollectDrafts((current)=>({...current,[deliveryDraft.orderId]:value.replace(/\D/g,'')}))}} keyboardType="number-pad" textAlign="left" placeholder="مثال: 13000" placeholderTextColor="#839188" style={[s.field,{fontSize:22,fontWeight:'900',color:c.primary,textAlign:'left',writingDirection:'ltr'}]} accessibilityLabel="المبلغ المستلم من الزبون"/>
-            <Text style={{color:c.muted,fontSize:12,textAlign:'right',lineHeight:19}}>معبّأ بالمبلغ المطلوب (المشتريات + الأجرة). عدّله إذا أعطاك الزبون زيادة (إكرامية) أو أقل.</Text></View>
+            <Text style={{color:c.muted,fontSize:12,textAlign:'right',lineHeight:19}}>معبّأ بالمبلغ المطلوب: المشتريات + أجرة التوصيل بعد خصم النقاط إن وُجد. عدّله إذا أعطاك الزبون زيادة أو أقل.</Text></View>
           <View style={{gap:6}}><Text style={{color:c.text,fontSize:13.5,fontWeight:'800',textAlign:'right'}}>ملاحظة <Text style={{color:c.muted,fontWeight:'500'}}>اختياري</Text></Text>
             <TextInput value={deliveryNote} onChangeText={(value)=>setDeliveryNote(value.slice(0,300))} multiline maxLength={300} textAlign="right" textAlignVertical="top" placeholder="مثال: الزبون أعطاني إكرامية، أو سلّمته للجار" placeholderTextColor="#839188" style={[s.field,{minHeight:84}]} accessibilityLabel="ملاحظة التسليم"/></View>
         </ScrollView>
@@ -1671,7 +1671,7 @@ function SignedInHome({ userId, email, inviteToken, openOrderId, onSignOut, them
   return <DriverWorkspace userId={userId} email={email} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
 }
 
-type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'customer_id'|'address_id'|'delivered_at'|'delivery_proof_path'|'purchase_amount_minor'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'created_at'|'cash_collected_minor'|'delivery_note'|'shopping_admin_alerted_at'|'delivery_admin_alerted_at'> & { is_urgent?: boolean };
+type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'customer_id'|'address_id'|'delivered_at'|'delivery_proof_path'|'purchase_amount_minor'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'created_at'|'cash_collected_minor'|'delivery_note'|'loyalty_points_redeemed'|'loyalty_discount_minor'|'shopping_admin_alerted_at'|'delivery_admin_alerted_at'> & { is_urgent?: boolean };
 type AdminMobileDriver = Pick<Database['public']['Tables']['driver_profiles']['Row'], 'user_id'|'vehicle_description'>;
 
 const pickupPrefix = 'الشراء من: ';
@@ -1706,7 +1706,7 @@ function useOrderImages(bucket: 'order-images' | 'delivery-proofs', orderId: str
   return images;
 }
 
-type ReceiptData = { id: string; createdAt: string | null; deliveredAt: string | null; deliveryProofPath?: string | null; request: string; address: Pick<Address, 'label' | 'contact_phone' | 'neighborhood' | 'city'> | null; purchase: number | null; fee: number; collected: number | null; note: string | null; driverName?: string; customerName?: string };
+type ReceiptData = { id: string; createdAt: string | null; deliveredAt: string | null; deliveryProofPath?: string | null; request: string; address: Pick<Address, 'label' | 'contact_phone' | 'neighborhood' | 'city'> | null; purchase: number | null; fee: number; loyaltyDiscount?: number; collected: number | null; note: string | null; driverName?: string; customerName?: string };
 // A paper-style receipt for a finished order. Commission is read here (admins from the settlement, drivers from their own wallet).
 function CustomerHomeSkeleton() {
   return <View style={{ gap: 14, marginTop: 4 }} accessibilityLabel="عم نحمّل الصفحة">
@@ -1800,7 +1800,8 @@ function OrderReceipt({ data, admin = false }: { data: ReceiptData; admin?: bool
   const rowDirection = 'row' as const;
   const textSide = 'right' as const;
   const { pickup, body } = splitPickup(data.request);
-  const expected = (data.purchase ?? 0) + data.fee;
+  const loyaltyDiscount = Math.min(data.fee, data.loyaltyDiscount ?? 0);
+  const expected = (data.purchase ?? 0) + data.fee - loyaltyDiscount;
   const diff = data.collected === null ? 0 : data.collected - expected;
   const minutes = data.createdAt && data.deliveredAt ? Math.max(1, Math.round((Date.parse(data.deliveredAt) - Date.parse(data.createdAt)) / 60000)) : null;
   const row = (label: string, value: string, opts: { big?: boolean; tint?: string } = {}) => <View key={label} style={{ ...(admin ? { direction: 'rtl' as const } : {}), flexDirection: rowDirection, justifyContent: 'space-between', gap: 10, paddingVertical: opts.big ? 4 : 2 }}><Text style={{ color: opts.big ? ink : muted, fontSize: opts.big ? 15.5 : 13.5, fontWeight: opts.big ? '900' : '500', textAlign: textSide, writingDirection: 'rtl' }}>{label}</Text><Text style={{ color: opts.tint ?? ink, fontSize: opts.big ? 15.5 : 13.5, fontWeight: '800', ...(admin ? { textAlign: 'left' as const, writingDirection: 'ltr' as const } : {}) }}>{value}</Text></View>;
@@ -1831,7 +1832,9 @@ function OrderReceipt({ data, admin = false }: { data: ReceiptData; admin?: bool
     </View>
     <View style={section}>
       {row('المشتريات (دفعها السائق)', data.purchase === null ? '—' : numberFormatter.format(data.purchase))}
-      {row('أجرة التوصيل', numberFormatter.format(data.fee))}
+      {row('أجرة التوصيل قبل الخصم', numberFormatter.format(data.fee))}
+      {loyaltyDiscount > 0 ? row('خصم نقاط لَبّيك', '− ' + numberFormatter.format(loyaltyDiscount), { tint: good }) : null}
+      {loyaltyDiscount > 0 ? row('أجرة التوصيل بعد الخصم', numberFormatter.format(data.fee - loyaltyDiscount)) : null}
       {row('المطلوب من الزبون', money(expected), { big: true })}
       {row('المستلم فعلياً', data.collected === null ? 'لم يُسجَّل' : money(data.collected))}
       {data.collected !== null && diff > 0 ? row('إكرامية', '+ ' + money(diff), { tint: good }) : null}
@@ -1920,7 +1923,7 @@ function CustomerDriverRow({ orderId, status }: { orderId: string; status: strin
 }
 
 type DriverCancelledOrder = { id: string; request_text: string; delivery_fee_minor: number; created_at: string; cancelled_at: string | null };
-type HistoryOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'  | 'request_text' | 'status' | 'delivery_fee_minor' | 'purchase_amount_minor'  | 'delivered_at' | 'delivery_proof_path' | 'created_at' | 'address_id'>;
+type HistoryOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'  | 'request_text' | 'status' | 'delivery_fee_minor' | 'purchase_amount_minor'  | 'delivered_at' | 'delivery_proof_path' | 'created_at' | 'address_id'|'loyalty_discount_minor'>;
 type HistoryPeriod = 'today' | 'week' | 'all';
 function historyCutoff(period: HistoryPeriod) {
   if (period === 'all') return 0;
@@ -1935,7 +1938,7 @@ function dayLabel(iso: string) {
   return diff <= 0 ? 'اليوم' : diff === 1 ? 'أمس' : notificationDateFormatter.format(date);
 }
 
-const eventLabels: Record<string, string> = { order_requested: 'أُرسل الطلب', delivery_quote_set: 'حُددت الأجرة', offers_dispatched: 'أُرسل للسائقين', driver_assigned: 'عُيّن سائق', order_accepted: 'قبل السائق الطلب', driver_declined_offer: 'اعتذر سائق', shopping_started: 'بدأ التسوق', purchase_amount_proposed_within_budget: 'سُجل مبلغ المشتريات', purchase_completed: 'تأكد الشراء', delivery_started: 'بدأ التوصيل', delivery_confirmed: 'تم تأكيد التسليم', order_disputed: 'وصل بلاغ', dispute_resolved: 'حُل البلاغ', order_paused_by_admin: 'أوقفه الأدمن مؤقتاً', admin_cancelled: 'ألغاه الأدمن', customer_cancelled: 'ألغاه العميل', cash_settled: 'تمت التسوية' };
+const eventLabels: Record<string, string> = { order_requested: 'أُرسل الطلب', delivery_quote_set: 'حُددت الأجرة', offers_dispatched: 'أُرسل للسائقين', driver_assigned: 'عُيّن سائق', order_accepted: 'قبل السائق الطلب', driver_declined_offer: 'اعتذر سائق', shopping_started: 'بدأ التسوق', purchase_amount_proposed_within_budget: 'سُجل مبلغ المشتريات', purchase_completed: 'تأكد الشراء', delivery_started: 'بدأ التوصيل', delivery_confirmed: 'تم تأكيد التسليم', order_disputed: 'وصل بلاغ', dispute_resolved: 'حُل البلاغ', order_paused_by_admin: 'أوقفه الأدمن مؤقتاً', admin_cancelled: 'ألغاه الأدمن', customer_cancelled: 'ألغاه العميل', cash_settled: 'تمت التسوية', loyalty_point_earned: 'كسبت نقطة لَبّيك', loyalty_points_refunded: 'رجعت نقاط لَبّيك إلى رصيدك' };
 
 const adminStatusGroup = (status: string) => ['requested', 'quoted', 'disputed'].includes(status) ? 'action' : status === 'searching' ? 'searching' : ['accepted', 'assigned', 'shopping', 'awaiting_approval', 'purchased', 'delivering'].includes(status) ? 'active' : ['delivered', 'settled'].includes(status) ? 'done' : 'other';
 type AdminFilter = 'action' | 'active' | 'done' | 'cancelled' | 'all';
@@ -2137,7 +2140,7 @@ function AdminDriversTab({ userId, active, onBadge }: { userId: string; active: 
 
 type AdminMoneyData = { balances: Record<string, number>; drivers: string[]; names: Record<string, string> };
 type AdminLedgerRow = Pick<Database['public']['Tables']['driver_wallet_ledger']['Row'], 'id' | 'amount_minor' | 'entry_type' | 'order_id' | 'reason' | 'created_at'>;
-type AdminLedgerDetail = { purchase: number | null; fee: number | null; rate: number | null; commission: number | null; collected: number | null };
+type AdminLedgerDetail = { purchase: number | null; fee: number | null; loyaltyDiscount: number | null; rate: number | null; commission: number | null; collected: number | null };
 function AdminMoneyTab({ userId, active, onBadge, onOpenOrder }: { userId: string; active: boolean; onBadge: AdminBadgeSetter; onOpenOrder: (orderId: string) => void }) {
   const insets = useSafeAreaInsets();
   const { colors: color } = useMobileTheme();
@@ -2217,14 +2220,14 @@ function AdminMoneyTab({ userId, active, onBadge, onOpenOrder }: { userId: strin
       const orderIds = [...new Set(rows.flatMap((row) => row.order_id ? [row.order_id] : []))];
       const details: Record<string, AdminLedgerDetail> = {};
       if (orderIds.length) {
-        const settlementResult = await supabase!.from('cash_settlements').select('order_id,purchase_amount_minor,delivery_fee_minor,commission_rate_basis_points,commission_amount_minor,cash_collected_minor,created_at').in('order_id', orderIds).order('created_at', { ascending: false });
-        for (const id of orderIds) details[id] = { purchase: null, fee: null, rate: null, commission: null, collected: null };
+        const settlementResult = await supabase!.from('cash_settlements').select('order_id,purchase_amount_minor,delivery_fee_minor,loyalty_discount_minor,commission_rate_basis_points,commission_amount_minor,cash_collected_minor,created_at').in('order_id', orderIds).order('created_at', { ascending: false });
+        for (const id of orderIds) details[id] = { purchase: null, fee: null, loyaltyDiscount: null, rate: null, commission: null, collected: null };
         // The newest settlement of an order is the one in force (older ones were reversed).
         const seen = new Set<string>();
         for (const row of settlementResult.data ?? []) {
           if (seen.has(row.order_id)) continue;
           seen.add(row.order_id);
-          Object.assign(details[row.order_id], { purchase: row.purchase_amount_minor, fee: row.delivery_fee_minor, rate: row.commission_rate_basis_points, commission: row.commission_amount_minor, collected: row.cash_collected_minor });
+          Object.assign(details[row.order_id], { purchase: row.purchase_amount_minor, fee: row.delivery_fee_minor, loyaltyDiscount: row.loyalty_discount_minor, rate: row.commission_rate_basis_points, commission: row.commission_amount_minor, collected: row.cash_collected_minor });
         }
       }
       if (alive) { setLedger(rows); setLedgerDetails(details); }
@@ -2272,11 +2275,13 @@ function AdminMoneyTab({ userId, active, onBadge, onOpenOrder }: { userId: strin
             {open ? <View style={{ borderTopWidth: 1, borderTopColor: color.border, backgroundColor: color.background, padding: 12, gap: 7 }}>
               {row.entry_type === 'delivery_commission' ? <>
                 {detail?.purchase != null ? line('مشتريات دفعها السائق', numberFormatter.format(detail.purchase) + ' ل.س') : null}
-                {detail?.fee != null ? line('أجرة التوصيل', numberFormatter.format(detail.fee) + ' ل.س') : null}
+                {detail?.fee != null ? line('أجرة التوصيل قبل الخصم', numberFormatter.format(detail.fee) + ' ل.س') : null}
+                {detail?.loyaltyDiscount ? line('خصم نقاط لَبّيك', '− ' + numberFormatter.format(detail.loyaltyDiscount) + ' ل.س') : null}
+                {detail?.fee != null && detail.loyaltyDiscount ? line('أجرة التوصيل بعد الخصم', numberFormatter.format(detail.fee - detail.loyaltyDiscount) + ' ل.س') : null}
                 {detail?.rate != null ? line('نسبة العمولة', numberFormatter.format(detail.rate / 100) + '%') : null}
                 {line('العمولة', numberFormatter.format(Math.abs(row.amount_minor)) + ' ل.س', adminTone.bad.fg)}
                 {detail?.collected != null ? line('المبلغ اللي استلمه من الزبون', numberFormatter.format(detail.collected) + ' ل.س') : null}
-                {detail?.collected != null && detail.purchase != null && detail.fee != null && detail.collected > detail.purchase + detail.fee ? line('إكرامية', numberFormatter.format(detail.collected - detail.purchase - detail.fee) + ' ل.س') : null}
+                {detail?.collected != null && detail.purchase != null && detail.fee != null && detail.collected > detail.purchase + detail.fee - (detail.loyaltyDiscount ?? 0) ? line('إكرامية', numberFormatter.format(detail.collected - detail.purchase - detail.fee + (detail.loyaltyDiscount ?? 0)) + ' ل.س') : null}
                 {row.order_id ? <Pressable onPress={() => onOpenOrder(row.order_id as string)} accessibilityRole="button" style={{ minHeight: 42, borderRadius: 13, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 13.5, fontWeight: '800' }}>فتح الطلب</Text></Pressable> : null}
               </> : <>
                 {line('السبب', row.reason || '—')}
@@ -2615,7 +2620,7 @@ function AdminOrdersTab({ userId, active, onBadge, onDetail, focusOrderId, onFoc
         void supabase.rpc('flag_unanswered_orders').then(() => undefined, () => undefined);
       }
       const [orderResult, driverResult, disputeResult, nameMap] = await Promise.all([
-        supabase.from('orders').select('id,is_urgent,customer_id,address_id,delivered_at,delivery_proof_path,purchase_amount_minor,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,created_at,cash_collected_minor,delivery_note,shopping_admin_alerted_at,delivery_admin_alerted_at').order('created_at', { ascending: false }).limit(150),
+        supabase.from('orders').select('id,is_urgent,customer_id,address_id,delivered_at,delivery_proof_path,purchase_amount_minor,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,created_at,cash_collected_minor,delivery_note,loyalty_points_redeemed,loyalty_discount_minor,shopping_admin_alerted_at,delivery_admin_alerted_at').order('created_at', { ascending: false }).limit(150),
         supabase.from('driver_profiles').select('user_id,vehicle_description').eq('review_status', 'approved').eq('is_online', true).order('created_at'),
         supabase.from('order_disputes').select('order_id').is('resolved_at', null),
         loadAdminNames(),
@@ -2801,7 +2806,7 @@ function AdminOrdersTab({ userId, active, onBadge, onDetail, focusOrderId, onFoc
     && (sheet.status === 'delivering' || (sheet.status === 'disputed' && dispute.previous_order_status === 'delivering'));
   const openDeliveryConfirmation = () => {
     if (!sheet) return;
-    setDeliveryCashAmount(String(sheet.cash_collected_minor ?? ((sheet.purchase_amount_minor ?? 0) + sheet.delivery_fee_minor)));
+    setDeliveryCashAmount(String(sheet.cash_collected_minor ?? ((sheet.purchase_amount_minor ?? 0) + sheet.delivery_fee_minor - sheet.loyalty_discount_minor)));
     setDeliveryVerificationNote('');
     setDeliveryConfirmOpen(true);
   };
@@ -2861,7 +2866,7 @@ function AdminOrdersTab({ userId, active, onBadge, onDetail, focusOrderId, onFoc
           </View>
           {delivered && <View style={[card, { borderColor: color.accent, gap: 9 }]}>
             <Text style={{ color: color.accent, fontSize: 14.5, fontWeight: '900', textAlign: 'right', writingDirection: 'rtl' }}>✅ إيصال الطلب</Text>
-            <OrderReceipt admin data={{ id: sheet.id, createdAt: sheet.created_at, deliveredAt: sheet.delivered_at, deliveryProofPath: sheet.delivery_proof_path, request: sheet.request_text, address: sheet.address_id ? addresses[sheet.address_id] ?? null : null, purchase: sheet.purchase_amount_minor, fee: sheet.delivery_fee_minor, collected: cashCollected[sheet.id] ?? null, note: deliveryNotes[sheet.id] ?? null, driverName: nameOf(sheet.driver_id), customerName: customerLabel(sheet) }} />
+            <OrderReceipt admin data={{ id: sheet.id, createdAt: sheet.created_at, deliveredAt: sheet.delivered_at, deliveryProofPath: sheet.delivery_proof_path, request: sheet.request_text, address: sheet.address_id ? addresses[sheet.address_id] ?? null : null, purchase: sheet.purchase_amount_minor, fee: sheet.delivery_fee_minor, loyaltyDiscount: sheet.loyalty_discount_minor, collected: cashCollected[sheet.id] ?? null, note: deliveryNotes[sheet.id] ?? null, driverName: nameOf(sheet.driver_id), customerName: customerLabel(sheet) }} />
             {sheet.driver_id && driverPhones[sheet.driver_id] ? <Pressable onPress={() => void Linking.openURL(`tel:${driverPhones[sheet.driver_id!]}`)} accessibilityRole="button" accessibilityLabel="اتصال بالسائق" style={{ minHeight: 44, borderRadius: 13, borderWidth: 1, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.primary, fontSize: 14, fontWeight: '900' }}>📞 اتصال بالسائق · {ltrPhone(driverPhones[sheet.driver_id])}</Text></Pressable> : null}
           </View>}
           {(sheet.status === 'disputed' || openDisputes[sheet.id]) && <View style={[card, { borderColor: '#C98A2B', gap: 8 }]}>
@@ -2957,7 +2962,7 @@ function AdminOrdersTab({ userId, active, onBadge, onDetail, focusOrderId, onFoc
   const renderFinished = (order: AdminMobileOrder, index: number) => {
     const tone = toneForOrder(order); const cancelled = order.status === 'cancelled'; const open = openFinished === order.id;
     const purchase = order.purchase_amount_minor ?? 0; const collected = cashCollected[order.id] ?? order.cash_collected_minor ?? null;
-    const total = cancelled ? null : collected ?? purchase + order.delivery_fee_minor;
+    const total = cancelled ? null : collected ?? purchase + order.delivery_fee_minor - order.loyalty_discount_minor;
     const barColor = cancelled ? adminTone.bad.fg : order.status === 'settled' ? color.primary : adminTone.ok.fg;
     const parsed = splitPickup(order.request_text);
     const row = (label: string, value: string, tint?: string) => <View key={label} style={{ direction: 'rtl', flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}><Text style={{ color: color.muted, fontSize: 14, textAlign: 'right', writingDirection: 'rtl' }}>{label}</Text><Text style={{ color: tint ?? color.text, fontSize: 14, fontWeight: '900', textAlign: 'left', writingDirection: 'ltr' }}>{value}</Text></View>;
@@ -2989,7 +2994,9 @@ function AdminOrdersTab({ userId, active, onBadge, onDetail, focusOrderId, onFoc
         </View>
         {!cancelled ? <View style={{ backgroundColor: color.surface, borderColor: color.border, borderWidth: 1, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 4 }}>
           {row('المشتريات', order.purchase_amount_minor === null ? '—' : numberFormatter.format(order.purchase_amount_minor) + ' ل.س')}
-          {row('أجرة التوصيل', numberFormatter.format(order.delivery_fee_minor) + ' ل.س')}
+          {row('أجرة التوصيل قبل الخصم', numberFormatter.format(order.delivery_fee_minor) + ' ل.س')}
+          {order.loyalty_discount_minor > 0 ? row('خصم نقاط لَبّيك', '− ' + numberFormatter.format(order.loyalty_discount_minor) + ' ل.س') : null}
+          {order.loyalty_discount_minor > 0 ? row('أجرة التوصيل بعد الخصم', numberFormatter.format(order.delivery_fee_minor - order.loyalty_discount_minor) + ' ل.س') : null}
           {row('المبلغ المستلم', total === null ? '—' : numberFormatter.format(total) + ' ل.س', color.primary)}
         </View> : null}
         <Pressable onPress={() => openSheet(order)} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: color.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.text, fontSize: 14.5, fontWeight: '900' }}>فتح تفاصيل الطلب</Text></Pressable>
@@ -3071,6 +3078,9 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   const { colors: c, styles: s } = useMobileTheme();
   const online = useInternetAvailable();
   const [request, setRequest] = useState('');
+  const [loyaltyBalance, setLoyaltyBalance] = useState(0);
+  const [lifetimePointsEarned, setLifetimePointsEarned] = useState(0);
+  const [loyaltyPointsSelected, setLoyaltyPointsSelected] = useState<0 | 3 | 4 | 5>(0);
   const [urgent, setUrgent] = useState(false);
   const [focusedField, setFocusedField] = useState<'request' | 'pickup' | null>(null);
   // Field borders: strong lime while typing in it, soft green once it has a value.
@@ -3151,6 +3161,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       if (!active) return;
       if (draft && !draftDirty.current) {
         setRequest(draft.request);
+        setLoyaltyPointsSelected(draft.loyaltyPointsToRedeem ?? 0);
         addressIdRef.current = draft.addressId;
         setAddressId(draft.addressId);
         requestKey.current = draft.idempotencyKey;
@@ -3164,12 +3175,12 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   useEffect(() => {
     if (!draftReady) return;
     const timeout = setTimeout(() => {
-      void saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, addressId, idempotencyKey: requestKey.current, pendingOrderId: pendingOrderId || undefined, images: orderImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) })
+      void saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, addressId, loyaltyPointsToRedeem: loyaltyPointsSelected, idempotencyKey: requestKey.current, pendingOrderId: pendingOrderId || undefined, images: orderImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) })
         .then(() => setDraftSaveError(false))
         .catch(() => setDraftSaveError(true));
     }, 800); // saved after a pause in typing, not on nearly every keystroke
     return () => clearTimeout(timeout);
-  }, [userId, draftReady, request, addressId, pendingOrderId, orderImages]);
+  }, [userId, draftReady, request, addressId, pendingOrderId, orderImages, loyaltyPointsSelected]);
   // The delivery address is re-read when coming back from the address book, otherwise at most once a minute.
   const addressesFetchedAt = useRef(0);
   const addressesDirty = useRef(true);
@@ -3268,13 +3279,15 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     if (!supabase || !online) return null;
     // A customer with an order that has waited 15+ minutes also triggers the server-side check (fallback when
     // pg_cron isn't available); at most once a minute.
-    const { data, error } = await supabase.from('orders').select('id,is_urgent,status,request_text,delivery_fee_minor,delivery_quote_set_at,delivery_quote_approved_at,purchase_amount_minor,purchase_approved_at,created_at,driver_id,delivered_at,delivery_proof_path').order('created_at', { ascending: false }).limit(30);
+    const { data, error } = await supabase.from('orders').select('id,is_urgent,status,request_text,delivery_fee_minor,delivery_quote_set_at,delivery_quote_approved_at,purchase_amount_minor,purchase_approved_at,created_at,driver_id,delivered_at,delivery_proof_path,loyalty_points_redeemed,loyalty_discount_minor').order('created_at', { ascending: false }).limit(30);
     if (error) return null;
+    const loyalty = await supabase.from('customer_loyalty_accounts').select('points_balance,lifetime_points_earned').eq('customer_id',userId).maybeSingle();
+    if (!loyalty.error && loyalty.data) { setLoyaltyBalance(loyalty.data.points_balance); setLifetimePointsEarned(loyalty.data.lifetime_points_earned); }
     const rows = data ?? [];
     const overdue = rows.some((order) => order.status === 'searching' && !!order.delivery_quote_set_at && Date.now() - Date.parse(order.delivery_quote_set_at) >= 15 * 60 * 1000);
     if (overdue && Date.now() - lastFlagCheck.current > 60 * 1000) { lastFlagCheck.current = Date.now(); void supabase.rpc('flag_unanswered_orders').then(() => undefined, () => undefined); }
     return rows;
-  }, [online]);
+  }, [online, userId]);
   const ordersFetchedAt = useRef(0);
   const refreshOrdersRef = useRef<(() => void) | null>(null);
   useEffect(() => {
@@ -3334,10 +3347,10 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     if (!pendingOrderId && (!addressId || !request.trim())) { setRequestMessage('اختار العنوان واكتب تفاصيل طلبك.'); return; }
     // Feedback first: the button switches to its busy state before any storage or network work.
     setSending(true); setRequestMessage('');
-    await saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, addressId, idempotencyKey: requestKey.current, pendingOrderId: pendingOrderId || undefined, images: orderImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) }).catch(() => setDraftSaveError(true));
+    await saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, addressId, loyaltyPointsToRedeem: loyaltyPointsSelected, idempotencyKey: requestKey.current, pendingOrderId: pendingOrderId || undefined, images: orderImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) }).catch(() => setDraftSaveError(true));
     let orderId = pendingOrderId;
     if (!orderId) {
-      const { data, error } = await supabase.rpc('create_customer_order', { p_idempotency_key: requestKey.current, p_address_id: addressId, p_request_text: composeRequest(pickup, request), ...(urgent ? { p_is_urgent: true } : {}) });
+      const { data, error } = await supabase.rpc('create_customer_order', { p_idempotency_key: requestKey.current, p_address_id: addressId, p_request_text: composeRequest(pickup, request), p_is_urgent: urgent, p_loyalty_discount_tier_points: loyaltyPointsSelected });
       if (error || !data) {
         setSending(false);
         setRequestMessage(error?.message.includes('Damascus and Rif Dimashq') ? 'التوصيل متاح حالياً بدمشق وريف دمشق فقط. عدّل عنوان التسليم.' : 'ما قدرنا نرسل الطلب. تأكد من العنوان والاتصال وحاول مرة ثانية.');
@@ -3345,7 +3358,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       }
       orderId = data;
       setPendingOrderId(orderId);
-      await saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, addressId, idempotencyKey: requestKey.current, pendingOrderId: orderId, images: orderImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) }).catch(() => setDraftSaveError(true));
+      await saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, addressId, loyaltyPointsToRedeem: loyaltyPointsSelected, idempotencyKey: requestKey.current, pendingOrderId: orderId, images: orderImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) }).catch(() => setDraftSaveError(true));
     }
     let existingImageNames = new Set<string>();
     // Only a resumed order can already have uploaded photos; a brand-new one skips this round trip.
@@ -3367,7 +3380,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
           const uploadedImage = { ...image, uploaded: true };
           const updatedImages = orderImages.map((item) => item.id === image.id ? uploadedImage : item);
           setOrderImages(updatedImages);
-          await saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, addressId, idempotencyKey: requestKey.current, pendingOrderId: orderId, images: updatedImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) }).catch(() => setDraftSaveError(true));
+          await saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, addressId, loyaltyPointsToRedeem: loyaltyPointsSelected, idempotencyKey: requestKey.current, pendingOrderId: orderId, images: updatedImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) }).catch(() => setDraftSaveError(true));
           continue;
         }
         const body = await fetch(image.uri).then((response) => response.arrayBuffer());
@@ -3378,7 +3391,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
         const uploadedImage = { ...image, uploaded: true };
         const updatedImages = orderImages.map((item) => item.id === image.id ? uploadedImage : item);
         setOrderImages(updatedImages);
-        await saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, addressId, idempotencyKey: requestKey.current, pendingOrderId: orderId, images: updatedImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) }).catch(() => setDraftSaveError(true));
+        await saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, addressId, loyaltyPointsToRedeem: loyaltyPointsSelected, idempotencyKey: requestKey.current, pendingOrderId: orderId, images: updatedImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) }).catch(() => setDraftSaveError(true));
       } catch {
         setSending(false);
         setRequestMessage('وصل طلبك، بس ما قدرنا نرفع كل الصور. اضغط إرسال الطلب مرة ثانية لنكمل الرفع بدون إنشاء طلب جديد.');
@@ -3389,7 +3402,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     await clearCustomerOrderDraft(userId);
     forgetOrderImages('order-images', orderId);
     refreshOrdersRef.current?.();
-    requestKey.current = newRequestKey(); setRequest(''); setUrgent(false); setPickup(''); setOrderImages([]); setPendingOrderId(''); setRequestMessage('وصلنا طلبك! الإدارة رح تحدد أجرة التوصيل وتتابع إسناده لسائق.'); navigate('orders');
+    requestKey.current = newRequestKey(); setRequest(''); setLoyaltyPointsSelected(0); setUrgent(false); setPickup(''); setOrderImages([]); setPendingOrderId(''); setRequestMessage('وصلنا طلبك! الإدارة رح تحدد أجرة التوصيل وتتابع إسناده لسائق.'); navigate('orders');
   };
   const pickOrderImages = async () => {
     if (sending) return;
@@ -3478,6 +3491,13 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       <View pointerEvents={sending ? 'none' : 'auto'} style={[s.formCard, sending && { opacity: 0.45 }]}><View style={s.formHeader}><View style={{ width: 28, height: 28, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(183,255,48,0.1)', borderWidth: 1, borderColor: 'rgba(183,255,48,0.28)' }}><SymbolView name={{ ios: 'bag', android: 'shopping_bag', web: 'shopping_bag' }} tintColor="#B7FF30" size={15}/></View><View style={s.formHeaderCopy}><Text style={s.formTitle}>شو بدك نجيبلك؟</Text></View></View>{draftSaveError ? <Text style={s.formMessage}>تعذّر حفظ المسودة على هذا الجهاز.</Text> : null}
         <View style={s.formSection}><View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}><Text style={s.label}>تفاصيل الطلب</Text><UrgentChip on={urgent} disabled={!!pendingOrderId || sending} onPress={() => setUrgent((value) => !value)} /></View><TextInput editable={draftReady && !pendingOrderId} value={request} onChangeText={(value) => { draftDirty.current = true; setRequest(value); }} maxLength={4000} multiline textAlignVertical="top" placeholder="مثال: ربطة خبز، كيلو بندورة، وعلبة حليب." placeholderTextColor="#809087" onFocus={() => setFocusedField('request')} onBlur={() => setFocusedField((current) => current === 'request' ? null : current)} style={[s.input,s.orderRequestInput,fieldBorder('request', request.trim().length > 0),urgent&&{borderColor:'#F5A623'}]} accessibilityLabel="اكتب تفاصيل طلبك" /></View>
         <View style={s.formSection}><TextInput editable={draftReady && !pendingOrderId} value={pickup} onChangeText={(value) => setPickup(value.slice(0, 120))} maxLength={120} placeholder="عندك محلّ مفضّل نشتري منه؟ (اختياري)" placeholderTextColor="#809087" onFocus={() => setFocusedField('pickup')} onBlur={() => setFocusedField((current) => current === 'pickup' ? null : current)} style={[s.input, { minHeight: 54, paddingVertical: 0, borderRadius: 16, textAlign: 'right', writingDirection: 'rtl' }, fieldBorder('pickup', pickup.trim().length > 0)]} accessibilityLabel="مكان الشراء"/></View>
+        <View style={{ marginBottom: 12, padding: 13, borderRadius: 16, borderWidth: 1, borderColor: c.border, backgroundColor: c.raised, gap: 8 }}>
+          <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center' }}><Text style={{ color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>نقاط لَبّيك</Text><Text style={{ color: c.primary, fontSize: 13, fontWeight: '900' }}>{numberFormatter.format(loyaltyBalance)} نقطة</Text></View>
+          <Text style={{ color: c.muted, fontSize: 12, lineHeight: 19, textAlign: 'right' }}>الخصم على أجرة التوصيل فقط بعد ما تحددها الإدارة. اختيار أي خصم يستهلك كامل رصيد نقاطك، وما بيغيّر قيمة المشتريات.</Text>
+          <View style={{ flexDirection: 'row-reverse', gap: 7 }}>
+            {([{points:0 as const,label:'بدون استخدام',hint:''},{points:3 as const,label:'من 3 نقاط',hint:'خصم 20%'},{points:4 as const,label:'من 4 نقاط',hint:'خصم 30%'},{points:5 as const,label:'من 5 نقاط',hint:'خصم 40%'}]).map(({points,label,hint})=>{const selected=loyaltyPointsSelected===points;const disabled=sending||!!pendingOrderId||(points>0&&loyaltyBalance<points);return <Pressable key={points} disabled={disabled} onPress={()=>setLoyaltyPointsSelected(points)} accessibilityRole="radio" accessibilityState={{selected,disabled}} style={{flex:1,minHeight:48,alignItems:'center',justifyContent:'center',paddingHorizontal:4,borderRadius:12,borderWidth:1,borderColor:selected?c.primary:c.border,backgroundColor:selected?c.primary:c.surface,opacity:disabled?0.45:1}}><Text style={{color:selected?c.background:c.text,fontSize:11.5,fontWeight:'900',textAlign:'center'}}>{label}</Text>{hint?<Text style={{color:selected?c.background:c.muted,fontSize:10,fontWeight:'700',marginTop:2}}>{hint}</Text>:null}</Pressable>;})}
+          </View>
+        </View>
         <View style={s.photoSection}><View style={s.photoHead}><Text style={s.label}>صور تساعدنا نفهم طلبك</Text><Text style={s.photoCount}>{orderImages.length}/3</Text></View>
           <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
             {orderImages.map((image, index) => <View key={image.id} style={{ width: 62, height: 62, borderRadius: 14, borderWidth: 1, borderColor: '#405449', backgroundColor: '#15231a', padding: 3 }}>
@@ -3521,7 +3541,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
           const expanded = !finished || openFinished === order.id || order.id === notificationOrderId;
           if (!expanded) {
             const title = splitPickup(order.request_text).body;
-            const total = (order.purchase_amount_minor ?? 0) + order.delivery_fee_minor;
+            const total = (order.purchase_amount_minor ?? 0) + order.delivery_fee_minor - order.loyalty_discount_minor;
             return <Pressable key={order.id} onPress={() => setOpenFinished(order.id)} accessibilityRole="button" accessibilityState={{ expanded: false }} accessibilityLabel={`${cancelled ? 'طلب ملغي' : 'طلب منتهي'}: ${title}. اضغط لعرض التفاصيل`} style={{ flexDirection: 'row', alignItems: 'center', gap: 11, minHeight: 60, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 18, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface, marginBottom: 9 }}>
               <View style={{ width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: cancelled ? 'rgba(255,138,138,0.16)' : 'rgba(82,213,160,0.16)' }}><Text style={{ color: cancelled ? '#FF8A8A' : c.accent, fontSize: 16, fontWeight: '900' }}>{cancelled ? '✕' : '✓'}</Text></View>
               <View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={1} style={{ color: c.text, fontSize: 14.5, fontWeight: '800', textAlign: 'right' }}>{title}</Text>{cancelled && <Text numberOfLines={1} style={{ color: c.muted, fontSize: 12, textAlign: 'right' }}>{shortDateTimeFormatter.format(new Date(order.created_at))}</Text>}</View>
@@ -3535,7 +3555,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
           {finished && <Pressable disabled={openFinished !== order.id} onPress={() => setOpenFinished(null)} accessibilityRole="button" accessibilityLabel="طيّ التفاصيل" style={{ flexDirection: 'row', alignItems: 'center', gap: 11 }}>
             <View style={{ width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: cancelled ? 'rgba(255,138,138,0.16)' : 'rgba(82,213,160,0.16)' }}><Text style={{ color: cancelled ? '#FF8A8A' : c.accent, fontSize: 16, fontWeight: '900' }}>{cancelled ? '✕' : '✓'}</Text></View>
             <View style={{ flex: 1, minWidth: 0 }}><Text numberOfLines={2} style={{ color: c.text, fontSize: 14.5, fontWeight: '800', textAlign: 'right' }}>{splitPickup(order.request_text).body}</Text>{cancelled && <Text numberOfLines={1} style={{ color: c.muted, fontSize: 12, textAlign: 'right' }}>{shortDateTimeFormatter.format(new Date(order.created_at))} · #{order.id.slice(0, 6)}</Text>}</View>
-            {cancelled ? <View style={{ backgroundColor: '#451E21', borderRadius: 11, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: '#FF8A8A', fontSize: 12, fontWeight: '900' }}>ملغي</Text></View> : <Text style={{ color: c.text, fontSize: 14, fontWeight: '900' }}>{numberFormatter.format((order.purchase_amount_minor ?? 0) + order.delivery_fee_minor)}</Text>}
+            {cancelled ? <View style={{ backgroundColor: '#451E21', borderRadius: 11, paddingHorizontal: 10, minHeight: 26, justifyContent: 'center' }}><Text style={{ color: '#FF8A8A', fontSize: 12, fontWeight: '900' }}>ملغي</Text></View> : <Text style={{ color: c.text, fontSize: 14, fontWeight: '900' }}>{numberFormatter.format((order.purchase_amount_minor ?? 0) + order.delivery_fee_minor - order.loyalty_discount_minor)}</Text>}
             {openFinished === order.id ? <View style={{ minHeight: 30, paddingHorizontal: 11, borderRadius: 15, borderWidth: 1, borderColor: '#3D5A45', backgroundColor: '#1F2E24', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#B7FF30', fontSize: 12, fontWeight: '800' }}>إخفاء</Text></View> : null}
           </Pressable>}
           {!finished && <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -3553,10 +3573,10 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
           </View>}
           {hasDriver && !ordersAreStale && <CustomerDriverRow orderId={order.id} status={order.status} />}
           {done && !ordersAreStale ? <View style={{ backgroundColor: c.raised, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 4 }}>
-            {([['رقم الطلب', `#${order.id.slice(0, 6)}`, false], ['وقت التوصيل', order.delivered_at ? `${notificationTimeFormatter.format(new Date(order.delivered_at))}${(order.delivered_at ? Math.max(1, Math.round((Date.parse(order.delivered_at) - Date.parse(order.created_at)) / 60000)) : null) ? ` · خلال ${(order.delivered_at ? Math.max(1, Math.round((Date.parse(order.delivered_at) - Date.parse(order.created_at)) / 60000)) : null)} دقيقة` : ''}` : '—', false], ['مبلغ المشتريات', numberFormatter.format(order.purchase_amount_minor ?? 0), false], ['أجرة التوصيل', numberFormatter.format(order.delivery_fee_minor), false], ['المجموع', numberFormatter.format((order.purchase_amount_minor ?? 0) + order.delivery_fee_minor) + ' ل.س', true]] as const).map(([label, value, strong], index) => <View key={label} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderTopWidth: index ? 1 : 0, borderTopColor: c.border }}><Text style={{ color: strong ? c.text : c.muted, fontSize: 13, fontWeight: strong ? '900' : '500' }}>{label}</Text><Text style={{ color: c.text, fontSize: 13, fontWeight: strong ? '900' : '800' }}>{value}</Text></View>)}
+            {([['رقم الطلب', `#${order.id.slice(0, 6)}`, false], ['وقت التوصيل', order.delivered_at ? `${notificationTimeFormatter.format(new Date(order.delivered_at))}${(order.delivered_at ? Math.max(1, Math.round((Date.parse(order.delivered_at) - Date.parse(order.created_at)) / 60000)) : null) ? ` · خلال ${(order.delivered_at ? Math.max(1, Math.round((Date.parse(order.delivered_at) - Date.parse(order.created_at)) / 60000)) : null)} دقيقة` : ''}` : '—', false], ['مبلغ المشتريات', numberFormatter.format(order.purchase_amount_minor ?? 0), false], ['أجرة التوصيل قبل الخصم', numberFormatter.format(order.delivery_fee_minor), false], ...(order.loyalty_discount_minor > 0 ? [['خصم نقاط لَبّيك', '− ' + numberFormatter.format(order.loyalty_discount_minor), false] as const] : []), ['أجرة التوصيل بعد الخصم', numberFormatter.format(order.delivery_fee_minor - order.loyalty_discount_minor), false], ['المجموع', numberFormatter.format((order.purchase_amount_minor ?? 0) + order.delivery_fee_minor - order.loyalty_discount_minor) + ' ل.س', true], ...(order.loyalty_points_redeemed > 0 ? [['النقاط المستخدمة', numberFormatter.format(order.loyalty_points_redeemed), false] as const] : []), ] as const).map(([label, value, strong], index) => <View key={label} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderTopWidth: index ? 1 : 0, borderTopColor: c.border }}><Text style={{ color: strong ? c.text : c.muted, fontSize: 13, fontWeight: strong ? '900' : '500' }}>{label}</Text><Text style={{ color: c.text, fontSize: 13, fontWeight: strong ? '900' : '800' }}>{value}</Text></View>)}
           </View> : 
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            <View style={{ flex: 1, backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 14, paddingVertical: 7, paddingHorizontal: 11 }}><Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>أجرة التوصيل</Text><Text style={{ color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{ordersAreStale ? '—' : order.delivery_quote_set_at ? numberFormatter.format(order.delivery_fee_minor) + ' ل.س' : 'قيد التحديد'}</Text></View>
+            <View style={{ flex: 1, backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 14, paddingVertical: 7, paddingHorizontal: 11 }}><Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>{order.loyalty_discount_minor > 0 ? 'أجرة التوصيل بعد خصم النقاط' : 'أجرة التوصيل'}</Text><Text style={{ color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{ordersAreStale ? '—' : order.delivery_quote_set_at ? numberFormatter.format(order.delivery_fee_minor - order.loyalty_discount_minor) + ' ل.س' : 'قيد التحديد'}</Text></View>
             {order.purchase_amount_minor !== null ? <View style={{ flex: 1, backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 14, paddingVertical: 7, paddingHorizontal: 11 }}><Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>مبلغ المشتريات</Text><Text style={{ color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{ordersAreStale ? '—' : numberFormatter.format(order.purchase_amount_minor ?? 0) + ' ل.س'}</Text></View> : null}
           </View>}
           {done && !ordersAreStale && <AdminImageStrip orderId={order.id} bucket="delivery-proofs" proofPath={order.delivery_proof_path} emptyText="ما في صورة تسليم لهذا الطلب." compact />}
@@ -3592,6 +3612,11 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
             <View style={s.profileIdentityCopy}>{showDriverFlow&&<View style={s.accountRoleTag}><Text style={s.accountRoleTagText}>متقدم لمساحة السائق</Text></View>}<Text style={s.profileIdentityName} numberOfLines={2}>{profileName || 'حساب لَبّيك'}</Text><Text style={s.profileEmail} numberOfLines={1}>{email}</Text></View>
           </View>
           <Pressable onPress={() => { setProfileNameDraft(profileName); setProfileAvatarDraft(null); navigate('profile-edit'); }} style={[s.profileSectionAction,s.profileSectionActionPrimary]} accessibilityRole="button"><Text style={[s.profileSectionActionText,s.profileSectionActionTextPrimary]}>تعديل الملف الشخصي</Text><SymbolView name={{ ios: 'pencil', android: 'edit', web: 'edit' }} tintColor={theme === 'light' ? '#17210F' : c.background} size={17}/></Pressable>
+        </View>
+        <View style={s.profileSectionCard}>
+          <View style={[s.profileSectionHeading,{flexDirection:'row'}]}><Text style={[s.profileSectionTitle,{flex:0}]}>نقاط لَبّيك</Text><View style={s.profileHeadingIcon}><SymbolView name={{ios:'star.fill',android:'stars',web:'stars'}} tintColor={c.primary} size={20}/></View></View>
+          <View style={{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',paddingVertical:5}}><Text style={{color:c.text,fontSize:26,fontWeight:'900'}}>{numberFormatter.format(loyaltyBalance)} نقطة</Text><Text style={{color:c.muted,fontSize:12,fontWeight:'700'}}>جمعت {numberFormatter.format(lifetimePointsEarned)} نقطة</Text></View>
+          <Text style={{color:c.muted,fontSize:12.5,lineHeight:20,textAlign:'right',marginTop:4}}>بتكسب نقطة مع كل طلب مكتمل. استخدم رصيدك الكامل لخصم 20% عند 3 نقاط، أو 30% عند 4، أو 40% عند 5 نقاط، من أجرة التوصيل.</Text>
         </View>
         <View style={s.profileSectionCard}>
           <View style={[s.profileSectionHeading,{flexDirection:'row'}]}><Text style={[s.profileSectionTitle,{flex:0}]}>عنوان التوصيل</Text><View style={s.profileHeadingIcon}><SymbolView name={{ ios: 'mappin.and.ellipse', android: 'location_on', web: 'location_on' }} tintColor={c.primary} size={21}/></View></View>

@@ -138,6 +138,7 @@ export type Database = {
           driver_id: string
           id: number
           idempotency_key: string
+          loyalty_discount_minor: number
           order_id: string
           purchase_amount_minor: number
           settled_by: string
@@ -152,6 +153,7 @@ export type Database = {
           driver_id: string
           id?: never
           idempotency_key: string
+          loyalty_discount_minor?: number
           order_id: string
           purchase_amount_minor: number
           settled_by: string
@@ -166,6 +168,7 @@ export type Database = {
           driver_id?: string
           id?: never
           idempotency_key?: string
+          loyalty_discount_minor?: number
           order_id?: string
           purchase_amount_minor?: number
           settled_by?: string
@@ -221,6 +224,18 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      customer_loyalty_accounts: {
+        Row: { customer_id: string; points_balance: number; lifetime_points_earned: number; updated_at: string }
+        Insert: { customer_id: string; points_balance?: number; lifetime_points_earned?: number; updated_at?: string }
+        Update: { customer_id?: string; points_balance?: number; lifetime_points_earned?: number; updated_at?: string }
+        Relationships: []
+      }
+      customer_loyalty_ledger: {
+        Row: { id: number; customer_id: string; order_id: string | null; event_type: string; points_delta: number; created_at: string }
+        Insert: { id?: never; customer_id: string; order_id?: string | null; event_type: string; points_delta: number; created_at?: string }
+        Update: { id?: never; customer_id?: string; order_id?: string | null; event_type?: string; points_delta?: number; created_at?: string }
+        Relationships: []
       }
       commission_policies: {
         Row: {
@@ -688,6 +703,9 @@ export type Database = {
           delivery_note: string | null
           delivery_proof_path: string | null
           delivery_fee_minor: number
+          loyalty_discount_minor: number
+          loyalty_points_redeemed: number
+          loyalty_discount_tier_points: number
             delivery_quote_approved_at: string | null
             delivery_quote_set_at: string | null
             delivery_quote_set_by: string | null
@@ -729,6 +747,9 @@ export type Database = {
           delivery_note?: string | null
           delivery_proof_path?: string | null
           delivery_fee_minor: number
+          loyalty_discount_minor?: number
+          loyalty_points_redeemed?: number
+          loyalty_discount_tier_points?: number
             delivery_quote_approved_at?: string | null
             delivery_quote_set_at?: string | null
             delivery_quote_set_by?: string | null
@@ -770,6 +791,9 @@ export type Database = {
           delivery_note?: string | null
           delivery_proof_path?: string | null
           delivery_fee_minor?: number
+          loyalty_discount_minor?: number
+          loyalty_points_redeemed?: number
+          loyalty_discount_tier_points?: number
             delivery_quote_approved_at?: string | null
             delivery_quote_set_at?: string | null
             delivery_quote_set_by?: string | null
@@ -928,6 +952,7 @@ export type Database = {
           cash_collected_total_minor: number
           commission_total_minor: number
           delivery_fee_total_minor: number
+          loyalty_discount_total_minor: number
           driver_earning_total_minor: number
           purchase_total_minor: number
           settlement_count: number
@@ -991,6 +1016,7 @@ export type Database = {
           p_budget_ceiling_minor?: number
           p_idempotency_key: string
           p_is_urgent?: boolean
+          p_loyalty_discount_tier_points?: number
           p_request_text: string
         }
         Returns: string
