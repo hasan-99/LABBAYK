@@ -237,6 +237,30 @@ export type Database = {
         Update: { id?: never; customer_id?: string; order_id?: string | null; event_type?: string; points_delta?: number; created_at?: string }
         Relationships: []
       }
+      app_offers: {
+        Row: {
+          coming_soon_text: string
+          id: number
+          loyalty_enabled: boolean
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          coming_soon_text?: string
+          id: number
+          loyalty_enabled?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          coming_soon_text?: string
+          id?: number
+          loyalty_enabled?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       commission_policies: {
         Row: {
           id: number
@@ -1103,6 +1127,10 @@ export type Database = {
       set_commission_rate: {
         Args: { p_rate_basis_points: number; p_reason: string }
         Returns: number
+      }
+      set_loyalty_offer: {
+        Args: { p_enabled: boolean; p_coming_soon_text: string; p_reason: string }
+        Returns: undefined
       }
       set_global_delivery_fee: {
         Args: { p_fee_minor: number; p_reason: string }
