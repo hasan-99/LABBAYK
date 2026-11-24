@@ -67,7 +67,9 @@ create or replace function private.apply_customer_loyalty_status_change()
 returns trigger language plpgsql security definer set search_path = '' as $$
 declare v_inserted integer; v_event_id bigint;
 begin
-  if old.status is distinct from new.status and new.status in ('delivered','settled') and new.customer_id is not null
+  -- Earn once, when the order is first delivered. 'settled' is not an earning moment and a
+  -- settlement reversal (settled -> delivered) never earns, so the offer state at delivery decides.
+  if old.status is distinct from new.status and new.status = 'delivered' and old.status <> 'settled' and new.customer_id is not null
      and coalesce((select loyalty_enabled from public.app_offers where id = 1), true) then
     insert into public.customer_loyalty_accounts(customer_id) values(new.customer_id) on conflict(customer_id) do nothing;
     insert into public.customer_loyalty_ledger(customer_id,order_id,event_type,points_delta)
@@ -78,6 +80,7 @@ begin
         lifetime_points_earned=lifetime_points_earned+1,updated_at=now() where customer_id=new.customer_id;
       insert into public.order_events(order_id,actor_id,event_type,details)
         values(new.id,new.driver_id,'loyalty_point_earned',jsonb_build_object('points',1)) returning id into v_event_id;
+      delete from public.notifications where source_event_id=v_event_id and recipient_id is distinct from new.customer_id;
       update public.notifications set title='كسبت نقطة لَبّيك',body='أضفنا نقطة إلى رصيدك بعد اكتمال الطلب.'
         where recipient_id=new.customer_id and source_event_id=v_event_id;
     end if;
@@ -93,8 +96,9 @@ begin
         where customer_id=new.customer_id;
       insert into public.order_events(order_id,actor_id,event_type,details)
         values(new.id,auth.uid(),'loyalty_points_refunded',jsonb_build_object('points',new.loyalty_points_redeemed)) returning id into v_event_id;
+      delete from public.notifications where source_event_id=v_event_id and recipient_id is distinct from new.customer_id;
       insert into public.notifications(recipient_id,order_id,source_event_id,event_type,title,body)
-        values(new.customer_id,new.id,v_event_id,'loyalty_points_refunded','رجعت نقاطك إلى رصيدك','أعدنا نقاط لَبّيك المستخدمة لأن الطلب أُلغي.')
+        values(new.customer_id,new.id,v_event_id,'loyalty_points_refunded','رجعت نقاطك إلى رصيدك','رجعنا لك '||new.loyalty_points_redeemed||' نقاط لَبّيك اللي استخدمتها لأن الطلب انلغى.')
         on conflict(recipient_id,source_event_id) where source_event_id is not null
         do update set title=excluded.title,body=excluded.body;
     end if;

@@ -3217,8 +3217,19 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   const [lifetimePointsEarned, setLifetimePointsEarned] = useState(0);
   const [loyaltyPointsSelected, setLoyaltyPointsSelected] = useState<0 | 3 | 4 | 5>(0);
   const [offerEnabled, setOfferEnabled] = useState(false);
+  const [offerLoaded, setOfferLoaded] = useState(false);
+  const [loyaltyLoaded, setLoyaltyLoaded] = useState(false);
+  const attemptedKey = useRef<string | null>(null);
   const [offerComingSoon, setOfferComingSoon] = useState('ترقبوا عروضاً جديدة قريباً.');
-  useEffect(() => { if (!offerEnabled && loyaltyPointsSelected !== 0) setLoyaltyPointsSelected(0); }, [offerEnabled, loyaltyPointsSelected]);
+  // Only judge the saved choice once the real offer state and balance are known, never against the initial defaults.
+  useEffect(() => {
+    if (!offerLoaded || loyaltyPointsSelected === 0) return;
+    if (!offerEnabled) { setLoyaltyPointsSelected(0); return; }
+    // Keep the tier equal to what the screen shows (the best one the balance allows), unless an attempt with this key already went out.
+    if (!loyaltyLoaded || attemptedKey.current === requestKey.current) return;
+    const best = bestLoyaltyTier(loyaltyBalance);
+    if (best !== loyaltyPointsSelected) setLoyaltyPointsSelected(best);
+  }, [offerLoaded, offerEnabled, loyaltyLoaded, loyaltyBalance, loyaltyPointsSelected]);
   const [urgent, setUrgent] = useState(false);
   const [focusedField, setFocusedField] = useState<'request' | 'pickup' | null>(null);
   // Field borders: strong lime while typing in it, soft green once it has a value.
@@ -3418,11 +3429,11 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     // A customer with an order that has waited 15+ minutes also triggers the server-side check (fallback when
     // pg_cron isn't available); at most once a minute.
     const { data, error } = await supabase.from('orders').select('id,is_urgent,status,request_text,delivery_fee_minor,delivery_quote_set_at,delivery_quote_approved_at,purchase_amount_minor,purchase_approved_at,created_at,driver_id,delivered_at,delivery_proof_path,loyalty_points_redeemed,loyalty_discount_minor').order('created_at', { ascending: false }).limit(30);
-    if (error) return null;
     const loyalty = await supabase.from('customer_loyalty_accounts').select('points_balance,lifetime_points_earned').eq('customer_id',userId).maybeSingle();
-    if (!loyalty.error && loyalty.data) { setLoyaltyBalance(loyalty.data.points_balance); setLifetimePointsEarned(loyalty.data.lifetime_points_earned); }
+    if (!loyalty.error) { if (loyalty.data) { setLoyaltyBalance(loyalty.data.points_balance); setLifetimePointsEarned(loyalty.data.lifetime_points_earned); } setLoyaltyLoaded(true); }
     const offer = await supabase.from('app_offers').select('loyalty_enabled,coming_soon_text').eq('id',1).maybeSingle();
-    if (!offer.error && offer.data) { setOfferEnabled(offer.data.loyalty_enabled); setOfferComingSoon(offer.data.coming_soon_text); }
+    if (!offer.error && offer.data) { setOfferEnabled(offer.data.loyalty_enabled); setOfferComingSoon(offer.data.coming_soon_text); setOfferLoaded(true); }
+    if (error) return null;
     const rows = data ?? [];
     const overdue = rows.some((order) => order.status === 'searching' && !!order.delivery_quote_set_at && Date.now() - Date.parse(order.delivery_quote_set_at) >= 15 * 60 * 1000);
     if (overdue && Date.now() - lastFlagCheck.current > 60 * 1000) { lastFlagCheck.current = Date.now(); void supabase.rpc('flag_unanswered_orders').then(() => undefined, () => undefined); }
@@ -3486,14 +3497,22 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     if (!pendingOrderId && !addressReadyForOrder) { setRequestMessage('أضف عنوان تسليم بدمشق أو ريف دمشق حتى نكمل الطلب.'); return; }
     if (!pendingOrderId && (!addressId || !request.trim())) { setRequestMessage('اختار العنوان واكتب تفاصيل طلبك.'); return; }
     // Feedback first: the button switches to its busy state before any storage or network work.
-    setSending(true); setRequestMessage('');
+    setSending(true); setRequestMessage(''); attemptedKey.current = requestKey.current;
     await saveCustomerOrderDraft(userId, { schemaVersion: 1, savedAt: new Date().toISOString(), request, addressId, loyaltyPointsToRedeem: loyaltyPointsSelected, idempotencyKey: requestKey.current, pendingOrderId: pendingOrderId || undefined, images: orderImages.map(({ id, mimeType, extension, uploaded }) => ({ id, mimeType, extension, uploaded })) }).catch(() => setDraftSaveError(true));
     let orderId = pendingOrderId;
     if (!orderId) {
       const { data, error } = await supabase.rpc('create_customer_order', { p_idempotency_key: requestKey.current, p_address_id: addressId, p_request_text: composeRequest(pickup, request), p_is_urgent: urgent, p_loyalty_discount_tier_points: loyaltyPointsSelected });
       if (error || !data) {
         setSending(false);
-        setRequestMessage(error?.message.includes('Damascus and Rif Dimashq') ? 'التوصيل متاح حالياً بدمشق وريف دمشق فقط. عدّل عنوان التسليم.' : 'ما قدرنا نرسل الطلب. تأكد من العنوان والاتصال وحاول مرة ثانية.');
+        const reason = error?.message ?? '';
+        const loyaltyRejected = reason.includes('loyalty offer is not active') || reason.includes('Not enough loyalty points');
+        // These two are raised before anything is saved, so a fresh attempt with another tier is safe.
+        if (loyaltyRejected) { attemptedKey.current = null; setLoyaltyPointsSelected(0); void fetchCustomerOrders(); }
+        setRequestMessage(reason.includes('Damascus and Rif Dimashq') ? 'التوصيل متاح حالياً بدمشق وريف دمشق فقط. عدّل عنوان التسليم.'
+          : reason.includes('loyalty offer is not active') ? 'عرض النقاط موقوف حالياً. أرسل طلبك بدون خصم النقاط.'
+          : reason.includes('Not enough loyalty points') ? 'رصيد نقاطك تغيّر. تحقق من رصيدك وحاول مرة ثانية.'
+          : reason.includes('Idempotency key reused') ? 'تغيّرت بيانات الطلب بعد محاولة سابقة. حدّث الصفحة وحاول مرة ثانية.'
+          : 'ما قدرنا نرسل الطلب. تأكد من العنوان والاتصال وحاول مرة ثانية.');
         return;
       }
       orderId = data;
@@ -3574,7 +3593,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     if (error) { setOrderActionMessage('ما قدرنا نلغي الطلب بهالمرحلة. تواصل مع الدعم إذا بلش الشراء.'); return; }
     // Mark it cancelled right away; the list is re-read in the background.
     setOrders((current) => current.map((order) => order.id === orderId ? { ...order, status: 'cancelled' } : order));
-    setOrderActionMessage('انلغى الطلب قبل إتمام الشراء.');
+    setOrderActionMessage(orders.find((order) => order.id === orderId)?.loyalty_points_redeemed ? 'انلغى الطلب قبل إتمام الشراء، ورجعت نقاطك.' : 'انلغى الطلب قبل إتمام الشراء.');
     void fetchCustomerOrders().then((rows) => { if (rows) applyCustomerOrders(rows); });
   };
   const hasAddress = !!addressId;
@@ -3626,7 +3645,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
         {activeCustomerOrders.length === 1 ? <View style={{ flexDirection: 'row-reverse', gap: 4 }}>{trackSteps.map((label, index) => { const current = trackIndex(activeCustomerOrders[0].status); return <View key={label} style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: index <= current && current >= 0 ? '#B7FF30' : c.border, opacity: index === current ? 0.65 : 1 }} />; })}</View>
           : activeCustomerOrders.slice(0, 2).map((order) => <View key={order.id} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', gap: 8 }}><Text numberOfLines={1} style={{ flex: 1, color: c.muted, fontSize: 12.5, textAlign: 'right' }}>{splitPickup(order.request_text).body}</Text><Text style={{ color: c.text, fontSize: 12.5, fontWeight: '800' }}>{bannerLabels[order.status] ?? orderStatus[order.status] ?? order.status}</Text></View>)}
       </Pressable>}
-      <Pressable onPress={() => navigate('offers')} accessibilityRole="button" accessibilityLabel="عروض لَبّيك ونقاطي" style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, paddingVertical: 10, paddingHorizontal: 13, borderRadius: 14, borderWidth: 1, borderColor: c.border, backgroundColor: c.raised }}><Text style={{ color: c.text, fontSize: 13.5, fontWeight: '900', textAlign: 'right' }}>{offerEnabled ? 'عرض النقاط شغّال، شوف التفاصيل' : 'عروض لَبّيك'}</Text>{offerEnabled ? <Text style={{ color: c.primary, fontSize: 12.5, fontWeight: '900' }}>{numberFormatter.format(loyaltyBalance)} نقطة ‹</Text> : <Text style={{ color: c.muted, fontSize: 12, fontWeight: '700' }}>ترقبوا عروضاً قادمة ‹</Text>}</Pressable>
+      <Pressable onPress={() => navigate('offers')} accessibilityRole="button" accessibilityLabel="عروض لَبّيك ونقاطي" style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, paddingVertical: 10, paddingHorizontal: 13, borderRadius: 14, borderWidth: 1, borderColor: c.border, backgroundColor: c.raised }}><Text style={{ color: c.text, fontSize: 13.5, fontWeight: '900', textAlign: 'right' }}>{offerEnabled ? 'عرض النقاط شغّال، شوف التفاصيل' : 'عروض لَبّيك'}</Text>{!offerLoaded ? null : offerEnabled ? <Text style={{ color: c.primary, fontSize: 12.5, fontWeight: '900' }}>{numberFormatter.format(loyaltyBalance)} نقطة ‹</Text> : <Text style={{ color: c.muted, fontSize: 12, fontWeight: '700' }}>ترقبوا عروضاً قادمة ‹</Text>}</Pressable>
       {selectedAddress && <Pressable style={s.address} onPress={() => navigate('addresses')} accessibilityRole="button" accessibilityLabel={`تغيير عنوان التوصيل: ${addressSummary}`} accessibilityHint="يفتح تفاصيل العنوان لتعديله"><View style={s.pin}><SymbolView name={{ios:'house.fill',android:'home',web:'home'}} tintColor={theme === 'light' ? '#385616' : c.primary} size={17}/></View><View style={s.addressCopy}><Text style={s.addressEyebrow}>عنوان التوصيل الحالي</Text><Text style={s.addressName} numberOfLines={1}>{addressSummary}</Text></View><View style={s.addressChangeButton}><SymbolView name={{ios:'pencil',android:'edit',web:'edit'}} tintColor="#0B1411" size={14}/><Text numberOfLines={1} style={s.addressChange}>تغيير</Text></View></Pressable>}
       <View style={[s.heroImageWrap, sending && { opacity: 0.45 }]}><Image source={require('../../assets/images/labbayk-hero.jpg')} style={s.heroImage} contentFit="cover" contentPosition={{ top: '12%' }} accessibilityLabel="لَبّيك لتلبية احتياجاتك اليومية. كل شي ناقصك، بطلب واحد. اطلب منتجاتك الآن واستلمها بسرعة وأمان."/></View>
       <View pointerEvents={sending ? 'none' : 'auto'} style={[s.formCard, sending && { opacity: 0.45 }]}><View style={s.formHeader}><View style={{ width: 28, height: 28, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(183,255,48,0.1)', borderWidth: 1, borderColor: 'rgba(183,255,48,0.28)' }}><SymbolView name={{ ios: 'bag', android: 'shopping_bag', web: 'shopping_bag' }} tintColor="#B7FF30" size={15}/></View><View style={s.formHeaderCopy}><Text style={s.formTitle}>شو بدك نجيبلك؟</Text></View></View>{draftSaveError ? <Text style={s.formMessage}>تعذّر حفظ المسودة على هذا الجهاز.</Text> : null}
@@ -3721,6 +3740,10 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
             <View style={{ flex: 1, backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 14, paddingVertical: 7, paddingHorizontal: 11 }}><Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>{order.loyalty_discount_minor > 0 ? 'أجرة التوصيل بعد خصم النقاط' : 'أجرة التوصيل'}</Text><Text style={{ color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{ordersAreStale ? '—' : order.delivery_quote_set_at ? numberFormatter.format(order.delivery_fee_minor - order.loyalty_discount_minor) + ' ل.س' : 'قيد التحديد'}</Text></View>
             {order.purchase_amount_minor !== null ? <View style={{ flex: 1, backgroundColor: c.raised, borderColor: c.border, borderWidth: 1, borderRadius: 14, paddingVertical: 7, paddingHorizontal: 11 }}><Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>مبلغ المشتريات</Text><Text style={{ color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{ordersAreStale ? '—' : numberFormatter.format(order.purchase_amount_minor ?? 0) + ' ل.س'}</Text></View> : null}
           </View>}
+          {!done && !cancelled && order.loyalty_points_redeemed > 0 && !ordersAreStale ? (() => { const disc = Math.min(order.delivery_fee_minor, order.loyalty_discount_minor); return <View style={{ backgroundColor: c.raised, borderRadius: 14, padding: 11, gap: 4 }}>
+            <Text style={{ color: c.muted, fontSize: 12, textAlign: 'right' }}>{order.delivery_quote_set_at ? `أجرة التوصيل ${numberFormatter.format(order.delivery_fee_minor)} − خصم النقاط ${numberFormatter.format(disc)} ل.س` : `استخدمت ${numberFormatter.format(order.loyalty_points_redeemed)} نقاط. الخصم بينحسب بعد ما نحدد الأجرة.`}</Text>
+            {order.delivery_quote_set_at && order.purchase_amount_minor !== null ? <Text style={{ color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>المتوقع تدفعه: {numberFormatter.format(order.purchase_amount_minor + order.delivery_fee_minor - disc)} ل.س</Text> : null}
+          </View>; })() : null}
           {done && !ordersAreStale && <AdminImageStrip orderId={order.id} bucket="delivery-proofs" proofPath={order.delivery_proof_path} emptyText="ما في صورة تسليم لهذا الطلب." compact />}
           {(['requested','quoted','searching','accepted','assigned','awaiting_approval'].includes(order.status) || (order.status === 'shopping' && order.purchase_amount_minor === null)) && <Pressable disabled={orderActionBusy === order.id || !online || ordersAreStale} onPress={() => setCancelTarget({ id: order.id, label: `طلب #${order.id.slice(0, 6)} · ${splitPickup(order.request_text).body}` })} style={[s.cancelOrder, (orderActionBusy === order.id || !online || ordersAreStale) && s.disabled]} accessibilityRole="button"><Text style={s.cancelOrderText}>{orderActionBusy === order.id ? 'عم نلغي الطلب…' : 'إلغاء الطلب'}</Text></Pressable>}
           <SupportIssueForm orderId={order.id} status={order.status} disabled={ordersAreStale} userId={userId} compactLink={done}/>
@@ -3757,7 +3780,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
         </View>
         <View style={s.profileSectionCard}>
           <View style={[s.profileSectionHeading,{flexDirection:'row'}]}><Text style={[s.profileSectionTitle,{flex:0}]}>نقاط لَبّيك</Text><View style={s.profileHeadingIcon}><SymbolView name={{ios:'star.fill',android:'stars',web:'stars'}} tintColor={c.primary} size={20}/></View></View>
-          {!offerEnabled && <Text style={{color:c.muted,fontSize:13,lineHeight:21,textAlign:'right'}}>{offerComingSoon}</Text>}
+          {offerLoaded && !offerEnabled && <Text style={{color:c.muted,fontSize:13,lineHeight:21,textAlign:'right'}}>{offerComingSoon}</Text>}
           {offerEnabled && <View style={{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',paddingVertical:5}}><Text style={{color:c.text,fontSize:26,fontWeight:'900'}}>{numberFormatter.format(loyaltyBalance)} نقطة</Text><Text style={{color:c.muted,fontSize:12,fontWeight:'700'}}>جمعت {numberFormatter.format(lifetimePointsEarned)} نقطة</Text></View>}
           {offerEnabled && <Text style={{color:c.muted,fontSize:12.5,lineHeight:20,textAlign:'right',marginTop:4}}>بتكسب نقطة مع كل طلب مكتمل. استخدم رصيدك الكامل لخصم 20% عند 3 نقاط، أو 30% عند 4، أو 40% عند 5 نقاط، من أجرة التوصيل.</Text>}
           <Pressable onPress={() => navigate('offers')} style={[s.profileSectionAction, s.profileSectionActionPrimary]} accessibilityRole="button"><Text style={[s.profileSectionActionText, s.profileSectionActionTextPrimary]}>{offerEnabled ? 'كيف بتشتغل النقاط والعروض' : 'شوف العروض'}</Text></Pressable>
