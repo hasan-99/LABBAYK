@@ -2458,27 +2458,26 @@ function AdminOffersSection() {
   const { colors: color } = useMobileTheme();
   const online = useInternetAvailable();
   const [, setMessage] = useToastMessage();
-  const [saved, setSaved] = useState<{ enabled: boolean; text: string } | null>(null);
+  const [saved, setSaved] = useState<{ enabled: boolean } | null>(null);
   const [enabled, setEnabled] = useState(true);
-  const [text, setText] = useState('');
   const [reason, setReason] = useState('');
   const [saving, setSaving] = useState(false);
   const load = useCallback(async () => {
     if (!supabase) return;
-    const { data, error } = await supabase.from('app_offers').select('loyalty_enabled,coming_soon_text').eq('id', 1).maybeSingle();
+    const { data, error } = await supabase.from('app_offers').select('loyalty_enabled').eq('id', 1).maybeSingle();
     if (error || !data) { setMessage('ما قدرنا نحمّل إعدادات العروض.'); return; }
-    setSaved({ enabled: data.loyalty_enabled, text: data.coming_soon_text }); setEnabled(data.loyalty_enabled); setText(data.coming_soon_text);
+    setSaved({ enabled: data.loyalty_enabled }); setEnabled(data.loyalty_enabled);
   }, []);
   useEffect(() => { void load(); }, [load]);
-  const dirty = !!saved && (enabled !== saved.enabled || text.trim() !== saved.text);
-  const ready = dirty && text.trim().length >= 1 && reason.trim().length >= 5 && online && !saving;
+  const dirty = !!saved && enabled !== saved.enabled;
+  const ready = dirty && reason.trim().length >= 5 && online && !saving;
   const save = async () => {
     if (!supabase || !saved || !ready) return;
     const turningOff = saved.enabled && !enabled;
     const ok = await confirmAction(enabled ? (saved.enabled ? 'حفظ التغييرات؟' : 'تفعيل العرض؟') : 'إيقاف العرض؟', enabled ? 'الزبائن بيقدروا يكسبوا نقاط ويستخدموها.' : 'ما بتنحسب نقاط جديدة وما بيقدر الزبائن يستخدموا نقاطهم. الطلبات الجارية ما بتتأثر.', turningOff ? 'إيقاف' : 'تأكيد');
     if (!ok) return;
     setSaving(true);
-    const { error } = await supabase.rpc('set_loyalty_offer', { p_enabled: enabled, p_coming_soon_text: text.trim(), p_reason: reason.trim() });
+    const { error } = await supabase.rpc('set_loyalty_offer', { p_enabled: enabled, p_coming_soon_text: OFFER_COMING_SOON, p_reason: reason.trim() });
     setSaving(false);
     if (error) { setMessage('ما انحفظ التغيير. تأكد من صلاحية المدير ومن الاتصال.'); await load(); return; }
     setReason(''); setMessage(enabled ? 'العرض شغّال: الزبائن بيقدروا يستخدموا نقاطهم.' : 'العرض موقوف: ظهرت رسالة "عروض قادمة" عند الزبائن.'); await load();
@@ -2495,10 +2494,6 @@ function AdminOffersSection() {
       <Switch value={enabled} disabled={!saved || saving} onValueChange={setEnabled} accessibilityLabel="تفعيل عرض نقاط لَبّيك" trackColor={{ false: color.border, true: color.primary }} thumbColor="#FFFFFF" />
     </View>
     <Text style={{ color: color.muted, fontSize: 12, lineHeight: 19, textAlign: 'right' }}>{enabled ? 'وقت التفعيل: الزبون بيكسب نقطة مع كل طلب بيوصله وبيقدر يستخدم نقاطه للخصم.' : 'وقت الإيقاف: ما بتنضاف نقاط جديدة، وما بيقدر الزبون يستخدم نقاطه بطلب جديد، وبتظهر له رسالة "عروض قادمة". الطلبات اللي فيها خصم بتحتفظ فيه.'}</Text>
-    <View style={{ gap: 6 }}>
-      <Text style={{ color: color.text, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>نص "عروض قادمة" (بيظهر للزبون وقت الإيقاف)</Text>
-      <TextInput value={text} onChangeText={(value) => setText(value.slice(0, 300))} editable={!!saved && !saving} maxLength={300} style={input} accessibilityLabel="نص عروض قادمة" />
-    </View>
     {dirty ? <View style={{ gap: 6 }}>
       <Text style={{ color: color.text, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>سبب التغيير (5 أحرف على الأقل)</Text>
       <TextInput value={reason} onChangeText={(value) => setReason(value.slice(0, 500))} editable={!saving} placeholder="مثال: إطلاق عرض النقاط" placeholderTextColor={color.muted} maxLength={500} style={input} accessibilityLabel="سبب التغيير" />
@@ -3128,13 +3123,23 @@ function AdminOrdersTab({ userId, active, onBadge, onDetail, focusOrderId, onFoc
   </SafeAreaView>;
 }
 
+/** The fixed message customers see while the offer is off (the DB column is kept for compatibility). */
+const OFFER_COMING_SOON = 'ترقبوا عروضاً جديدة قريباً.';
+
 /** The highest loyalty discount tier a balance can use (3/4/5 points = 20/30/40%). */
 const bestLoyaltyTier = (balance: number): 0 | 3 | 4 | 5 => balance >= 5 ? 5 : balance >= 4 ? 4 : balance >= 3 ? 3 : 0;
 
-function OffersScreen({ balance, enabled, comingSoon, onBack }: { balance: number; lifetime?: number; enabled: boolean; comingSoon: string; onBack: () => void }) {
+function OffersScreen({ balance, enabled, onBack }: { balance: number; lifetime?: number; enabled: boolean; onBack: () => void }) {
   const { colors: c, styles: s } = useMobileTheme();
   const shimmer = useRef(new Animated.Value(0)).current;
   const twinkle = useRef(new Animated.Value(0)).current;
+  const spin = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (enabled || reduceMotion) return;
+    const turn = Animated.loop(Animated.timing(spin, { toValue: 1, duration: 18000, easing: Easing.linear, useNativeDriver: true }));
+    turn.start();
+    return () => turn.stop();
+  }, [enabled, spin]);
   const [cardWidth, setCardWidth] = useState(320);
   useEffect(() => {
     if (!enabled || reduceMotion) return;
@@ -3174,9 +3179,13 @@ function OffersScreen({ balance, enabled, comingSoon, onBack }: { balance: numbe
   </View>;
   if (!enabled) {
     return <View style={{ gap: 12 }}>{header}
-      <View style={[card, { flexDirection: 'row-reverse', alignItems: 'center', gap: 12 }]}>
-        <View style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface }}><SymbolView name={{ ios: 'clock', android: 'schedule', web: 'schedule' }} tintColor={c.primary} size={22} /></View>
-        <View style={{ flex: 1, gap: 2 }}><Text style={[heading, { fontSize: 16 }]}>عروض قادمة</Text><Text style={body}>{comingSoon}</Text></View>
+      <View style={{ alignItems: 'center', gap: 12, paddingTop: 56, paddingBottom: 56, paddingHorizontal: 10 }}>
+        <View style={{ width: 96, height: 96, alignItems: 'center', justifyContent: 'center' }}>
+          <Animated.View pointerEvents="none" style={{ position: 'absolute', width: 114, height: 114, borderRadius: 57, borderWidth: 1, borderStyle: 'dashed', borderColor: c.border, transform: [{ rotate: spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }] }} />
+          <View style={{ width: 96, height: 96, borderRadius: 48, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface, borderWidth: 1, borderColor: c.border }}><SymbolView name={{ ios: 'gift.fill', android: 'redeem', web: 'redeem' }} tintColor={c.primary} size={42} /></View>
+        </View>
+        <Text style={{ color: c.text, fontSize: 22, fontWeight: '900', textAlign: 'center', marginTop: 12 }}>عروض قادمة</Text>
+        <Text style={{ color: c.muted, fontSize: 14, lineHeight: 25, textAlign: 'center', maxWidth: 270 }}>{OFFER_COMING_SOON}</Text>
       </View>
     </View>;
   }
@@ -3219,7 +3228,6 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   const [offerLoaded, setOfferLoaded] = useState(false);
   const [loyaltyLoaded, setLoyaltyLoaded] = useState(false);
   const attemptedKey = useRef<string | null>(null);
-  const [offerComingSoon, setOfferComingSoon] = useState('ترقبوا عروضاً جديدة قريباً.');
   // Only judge the saved choice once the real offer state and balance are known, never against the initial defaults.
   useEffect(() => {
     if (!offerLoaded || loyaltyPointsSelected === 0) return;
@@ -3430,8 +3438,8 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     const { data, error } = await supabase.from('orders').select('id,is_urgent,status,request_text,delivery_fee_minor,delivery_quote_set_at,delivery_quote_approved_at,purchase_amount_minor,purchase_approved_at,created_at,driver_id,delivered_at,delivery_proof_path,loyalty_points_redeemed,loyalty_discount_minor').order('created_at', { ascending: false }).limit(30);
     const loyalty = await supabase.from('customer_loyalty_accounts').select('points_balance,lifetime_points_earned').eq('customer_id',userId).maybeSingle();
     if (!loyalty.error) { if (loyalty.data) { setLoyaltyBalance(loyalty.data.points_balance); setLifetimePointsEarned(loyalty.data.lifetime_points_earned); } setLoyaltyLoaded(true); }
-    const offer = await supabase.from('app_offers').select('loyalty_enabled,coming_soon_text').eq('id',1).maybeSingle();
-    if (!offer.error && offer.data) { setOfferEnabled(offer.data.loyalty_enabled); setOfferComingSoon(offer.data.coming_soon_text); setOfferLoaded(true); }
+    const offer = await supabase.from('app_offers').select('loyalty_enabled').eq('id',1).maybeSingle();
+    if (!offer.error && offer.data) { setOfferEnabled(offer.data.loyalty_enabled); setOfferLoaded(true); }
     if (error) return null;
     const rows = data ?? [];
     const overdue = rows.some((order) => order.status === 'searching' && !!order.delivery_quote_set_at && Date.now() - Date.parse(order.delivery_quote_set_at) >= 15 * 60 * 1000);
@@ -3634,7 +3642,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       <View style={s.header}><View style={s.brand}><View style={s.brandMark}><Image source={require('../../assets/images/labbayk-delivery-logo.png')} style={s.brandLogo} contentFit="contain" accessibilityLabel="شعار لَبّيك"/></View><View><Text style={s.brandName}>لَبّيك</Text><Text style={s.brandTag}>اطلب، والباقي علينا.</Text></View></View><View style={s.headerActions}><Pressable onPress={() => navigate('profile')} style={s.accountAvatar} accessibilityRole="button" accessibilityLabel="فتح حسابي">{profileAvatarUrl ? <Image source={avatarSource(profileAvatarUrl, profileAvatarPath)} cachePolicy="memory-disk" style={s.avatarImage} contentFit="cover" accessibilityLabel="صورة الحساب"/> : <Text style={s.accountAvatarText}>{accountInitial}</Text>}</Pressable></View></View>
       <KeyboardScroll ref={bodyScrollRef} style={s.bodyScroll} contentContainerStyle={s.content} refreshControl={<RefreshControl refreshing={pullRefreshing} onRefresh={() => void pullRefresh()} tintColor={c.primary} colors={[c.primary]} progressBackgroundColor={c.surface} />}>
       <StaggeredSections transitionKey={`${tab}-${tab === 'orders' && ordersLoading ? 'loading' : 'ready'}`}>
-      {tab === 'offers' ? <EntranceSection transitionKey={tab}><OffersScreen balance={loyaltyBalance} lifetime={lifetimePointsEarned} enabled={offerEnabled} comingSoon={offerComingSoon} onBack={goBack} /></EntranceSection> : tab === 'addresses' ? <EntranceSection transitionKey={tab}><AddressBook userId={userId} onBack={goBack} backLabel={`العودة إلى ${tabHistory[tabHistory.length - 1] === 'profile' ? 'حسابي' : 'الرئيسية'}`} onAddressSaved={(address) => { addressIdRef.current = address.id; setAddressId(address.id); setAddressSummary(`${address.label} · ${address.neighborhood}`); setSelectedAddress(address); }} /></EntranceSection> : tab === 'home' && !homeSettled ? <CustomerHomeSkeleton /> : tab === 'home' ? <>
+      {tab === 'offers' ? <EntranceSection transitionKey={tab}><OffersScreen balance={loyaltyBalance} lifetime={lifetimePointsEarned} enabled={offerEnabled} onBack={goBack} /></EntranceSection> : tab === 'addresses' ? <EntranceSection transitionKey={tab}><AddressBook userId={userId} onBack={goBack} backLabel={`العودة إلى ${tabHistory[tabHistory.length - 1] === 'profile' ? 'حسابي' : 'الرئيسية'}`} onAddressSaved={(address) => { addressIdRef.current = address.id; setAddressId(address.id); setAddressSummary(`${address.label} · ${address.neighborhood}`); setSelectedAddress(address); }} /></EntranceSection> : tab === 'home' && !homeSettled ? <CustomerHomeSkeleton /> : tab === 'home' ? <>
       {tab === 'home' && activeCustomerOrders.length > 0 && <Pressable onPress={() => { setOrderFilter('live'); navigate('orders'); }} accessibilityRole="button" accessibilityLabel={activeCustomerOrders.length === 1 ? `${bannerLabels[activeCustomerOrders[0].status] ?? 'طلبك جارٍ'}. تتبّع الطلب` : `لديك ${activeCustomerOrders.length} طلبات جارية. عرض`} style={{ backgroundColor: c.surface, borderColor: '#3F6A2E', borderWidth: 1, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, gap: 8, marginBottom: 10 }}>
         <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 9 }}>
           <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: '#B7FF30', shadowColor: '#B7FF30', shadowOpacity: 0.6, shadowRadius: 5, shadowOffset: { width: 0, height: 0 } }} />
@@ -3778,7 +3786,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
         </View>
         <View style={s.profileSectionCard}>
           <View style={[s.profileSectionHeading,{flexDirection:'row'}]}><Text style={[s.profileSectionTitle,{flex:0}]}>نقاط لَبّيك</Text><View style={s.profileHeadingIcon}><SymbolView name={{ios:'star.fill',android:'stars',web:'stars'}} tintColor={c.primary} size={20}/></View></View>
-          {offerLoaded && !offerEnabled && <Text style={{color:c.muted,fontSize:13,lineHeight:21,textAlign:'right'}}>{offerComingSoon}</Text>}
+          {offerLoaded && !offerEnabled && <Text style={{color:c.muted,fontSize:13,lineHeight:21,textAlign:'right'}}>{OFFER_COMING_SOON}</Text>}
           {offerEnabled && <View style={{flexDirection:'row-reverse',alignItems:'center',justifyContent:'space-between',paddingVertical:5}}><Text style={{color:c.text,fontSize:26,fontWeight:'900'}}>{numberFormatter.format(loyaltyBalance)} نقطة</Text><Text style={{color:c.muted,fontSize:12,fontWeight:'700'}}>جمعت {numberFormatter.format(lifetimePointsEarned)} نقطة</Text></View>}
           {offerEnabled && <Text style={{color:c.muted,fontSize:12.5,lineHeight:20,textAlign:'right',marginTop:4}}>بتكسب نقطة مع كل طلب مكتمل. استخدم رصيدك الكامل لخصم 20% عند 3 نقاط، أو 30% عند 4، أو 40% عند 5 نقاط، من أجرة التوصيل.</Text>}
           <Pressable onPress={() => navigate('offers')} style={[s.profileSectionAction, s.profileSectionActionPrimary]} accessibilityRole="button"><Text style={[s.profileSectionActionText, s.profileSectionActionTextPrimary]}>{offerEnabled ? 'كيف بتشتغل النقاط والعروض' : 'شوف العروض'}</Text></Pressable>

@@ -465,36 +465,37 @@ function PricingPanel() {
   }
   return <><div className="connection-card"><div className="connection-symbol">◈</div><div><strong>تسعير الطلبات</strong><p>حدد أجرة كل طلب من قائمة الطلبات، ثم اسنده لسائق أو أرسله للسائقين المتاحين.</p></div><span className="connection-tag">لكل طلب</span></div>{message && <p className="form-feedback" role="status">{message}</p>}{loading && <LoadingSkeleton rows={3}/>}<div className="pricing-layout"><section className="panel pricing-global"><div className="panel-heading"><div><h2>عمولة لَبّيك</h2><p>{commissionVersion === null ? 'غير مضبوطة؛ توزيع الطلبات متوقف حتى تحدد النسبة.' : 'النسبة الحالية ' + commissionRate + '% · إصدار ' + commissionVersion}</p></div></div><form className="zone-form" onSubmit={(event) => void saveCommission(event)}><label>نسبة العمولة<input type="number" min="0" max="50" step="0.01" value={commissionRate} onChange={(event) => setCommissionRate(event.target.value)} placeholder="مثال: 10" required /></label><label>سبب التغيير<input value={commissionReason} onChange={(event) => setCommissionReason(event.target.value)} placeholder="مثال: اعتماد نسبة العمولة" minLength={5} maxLength={500} required /></label><button className="primary-button create-button" disabled={loading||busy==='commission'}>{busy==='commission'?'عم نحفظ…':'حفظ نسبة العمولة'} <span>←</span></button><p className="field-hint">تُسجل العمولة المستحقة بعد اكتمال الطلب، ويسددها السائق للإدارة لاحقاً.</p></form></section></div><section className="panel pricing-audit"><div className="panel-heading"><div><h2>سجل تغييرات الأسعار</h2><p>آخر 20 تغييراً مع القيمة السابقة والجديدة والسبب.</p></div></div>{audit.length ? audit.map((item) => <article className="audit-entry" key={item.id}><div><strong>{item.entity_type==='commission_policy'?'نسبة العمولة':item.entity_type==='global_delivery_pricing'?'الرسم المرجعي':'رسم المنطقة'}</strong><small>{item.entity_id} · {shortDateTimeFormatter.format(new Date(item.created_at))}</small><p>{item.reason}</p></div><div className="audit-values"><span>قبل: {JSON.stringify(item.before_data)}</span><span>بعد: {JSON.stringify(item.after_data)}</span></div></article>) : <div className="zone-empty"><p>ما في تغييرات مسجلة.</p></div>}</section></>
 }
+/** The fixed message customers see while the offer is off (the DB column is kept for compatibility). */
+const OFFER_COMING_SOON = 'ترقبوا عروضاً جديدة قريباً.'
 function OffersPanel() {
   const [enabled, setEnabled] = useState(true)
-  const [saved, setSaved] = useState<{ enabled: boolean; text: string } | null>(null)
-  const [comingSoon, setComingSoon] = useState('')
+  const [saved, setSaved] = useState<{ enabled: boolean } | null>(null)
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useToastMessage()
   const load = useCallback(async () => {
     if (!supabase) { setLoading(false); return }
-    const { data, error } = await supabase.from('app_offers').select('loyalty_enabled,coming_soon_text').eq('id', 1).maybeSingle()
+    const { data, error } = await supabase.from('app_offers').select('loyalty_enabled').eq('id', 1).maybeSingle()
     if (error || !data) { setMessage('ما قدرنا نحمّل إعدادات العروض.'); setLoading(false); return }
-    setSaved({ enabled: data.loyalty_enabled, text: data.coming_soon_text }); setEnabled(data.loyalty_enabled); setComingSoon(data.coming_soon_text); setLoading(false)
+    setSaved({ enabled: data.loyalty_enabled }); setEnabled(data.loyalty_enabled); setLoading(false)
   }, [setMessage])
   useEffect(() => { void load() }, [load])
-  const dirty = !!saved && (enabled !== saved.enabled || comingSoon.trim() !== saved.text)
+  const dirty = !!saved && enabled !== saved.enabled
   const save = async (event: FormEvent) => {
     event.preventDefault(); if (!supabase || !dirty) return
-    if (comingSoon.trim().length < 1 || reason.trim().length < 5) { setMessage('اكتب نص "عروض قادمة" وسبباً واضحاً للتغيير.'); return }
+    if (reason.trim().length < 5) { setMessage('اكتب سبباً واضحاً للتغيير.'); return }
     if (!window.confirm(enabled ? 'تفعيل العرض؟ الزبائن بيرجعوا يكسبوا نقاط ويستخدموها.' : 'إيقاف العرض؟ ما بتنحسب نقاط جديدة وما بيقدر الزبائن يستخدموا نقاطهم. الطلبات الجارية ما بتتأثر.')) return
     setBusy(true); setMessage('')
     try {
-      const { error } = await supabase.rpc('set_loyalty_offer', { p_enabled: enabled, p_coming_soon_text: comingSoon.trim(), p_reason: reason.trim() })
+      const { error } = await supabase.rpc('set_loyalty_offer', { p_enabled: enabled, p_coming_soon_text: OFFER_COMING_SOON, p_reason: reason.trim() })
       if (error) { setMessage('ما انحفظ التغيير. تأكد من صلاحية المدير.'); await load(); return }
       setReason(''); setMessage(enabled ? 'العرض شغّال: الزبائن بيقدروا يستخدموا نقاطهم للخصم.' : 'العرض موقوف: انخفى الخصم عن الزبائن وبيظهر لهم نص "عروض قادمة".'); await load()
     } catch {
       setMessage('ما في اتصال. ما انحفظ التغيير.')
     } finally { setBusy(false) }
   }
-  return <><div className="connection-card"><div className="connection-symbol">★</div><div><strong>عروض لَبّيك</strong><p>فعّل نظام النقاط والخصم أو أوقفه. وقت الإيقاف ما بتنحسب نقاط جديدة ولا بيتطبق خصم.</p></div><span className="connection-tag">{saved ? (saved.enabled ? 'شغّال' : 'موقوف') : '…'}</span></div>{message && <p className="form-feedback" role="status">{message}</p>}{loading && <LoadingSkeleton rows={2}/>}<section className="panel pricing-global"><div className="panel-heading"><div><h2>خصم نقاط لَبّيك</h2><p>{(saved?.enabled ?? enabled) ? 'الخصم مفعّل: 3 نقاط = 20% · 4 نقاط = 30% · 5 نقاط = 40% من أجرة التوصيل.' : 'النظام موقوف: ما بتنحسب نقاط جديدة وما بيقدر الزبون يستخدم نقاطه.'}</p></div></div><form className="zone-form" onSubmit={(event) => void save(event)}><label><span>حالة العرض</span><select value={enabled ? 'on' : 'off'} onChange={(event) => setEnabled(event.target.value === 'on')} disabled={loading}><option value="on">مفعّل</option><option value="off">موقوف</option></select></label><label>نص "عروض قادمة" (يظهر للزبون عند الإيقاف)<input value={comingSoon} onChange={(event) => setComingSoon(event.target.value)} maxLength={300} required disabled={loading} /></label><label>سبب التغيير<input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="مثال: إطلاق عرض النقاط" minLength={5} maxLength={500} required disabled={loading} /></label><button className="primary-button create-button" disabled={loading || busy || !dirty}>{busy ? 'عم نحفظ…' : 'حفظ'} <span>←</span></button><p className="field-hint">وقت الإيقاف: ما بتنكسب نقاط جديدة وما بيقدر الزبون يستخدم نقاطه. الطلبات اللي انعملت وفيها خصم بتحتفظ فيه، والإلغاء بيرجّع النقاط المستخدمة. استخدام النقاط بيستهلك كامل رصيد الزبون.</p></form></section></>
+  return <><div className="connection-card"><div className="connection-symbol">★</div><div><strong>عروض لَبّيك</strong><p>فعّل نظام النقاط والخصم أو أوقفه. وقت الإيقاف ما بتنحسب نقاط جديدة ولا بيتطبق خصم.</p></div><span className="connection-tag">{saved ? (saved.enabled ? 'شغّال' : 'موقوف') : '…'}</span></div>{message && <p className="form-feedback" role="status">{message}</p>}{loading && <LoadingSkeleton rows={2}/>}<section className="panel pricing-global"><div className="panel-heading"><div><h2>خصم نقاط لَبّيك</h2><p>{(saved?.enabled ?? enabled) ? 'الخصم مفعّل: 3 نقاط = 20% · 4 نقاط = 30% · 5 نقاط = 40% من أجرة التوصيل.' : 'النظام موقوف: ما بتنحسب نقاط جديدة وما بيقدر الزبون يستخدم نقاطه.'}</p></div></div><form className="zone-form" onSubmit={(event) => void save(event)}><label><span>حالة العرض</span><select value={enabled ? 'on' : 'off'} onChange={(event) => setEnabled(event.target.value === 'on')} disabled={loading}><option value="on">مفعّل</option><option value="off">موقوف</option></select></label><label>سبب التغيير<input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="مثال: إطلاق عرض النقاط" minLength={5} maxLength={500} required disabled={loading} /></label><button className="primary-button create-button" disabled={loading || busy || !dirty}>{busy ? 'عم نحفظ…' : 'حفظ'} <span>←</span></button><p className="field-hint">وقت الإيقاف: ما بتنكسب نقاط جديدة وما بيقدر الزبون يستخدم نقاطه. الطلبات اللي انعملت وفيها خصم بتحتفظ فيه، والإلغاء بيرجّع النقاط المستخدمة. استخدام النقاط بيستهلك كامل رصيد الزبون.</p></form></section></>
 }
 function SettlementPanel() {
   type Driver = Pick<Database['public']['Tables']['driver_profiles']['Row'],'user_id'|'review_status'>
