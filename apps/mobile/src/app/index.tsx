@@ -1671,7 +1671,7 @@ function SignedInHome({ userId, email, inviteToken, openOrderId, onSignOut, them
   return <DriverWorkspace userId={userId} email={email} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
 }
 
-type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'customer_id'|'address_id'|'delivered_at'|'delivery_proof_path'|'purchase_amount_minor'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'created_at'|'cash_collected_minor'|'delivery_note'|'loyalty_points_redeemed'|'loyalty_discount_minor'|'shopping_admin_alerted_at'|'delivery_admin_alerted_at'> & { is_urgent?: boolean };
+type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'loyalty_discount_tier_points'|'id'|'customer_id'|'address_id'|'delivered_at'|'delivery_proof_path'|'purchase_amount_minor'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'created_at'|'cash_collected_minor'|'delivery_note'|'loyalty_points_redeemed'|'loyalty_discount_minor'|'shopping_admin_alerted_at'|'delivery_admin_alerted_at'> & { is_urgent?: boolean };
 type AdminMobileDriver = Pick<Database['public']['Tables']['driver_profiles']['Row'], 'user_id'|'vehicle_description'>;
 
 const pickupPrefix = 'الشراء من: ';
@@ -2466,7 +2466,7 @@ function AdminOffersSection() {
   const load = useCallback(async () => {
     if (!supabase) return;
     const { data, error } = await supabase.from('app_offers').select('loyalty_enabled,coming_soon_text').eq('id', 1).maybeSingle();
-    if (error || !data) return;
+    if (error || !data) { setMessage('ما قدرنا نحمّل إعدادات العروض.'); return; }
     setSaved({ enabled: data.loyalty_enabled, text: data.coming_soon_text }); setEnabled(data.loyalty_enabled); setText(data.coming_soon_text);
   }, []);
   useEffect(() => { void load(); }, [load]);
@@ -2480,7 +2480,7 @@ function AdminOffersSection() {
     setSaving(true);
     const { error } = await supabase.rpc('set_loyalty_offer', { p_enabled: enabled, p_coming_soon_text: text.trim(), p_reason: reason.trim() });
     setSaving(false);
-    if (error) { setMessage('ما انحفظ التغيير. تأكد من صلاحية المدير ومن الاتصال.'); return; }
+    if (error) { setMessage('ما انحفظ التغيير. تأكد من صلاحية المدير ومن الاتصال.'); await load(); return; }
     setReason(''); setMessage(enabled ? 'العرض شغّال: الزبائن بيقدروا يستخدموا نقاطهم.' : 'العرض موقوف: ظهرت رسالة "عروض قادمة" عند الزبائن.'); await load();
   };
   const input = { color: color.text, backgroundColor: color.background, borderColor: color.border, borderWidth: 1, borderRadius: 13, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, textAlign: 'right' } as const;
@@ -2674,7 +2674,7 @@ function AdminOrdersTab({ userId, active, onBadge, onDetail, focusOrderId, onFoc
         void supabase.rpc('flag_unanswered_orders').then(() => undefined, () => undefined);
       }
       const [orderResult, driverResult, disputeResult, nameMap] = await Promise.all([
-        supabase.from('orders').select('id,is_urgent,customer_id,address_id,delivered_at,delivery_proof_path,purchase_amount_minor,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,created_at,cash_collected_minor,delivery_note,loyalty_points_redeemed,loyalty_discount_minor,shopping_admin_alerted_at,delivery_admin_alerted_at').order('created_at', { ascending: false }).limit(150),
+        supabase.from('orders').select('id,is_urgent,customer_id,address_id,delivered_at,delivery_proof_path,purchase_amount_minor,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,created_at,cash_collected_minor,delivery_note,loyalty_points_redeemed,loyalty_discount_minor,loyalty_discount_tier_points,shopping_admin_alerted_at,delivery_admin_alerted_at').order('created_at', { ascending: false }).limit(150),
         supabase.from('driver_profiles').select('user_id,vehicle_description').eq('review_status', 'approved').eq('is_online', true).order('created_at'),
         supabase.from('order_disputes').select('order_id').is('resolved_at', null),
         loadAdminNames(),
@@ -2991,7 +2991,7 @@ function AdminOrdersTab({ userId, active, onBadge, onDetail, focusOrderId, onFoc
               <Pressable onPress={() => setMode('driver')} accessibilityRole="radio" accessibilityState={{ selected: mode === 'driver' }} style={segment(mode === 'driver')}><Text style={{ color: mode === 'driver' ? color.background : color.text, fontSize: 13.5, fontWeight: '800' }}>سائق محدد</Text></Pressable>
             </View>
             {mode === 'driver' && (drivers.length ? <View style={{ gap: 6 }}>{drivers.map((driver) => { const on = driverId === driver.user_id; return <Pressable key={driver.user_id} onPress={() => setDriverId(driver.user_id)} accessibilityRole="radio" accessibilityState={{ selected: on }} style={{ flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 46, paddingHorizontal: 11, borderRadius: 12, borderWidth: 1, borderColor: on ? color.primary : color.border, backgroundColor: on ? color.raised : color.surface }}><Text style={{ fontSize: 15 }}>{on ? '✅' : '🛵'}</Text><Text style={{ flex: 1, color: color.text, fontSize: 13.5, fontWeight: '800', textAlign: 'left' }}>{nameOf(driver.user_id)}</Text><Text style={{ color: color.muted, fontSize: 12 }}>{driver.vehicle_description || 'بدون وصف'}</Text></Pressable>; })}</View> : <Text style={{ color: '#F0CC83', fontSize: 13, textAlign: 'left' }}>ما في سائق متاح حالياً. فيك ترسل للجميع لما يتوفر سائق.</Text>)}
-          <Text style={{ color: color.muted, fontSize: 12.5, lineHeight: 20, textAlign: 'left' }}>الزبون بيدفع ثمن المشتريات + أجرة التوصيل{Number(fee) > 0 ? ` (${numberFormatter.format(Number(fee))} ل.س)` : ''}.</Text>
+          <Text style={{ color: color.muted, fontSize: 12.5, lineHeight: 20, textAlign: 'left' }}>{(() => { const tier = sheet?.loyalty_discount_tier_points ?? 0; const pct = tier === 5 ? 40 : tier === 4 ? 30 : tier === 3 ? 20 : 0; const f = Number(fee) || 0; const disc = pct > 0 ? Math.min(f, Math.floor(f * pct / 100 + 0.5)) : 0; return pct > 0 ? `الزبون استخدم نقاطه: خصم ${pct}% من الأجرة${f > 0 ? ` = ${numberFormatter.format(disc)} ل.س، فبيدفع من الأجرة ${numberFormatter.format(f - disc)} ل.س` : ''}. عمولة لَبّيك بتنحسب على الأجرة كاملة.` : `الزبون بيدفع ثمن المشتريات + أجرة التوصيل${f > 0 ? ` (${numberFormatter.format(f)} ل.س)` : ''}.`; })()}</Text>
           </ScrollView>
           <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 18 + insets.bottom, borderTopWidth: 1, borderTopColor: color.border }}>
             <Pressable disabled={busy || !online} onPress={() => void priceAndRoute()} accessibilityRole="button" style={{ minHeight: 54, borderRadius: 17, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', opacity: busy || !online ? 0.55 : 1 }}><Text style={{ color: color.background, fontSize: 16, fontWeight: '900' }}>{busy ? 'عم نحفظ ونرسل…' : mode === 'driver' ? (chosenDriver ? `تحديد الأجرة وإسناد ${nameOf(chosenDriver.user_id)}` : 'تحديد الأجرة وإسناد السائق') : 'تحديد الأجرة وإرسال للجميع'}</Text></Pressable>
@@ -3051,7 +3051,7 @@ function AdminOrdersTab({ userId, active, onBadge, onDetail, focusOrderId, onFoc
           {row('أجرة التوصيل قبل الخصم', numberFormatter.format(order.delivery_fee_minor) + ' ل.س')}
           {order.loyalty_discount_minor > 0 ? row('خصم نقاط لَبّيك', '− ' + numberFormatter.format(order.loyalty_discount_minor) + ' ل.س') : null}
           {order.loyalty_discount_minor > 0 ? row('أجرة التوصيل بعد الخصم', numberFormatter.format(order.delivery_fee_minor - order.loyalty_discount_minor) + ' ل.س') : null}
-          {row('المبلغ المستلم', total === null ? '—' : numberFormatter.format(total) + ' ل.س', color.primary)}
+          {row(collected == null ? 'المطلوب من الزبون' : 'المبلغ المستلم', total === null ? '—' : numberFormatter.format(total) + ' ل.س', color.primary)}
         </View> : null}
         <Pressable onPress={() => openSheet(order)} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: color.border, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: color.text, fontSize: 14.5, fontWeight: '900' }}>فتح تفاصيل الطلب</Text></Pressable>
       </View> : null}
