@@ -2454,6 +2454,59 @@ function AdminInvitesSection() {
   </View>;
 }
 
+function AdminOffersSection() {
+  const { colors: color } = useMobileTheme();
+  const online = useInternetAvailable();
+  const [, setMessage] = useToastMessage();
+  const [saved, setSaved] = useState<{ enabled: boolean; text: string } | null>(null);
+  const [enabled, setEnabled] = useState(true);
+  const [text, setText] = useState('');
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+  const load = useCallback(async () => {
+    if (!supabase) return;
+    const { data, error } = await supabase.from('app_offers').select('loyalty_enabled,coming_soon_text').eq('id', 1).maybeSingle();
+    if (error || !data) return;
+    setSaved({ enabled: data.loyalty_enabled, text: data.coming_soon_text }); setEnabled(data.loyalty_enabled); setText(data.coming_soon_text);
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  const dirty = !!saved && (enabled !== saved.enabled || text.trim() !== saved.text);
+  const ready = dirty && text.trim().length >= 1 && reason.trim().length >= 5 && online && !saving;
+  const save = async () => {
+    if (!supabase || !saved || !ready) return;
+    const turningOff = saved.enabled && !enabled;
+    const ok = await confirmAction(enabled ? (saved.enabled ? 'حفظ التغييرات؟' : 'تفعيل العرض؟') : 'إيقاف العرض؟', enabled ? 'الزبائن بيقدروا يكسبوا نقاط ويستخدموها.' : 'ما بتنحسب نقاط جديدة وما بيقدر الزبائن يستخدموا نقاطهم. الطلبات الجارية ما بتتأثر.', turningOff ? 'إيقاف' : 'تأكيد');
+    if (!ok) return;
+    setSaving(true);
+    const { error } = await supabase.rpc('set_loyalty_offer', { p_enabled: enabled, p_coming_soon_text: text.trim(), p_reason: reason.trim() });
+    setSaving(false);
+    if (error) { setMessage('ما انحفظ التغيير. تأكد من صلاحية المدير ومن الاتصال.'); return; }
+    setReason(''); setMessage(enabled ? 'العرض شغّال: الزبائن بيقدروا يستخدموا نقاطهم.' : 'العرض موقوف: ظهرت رسالة "عروض قادمة" عند الزبائن.'); await load();
+  };
+  const input = { color: color.text, backgroundColor: color.background, borderColor: color.border, borderWidth: 1, borderRadius: 13, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, textAlign: 'right' } as const;
+  return <View style={{ backgroundColor: color.surface, borderColor: enabled ? color.primary : color.border, borderWidth: 1, borderRadius: 20, padding: 14, gap: 12 }}>
+    <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10 }}>
+      <View style={{ width: 40, height: 40, borderRadius: 13, backgroundColor: color.raised, alignItems: 'center', justifyContent: 'center' }}><SymbolView name={{ ios: 'star.fill', android: 'stars', web: 'stars' }} tintColor={color.primary} size={20} /></View>
+      <View style={{ flex: 1, alignItems: 'flex-start' }}><Text style={{ color: color.text, fontSize: 15.5, fontWeight: '900', textAlign: 'right' }}>عروض لَبّيك</Text><Text style={{ color: color.muted, fontSize: 12, textAlign: 'right', marginTop: 2 }}>خصم النقاط: 3 نقاط = 20%، 4 = 30%، 5 = 40% من أجرة التوصيل</Text></View>
+      {saved ? <AdminPill label={saved.enabled ? 'شغّال' : 'موقوف'} tone={saved.enabled ? 'ok' : 'mute'} /> : null}
+    </View>
+    <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', backgroundColor: color.raised, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 8 }}>
+      <Text style={{ color: color.text, fontSize: 14, fontWeight: '800' }}>تفعيل العرض</Text>
+      <Switch value={enabled} disabled={!saved || saving} onValueChange={setEnabled} accessibilityLabel="تفعيل عرض نقاط لَبّيك" trackColor={{ false: color.border, true: color.primary }} thumbColor="#FFFFFF" />
+    </View>
+    <Text style={{ color: color.muted, fontSize: 12, lineHeight: 19, textAlign: 'right' }}>{enabled ? 'وقت التفعيل: الزبون بيكسب نقطة مع كل طلب بيوصله وبيقدر يستخدم نقاطه للخصم.' : 'وقت الإيقاف: ما بتنضاف نقاط جديدة، وما بيقدر الزبون يستخدم نقاطه بطلب جديد، وبتظهر له رسالة "عروض قادمة". الطلبات اللي فيها خصم بتحتفظ فيه.'}</Text>
+    <View style={{ gap: 6 }}>
+      <Text style={{ color: color.text, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>نص "عروض قادمة" (بيظهر للزبون وقت الإيقاف)</Text>
+      <TextInput value={text} onChangeText={(value) => setText(value.slice(0, 300))} editable={!!saved && !saving} maxLength={300} style={input} accessibilityLabel="نص عروض قادمة" />
+    </View>
+    {dirty ? <View style={{ gap: 6 }}>
+      <Text style={{ color: color.text, fontSize: 12.5, fontWeight: '800', textAlign: 'right' }}>سبب التغيير (5 أحرف على الأقل)</Text>
+      <TextInput value={reason} onChangeText={(value) => setReason(value.slice(0, 500))} editable={!saving} placeholder="مثال: إطلاق عرض النقاط" placeholderTextColor={color.muted} maxLength={500} style={input} accessibilityLabel="سبب التغيير" />
+    </View> : null}
+    {dirty ? <Pressable disabled={!ready} onPress={() => void save()} accessibilityRole="button" style={{ minHeight: 50, borderRadius: 15, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', opacity: ready ? 1 : 0.45 }}>{saving ? <ActivityIndicator color={color.background} /> : <Text style={{ color: color.background, fontSize: 15, fontWeight: '900' }}>حفظ التغييرات</Text>}</Pressable> : null}
+  </View>;
+}
+
 function AdminMoreTab({ email, theme, onToggleTheme, onSignOut }: { email: string; theme: 'dark' | 'light'; onToggleTheme: () => void; onSignOut: () => void }) {
   const { colors: color } = useMobileTheme();
   const webOnly = ['التسعير ونسبة العمولة', 'المستخدمون وإيقاف الحسابات', 'مناطق الخدمة', 'التنبيهات'];
@@ -2467,6 +2520,7 @@ function AdminMoreTab({ email, theme, onToggleTheme, onSignOut }: { email: strin
   return <AdminTabShell title="المزيد" subtitle="الحساب والمظهر وباقي الأقسام">
     <View style={[box, { padding: 14, flexDirection: 'row-reverse', alignItems: 'center', gap: 12 }]}><View style={{ width: 58, height: 58, borderRadius: 20, backgroundColor: color.raised, borderWidth: 2, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' }}><SymbolView name={{ ios: 'person.crop.circle.fill', android: 'admin_panel_settings', web: 'admin_panel_settings' }} tintColor={color.primary} size={29} /></View><View style={{ flex: 1, alignItems: 'flex-start', minWidth: 0 }}><AdminPill label="حساب الإدارة" tone="ok" /><Text style={{ color: color.text, fontSize: 17, fontWeight: '900', textAlign: 'right', marginTop: 5 }}>مدير لَبّيك</Text><Text selectable numberOfLines={1} style={{ color: color.muted, fontSize: 12.5, textAlign: 'right', writingDirection: 'ltr', marginTop: 2 }}>{email}</Text></View></View>
     <AdminInvitesSection />
+    <AdminOffersSection />
     <View>{sectionHeading('إعدادات التطبيق', 'تحكم بالمظهر والجلسة', 'slider.horizontal.3', 'tune')}
     <View style={box}>
       {row('المظهر', `الوضع ${theme === 'dark' ? 'الداكن' : 'الفاتح'} · اضغط للتبديل`, 'circle.lefthalf.filled', 'contrast', onToggleTheme, undefined, <View style={{ width: 46, height: 27, borderRadius: 14, backgroundColor: theme === 'dark' ? color.primary : color.border, justifyContent: 'center', paddingHorizontal: 3 }}><View style={{ alignSelf: theme === 'dark' ? 'flex-start' : 'flex-end', width: 21, height: 21, borderRadius: 11, backgroundColor: '#F5F5F5' }} /></View>)}
