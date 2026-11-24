@@ -102,3 +102,9 @@ begin
   return new;
 end;
 $$;
+
+-- public.orders only exposes explicitly granted columns to clients. The loyalty
+-- columns added in 20261124073203 were never granted, so any client select that
+-- lists them fails with "permission denied". RLS still limits which rows are visible.
+grant select (loyalty_points_redeemed, loyalty_discount_minor, loyalty_discount_tier_points)
+  on public.orders to authenticated;
