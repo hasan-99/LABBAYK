@@ -3074,7 +3074,7 @@ function AdminOrdersTab({ userId, active, onBadge, onDetail, focusOrderId, onFoc
   </SafeAreaView>;
 }
 
-function OffersScreen({ balance, lifetime, enabled, comingSoon, onBack }: { balance: number; lifetime: number; enabled: boolean; comingSoon: string; onBack: () => void }) {
+function OffersScreen({ balance, enabled, comingSoon, onBack }: { balance: number; lifetime?: number; enabled: boolean; comingSoon: string; onBack: () => void }) {
   const { colors: c, styles: s } = useMobileTheme();
   const shimmer = useRef(new Animated.Value(0)).current;
   const twinkle = useRef(new Animated.Value(0)).current;
@@ -3099,13 +3099,21 @@ function OffersScreen({ balance, lifetime, enabled, comingSoon, onBack }: { bala
   const tiers = [{ points: 3, off: 20 }, { points: 4, off: 30 }, { points: 5, off: 40 }];
   const nextTier = tiers.find((tier) => balance < tier.points);
   const header = <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}><Text style={[s.pageTitle, { flex: 1 }]}>عروض لَبّيك</Text><Pressable onPress={onBack} style={[s.backNavigation, { alignSelf: 'auto', marginBottom: 0, marginLeft: 12 }]} accessibilityRole="button" accessibilityLabel="رجوع"><Text style={s.backNavigationText}>رجوع</Text></Pressable></View>;
-  const info = <View style={card}>
+  const howRows = [
+    { icon: { ios: 'bag.fill', android: 'shopping_bag', web: 'shopping_bag' } as const, text: 'كل طلب بيوصلك بيعطيك نقطة.' },
+    { icon: { ios: 'percent', android: 'percent', web: 'percent' } as const, text: '3 نقاط = 20%، 4 = 30%، 5 = 40% من أجرة التوصيل فقط، مو من سعر المشتريات.' },
+    { icon: { ios: 'arrow.counterclockwise', android: 'undo', web: 'undo' } as const, text: 'إذا انلغى الطلب، بترجعلك النقاط المستخدمة.' },
+  ];
+  const how = <View style={[card, { gap: 12 }]}>
     <Text style={heading}>كيف بتشتغل النقاط</Text>
-    <Text style={body}>١. بتكسب نقطة وحدة مع كل طلب بيوصلك.</Text>
-    <Text style={body}>٢. 3 نقاط = خصم 20%، 4 نقاط = 30%، 5 نقاط = 40%، والخصم على أجرة التوصيل فقط، مو على سعر المشتريات.</Text>
-    <Text style={body}>٣. بتختار الخصم وانت عم تكتب الطلب. الإدارة بتحدد الأجرة، وبعدها بينحسب الخصم عليها.</Text>
-    <Text style={body}>٤. انتبه: استخدام الخصم بيستهلك كامل رصيد نقاطك. مثلاً عندك 5 نقاط واخترت خصم 3 نقاط: بتستهلك الـ 5 وبتاخد 20%.</Text>
-    <Text style={body}>٥. إذا انلغى الطلب، بترجعلك النقاط المستخدمة.</Text>
+    {howRows.map((row) => <View key={row.text} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 12 }}>
+      <View style={{ width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface }}><SymbolView name={row.icon} tintColor={c.primary} size={20} /></View>
+      <Text style={[body, { flex: 1 }]}>{row.text}</Text>
+    </View>)}
+  </View>;
+  const warning = <View style={{ flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 10, padding: 12, borderRadius: 14, borderWidth: 1, borderColor: '#F6C76A', backgroundColor: 'rgba(246,199,106,0.12)' }}>
+    <SymbolView name={{ ios: 'exclamationmark.triangle.fill', android: 'warning', web: 'warning' }} tintColor="#F6C76A" size={22} />
+    <Text style={{ flex: 1, color: c.text, fontSize: 13, lineHeight: 21, textAlign: 'right' }}><Text style={{ color: '#F6C76A', fontWeight: '900' }}>انتبه: </Text>استخدام الخصم بيستهلك كامل رصيدك. مثال: عندك 5 نقاط واخترت خصم 3 نقاط: بتستهلك الـ 5 وبتاخد 20%.</Text>
   </View>;
   if (!enabled) {
     return <View style={{ gap: 12 }}>{header}
@@ -3113,25 +3121,34 @@ function OffersScreen({ balance, lifetime, enabled, comingSoon, onBack }: { bala
         <View style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface }}><SymbolView name={{ ios: 'clock', android: 'schedule', web: 'schedule' }} tintColor={c.primary} size={22} /></View>
         <View style={{ flex: 1, gap: 2 }}><Text style={[heading, { fontSize: 16 }]}>عروض قادمة</Text><Text style={body}>{comingSoon}</Text></View>
       </View>
-      {info}
+      {how}{warning}
     </View>;
   }
   const sweepX = shimmer.interpolate({ inputRange: [0, 1], outputRange: [cardWidth, -90] });
   const sparkle = (top: number, start: number, size: number) => <Animated.Text pointerEvents="none" style={{ position: 'absolute', top, left: start, fontSize: size, color: '#0B1411', opacity: twinkle.interpolate({ inputRange: [0, 1], outputRange: [0.15, 0.85] }) }}>✦</Animated.Text>;
   return <View style={{ gap: 12 }}>{header}
-    <View onLayout={(event) => setCardWidth(event.nativeEvent.layout.width)} style={{ borderRadius: 24, padding: 18, backgroundColor: c.primary, overflow: 'hidden', gap: 10 }}>
+    <View onLayout={(event) => setCardWidth(event.nativeEvent.layout.width)} style={{ borderRadius: 24, padding: 18, backgroundColor: c.primary, overflow: 'hidden', gap: 12 }}>
       <View pointerEvents="none" style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, direction: 'ltr' }}>
         <Animated.View style={{ position: 'absolute', left: 0, top: -20, bottom: -20, width: 60, backgroundColor: 'rgba(255,255,255,0.45)', transform: [{ translateX: sweepX }, { rotate: '18deg' }] }} />
         {sparkle(10, 16, 18)}{sparkle(46, 52, 11)}{sparkle(18, 96, 9)}
       </View>
       <View style={{ flexDirection: 'row-reverse', alignItems: 'flex-end', justifyContent: 'space-between' }}>
-        <View><Text style={{ color: c.background, fontSize: 12.5, fontWeight: '800', textAlign: 'right', opacity: 0.8 }}>نقاطي</Text><Text style={{ color: c.background, fontSize: 40, fontWeight: '900', lineHeight: 46 }}>{numberFormatter.format(balance)} <Text style={{ fontSize: 15, fontWeight: '800' }}>نقطة</Text></Text></View>
-        <Text style={{ color: c.background, fontSize: 12, fontWeight: '800', opacity: 0.8 }}>جمعت {numberFormatter.format(lifetime)} نقطة</Text>
+        <View><Text style={{ color: c.background, fontSize: 12.5, fontWeight: '800', textAlign: 'right', opacity: 0.8 }}>نقاطي</Text><Text style={{ color: c.background, fontSize: 44, fontWeight: '900', lineHeight: 50 }}>{numberFormatter.format(balance)} <Text style={{ fontSize: 16, fontWeight: '800' }}>نقطة</Text></Text></View>
+        <Text style={{ color: c.background, fontSize: 12.5, fontWeight: '800', opacity: 0.8 }}>كل طلب بيوصلك = نقطة</Text>
       </View>
-      <View style={{ height: 10, borderRadius: 5, backgroundColor: 'rgba(11,20,17,0.18)', overflow: 'hidden', flexDirection: 'row-reverse' }}><View style={{ width: `${Math.min(100, (balance / 5) * 100)}%`, backgroundColor: c.background, borderRadius: 5 }} /></View>
-      <Text style={{ color: c.background, fontSize: 13, fontWeight: '900', textAlign: 'right' }}>{nextTier ? `ناقصك ${numberFormatter.format(nextTier.points - balance)} ${nextTier.points - balance === 1 ? 'نقطة' : 'نقاط'} لخصم ${nextTier.off}%` : 'وصلت لأعلى خصم: 40% من أجرة التوصيل'}</Text>
+      <Text style={{ color: c.background, fontSize: 13.5, fontWeight: '900', textAlign: 'right' }}>{nextTier ? `ناقصك ${numberFormatter.format(nextTier.points - balance)} ${nextTier.points - balance === 1 ? 'نقطة' : 'نقاط'} لخصم ${nextTier.off}%.` : 'وصلت لأعلى خصم: 40% من أجرة التوصيل.'}</Text>
     </View>
-    {info}
+    <View style={{ flexDirection: 'row-reverse', gap: 8 }}>
+      {tiers.map((tier) => { const open = balance >= tier.points; return <View key={tier.points} accessibilityLabel={`خصم ${tier.off}% من ${tier.points} نقاط، ${open ? 'متاح' : `ناقصك ${tier.points - balance}`}`} style={{ flex: 1, alignItems: 'center', gap: 3, paddingVertical: 12, paddingHorizontal: 4, borderRadius: 16, borderWidth: 1.5, borderColor: open ? c.primary : c.border, backgroundColor: open ? c.raised : c.surface, opacity: open ? 1 : 0.6 }}>
+        <Text style={{ color: open ? c.primary : c.text, fontSize: 26, fontWeight: '900' }}>{tier.off}%</Text>
+        <Text style={{ color: c.muted, fontSize: 12, fontWeight: '700' }}>من {tier.points} نقاط</Text>
+        <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 4, marginTop: 2 }}>
+          <SymbolView name={open ? { ios: 'checkmark.circle.fill', android: 'check_circle', web: 'check_circle' } : { ios: 'lock.fill', android: 'lock', web: 'lock' }} tintColor={open ? '#52D5A0' : c.muted} size={13} />
+          <Text style={{ color: open ? '#52D5A0' : c.muted, fontSize: 11.5, fontWeight: '700' }}>{open ? 'متاح' : `ناقصك ${tier.points - balance}`}</Text>
+        </View>
+      </View>; })}
+    </View>
+    {how}{warning}
   </View>;
 }
 
