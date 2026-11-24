@@ -3098,7 +3098,7 @@ function OffersScreen({ balance, lifetime, enabled, comingSoon, onBack }: { bala
     </View> : <View style={card}>
       <Text style={heading}>عروض قادمة</Text>
       <Text style={body}>{comingSoon}</Text>
-      <Text style={body}>نقاطك محفوظة وبتضل تنضاف مع كل طلب بيوصلك.</Text>
+      <Text style={body}>نقاطك محفوظة. ما بتنضاف نقاط جديدة طول ما العرض موقوف.</Text>
     </View>}
   </View>;
 }

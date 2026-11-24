@@ -1,7 +1,7 @@
 -- Admin on/off switch for the loyalty discount offer, plus the "coming soon"
 -- text shown to customers while the offer is off.
--- Points keep being earned either way; only redeeming a discount on NEW orders
--- is blocked while the offer is off. Orders already created keep their discount.
+-- While the offer is off, no new points are earned and discounts cannot be redeemed on NEW orders.
+-- Orders already created keep their discount; cancelled orders still get redeemed points back.
 
 create table public.app_offers (
   id smallint primary key check (id = 1),
@@ -60,3 +60,45 @@ revoke all on function private.require_loyalty_offer_enabled() from public, anon
 create trigger orders_require_loyalty_offer_enabled
   before insert on public.orders
   for each row execute function private.require_loyalty_offer_enabled();
+
+-- While the offer is off, completed orders no longer earn points.
+-- Refunding redeemed points on cancellation is unaffected.
+create or replace function private.apply_customer_loyalty_status_change()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_inserted integer; v_event_id bigint;
+begin
+  if old.status is distinct from new.status and new.status in ('delivered','settled') and new.customer_id is not null
+     and coalesce((select loyalty_enabled from public.app_offers where id = 1), true) then
+    insert into public.customer_loyalty_accounts(customer_id) values(new.customer_id) on conflict(customer_id) do nothing;
+    insert into public.customer_loyalty_ledger(customer_id,order_id,event_type,points_delta)
+      values(new.customer_id,new.id,'earned',1) on conflict(order_id,event_type) where order_id is not null do nothing;
+    get diagnostics v_inserted = row_count;
+    if v_inserted > 0 then
+      update public.customer_loyalty_accounts set points_balance=points_balance+1,
+        lifetime_points_earned=lifetime_points_earned+1,updated_at=now() where customer_id=new.customer_id;
+      insert into public.order_events(order_id,actor_id,event_type,details)
+        values(new.id,new.driver_id,'loyalty_point_earned',jsonb_build_object('points',1)) returning id into v_event_id;
+      update public.notifications set title='كسبت نقطة لَبّيك',body='أضفنا نقطة إلى رصيدك بعد اكتمال الطلب.'
+        where recipient_id=new.customer_id and source_event_id=v_event_id;
+    end if;
+  end if;
+  if old.status is distinct from new.status and new.status='cancelled' and new.loyalty_points_redeemed>0 and new.customer_id is not null then
+    insert into public.customer_loyalty_accounts(customer_id) values(new.customer_id) on conflict(customer_id) do nothing;
+    insert into public.customer_loyalty_ledger(customer_id,order_id,event_type,points_delta)
+      values(new.customer_id,new.id,'refund',new.loyalty_points_redeemed)
+      on conflict(order_id,event_type) where order_id is not null do nothing;
+    get diagnostics v_inserted = row_count;
+    if v_inserted > 0 then
+      update public.customer_loyalty_accounts set points_balance=points_balance+new.loyalty_points_redeemed,updated_at=now()
+        where customer_id=new.customer_id;
+      insert into public.order_events(order_id,actor_id,event_type,details)
+        values(new.id,auth.uid(),'loyalty_points_refunded',jsonb_build_object('points',new.loyalty_points_redeemed)) returning id into v_event_id;
+      insert into public.notifications(recipient_id,order_id,source_event_id,event_type,title,body)
+        values(new.customer_id,new.id,v_event_id,'loyalty_points_refunded','رجعت نقاطك إلى رصيدك','أعدنا نقاط لَبّيك المستخدمة لأن الطلب أُلغي.')
+        on conflict(recipient_id,source_event_id) where source_event_id is not null
+        do update set title=excluded.title,body=excluded.body;
+    end if;
+  end if;
+  return new;
+end;
+$$;
