@@ -3099,13 +3099,21 @@ function OffersScreen({ balance, lifetime, enabled, comingSoon, onBack }: { bala
   const tiers = [{ points: 3, off: 20 }, { points: 4, off: 30 }, { points: 5, off: 40 }];
   const nextTier = tiers.find((tier) => balance < tier.points);
   const header = <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}><Text style={[s.pageTitle, { flex: 1 }]}>عروض لَبّيك</Text><Pressable onPress={onBack} style={[s.backNavigation, { alignSelf: 'auto', marginBottom: 0, marginLeft: 12 }]} accessibilityRole="button" accessibilityLabel="رجوع"><Text style={s.backNavigationText}>رجوع</Text></Pressable></View>;
+  const info = <View style={card}>
+    <Text style={heading}>كيف بتشتغل النقاط</Text>
+    <Text style={body}>١. بتكسب نقطة وحدة مع كل طلب بيوصلك.</Text>
+    <Text style={body}>٢. 3 نقاط = خصم 20%، 4 نقاط = 30%، 5 نقاط = 40%، والخصم على أجرة التوصيل فقط، مو على سعر المشتريات.</Text>
+    <Text style={body}>٣. بتختار الخصم وانت عم تكتب الطلب. الإدارة بتحدد الأجرة، وبعدها بينحسب الخصم عليها.</Text>
+    <Text style={body}>٤. انتبه: استخدام الخصم بيستهلك كامل رصيد نقاطك. مثلاً عندك 5 نقاط واخترت خصم 3 نقاط: بتستهلك الـ 5 وبتاخد 20%.</Text>
+    <Text style={body}>٥. إذا انلغى الطلب، بترجعلك النقاط المستخدمة.</Text>
+  </View>;
   if (!enabled) {
     return <View style={{ gap: 12 }}>{header}
-      <View style={[card, { alignItems: 'center', paddingVertical: 28, gap: 10 }]}>
-        <View style={{ width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface }}><SymbolView name={{ ios: 'clock', android: 'schedule', web: 'schedule' }} tintColor={c.primary} size={26} /></View>
-        <Text style={[heading, { fontSize: 18, textAlign: 'center' }]}>عروض قادمة</Text>
-        <Text style={[body, { textAlign: 'center' }]}>{comingSoon}</Text>
+      <View style={[card, { flexDirection: 'row-reverse', alignItems: 'center', gap: 12 }]}>
+        <View style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface }}><SymbolView name={{ ios: 'clock', android: 'schedule', web: 'schedule' }} tintColor={c.primary} size={22} /></View>
+        <View style={{ flex: 1, gap: 2 }}><Text style={[heading, { fontSize: 16 }]}>عروض قادمة</Text><Text style={body}>{comingSoon}</Text></View>
       </View>
+      {info}
     </View>;
   }
   const sweepX = shimmer.interpolate({ inputRange: [0, 1], outputRange: [cardWidth, -90] });
@@ -3123,14 +3131,7 @@ function OffersScreen({ balance, lifetime, enabled, comingSoon, onBack }: { bala
       <View style={{ height: 10, borderRadius: 5, backgroundColor: 'rgba(11,20,17,0.18)', overflow: 'hidden', flexDirection: 'row-reverse' }}><View style={{ width: `${Math.min(100, (balance / 5) * 100)}%`, backgroundColor: c.background, borderRadius: 5 }} /></View>
       <Text style={{ color: c.background, fontSize: 13, fontWeight: '900', textAlign: 'right' }}>{nextTier ? `ناقصك ${numberFormatter.format(nextTier.points - balance)} ${nextTier.points - balance === 1 ? 'نقطة' : 'نقاط'} لخصم ${nextTier.off}%` : 'وصلت لأعلى خصم: 40% من أجرة التوصيل'}</Text>
     </View>
-    <View style={card}>
-      <Text style={heading}>كيف بتشتغل النقاط</Text>
-      <Text style={body}>١. بتكسب نقطة وحدة مع كل طلب بيوصلك.</Text>
-      <Text style={body}>٢. 3 نقاط = خصم 20%، 4 نقاط = 30%، 5 نقاط = 40%، والخصم على أجرة التوصيل فقط، مو على سعر المشتريات.</Text>
-      <Text style={body}>٣. بتختار الخصم وانت عم تكتب الطلب. الإدارة بتحدد الأجرة، وبعدها بينحسب الخصم عليها.</Text>
-      <Text style={body}>٤. انتبه: استخدام الخصم بيستهلك كامل رصيد نقاطك. مثلاً عندك 5 نقاط واخترت خصم 3 نقاط: بتستهلك الـ 5 وبتاخد 20%.</Text>
-      <Text style={body}>٥. إذا انلغى الطلب، بترجعلك النقاط المستخدمة.</Text>
-    </View>
+    {info}
   </View>;
 }
 
@@ -3557,12 +3558,12 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       <View pointerEvents={sending ? 'none' : 'auto'} style={[s.formCard, sending && { opacity: 0.45 }]}><View style={s.formHeader}><View style={{ width: 28, height: 28, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(183,255,48,0.1)', borderWidth: 1, borderColor: 'rgba(183,255,48,0.28)' }}><SymbolView name={{ ios: 'bag', android: 'shopping_bag', web: 'shopping_bag' }} tintColor="#B7FF30" size={15}/></View><View style={s.formHeaderCopy}><Text style={s.formTitle}>شو بدك نجيبلك؟</Text></View></View>{draftSaveError ? <Text style={s.formMessage}>تعذّر حفظ المسودة على هذا الجهاز.</Text> : null}
         <View style={s.formSection}><View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}><Text style={s.label}>تفاصيل الطلب</Text><UrgentChip on={urgent} disabled={!!pendingOrderId || sending} onPress={() => setUrgent((value) => !value)} /></View><TextInput editable={draftReady && !pendingOrderId} value={request} onChangeText={(value) => { draftDirty.current = true; setRequest(value); }} maxLength={4000} multiline textAlignVertical="top" placeholder="مثال: ربطة خبز، كيلو بندورة، وعلبة حليب." placeholderTextColor="#809087" onFocus={() => setFocusedField('request')} onBlur={() => setFocusedField((current) => current === 'request' ? null : current)} style={[s.input,s.orderRequestInput,fieldBorder('request', request.trim().length > 0),urgent&&{borderColor:'#F5A623'}]} accessibilityLabel="اكتب تفاصيل طلبك" /></View>
         <View style={s.formSection}><TextInput editable={draftReady && !pendingOrderId} value={pickup} onChangeText={(value) => setPickup(value.slice(0, 120))} maxLength={120} placeholder="عندك محلّ مفضّل نشتري منه؟ (اختياري)" placeholderTextColor="#809087" onFocus={() => setFocusedField('pickup')} onBlur={() => setFocusedField((current) => current === 'pickup' ? null : current)} style={[s.input, { minHeight: 54, paddingVertical: 0, borderRadius: 16, textAlign: 'right', writingDirection: 'rtl' }, fieldBorder('pickup', pickup.trim().length > 0)]} accessibilityLabel="مكان الشراء"/></View>
-        {offerEnabled && <View style={{ marginBottom: 10, paddingVertical: 9, paddingHorizontal: 10, borderRadius: 14, borderWidth: 1, borderColor: c.border, backgroundColor: c.raised, gap: 7 }}>
-          <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center' }}><Text style={{ color: c.text, fontSize: 13, fontWeight: '900', textAlign: 'right' }}>استخدم نقاطك</Text><View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 4, paddingHorizontal: 9, height: 24, borderRadius: 12, backgroundColor: c.surface }}><SymbolView name={{ ios: 'star.fill', android: 'stars', web: 'stars' }} tintColor={c.primary} size={12} /><Text style={{ color: c.primary, fontSize: 12, fontWeight: '900' }}>{numberFormatter.format(loyaltyBalance)}</Text></View></View>
-          <View style={{ flexDirection: 'row-reverse', gap: 6 }}>
-            {([{points:0 as const,top:'بدون',sub:''},{points:3 as const,top:'20%',sub:'3 نقاط'},{points:4 as const,top:'30%',sub:'4 نقاط'},{points:5 as const,top:'40%',sub:'5 نقاط'}]).map(({points,top,sub})=>{const selected=loyaltyPointsSelected===points;const disabled=sending||!!pendingOrderId||(points>0&&loyaltyBalance<points);return <Pressable key={points} disabled={disabled} onPress={()=>setLoyaltyPointsSelected(points)} accessibilityRole="radio" accessibilityLabel={points===0?'بدون استخدام النقاط':`خصم ${top} بـ ${sub}`} accessibilityState={{selected,disabled}} style={{flex:1,height:42,alignItems:'center',justifyContent:'center',borderRadius:11,borderWidth:1,borderColor:selected?c.primary:c.border,backgroundColor:selected?c.primary:c.surface,opacity:disabled?0.4:1}}><Text style={{color:selected?c.background:c.text,fontSize:points===0?12:14,fontWeight:'900',textAlign:'center'}}>{top}</Text>{sub?<Text style={{color:selected?c.background:c.muted,fontSize:9.5,fontWeight:'700'}}>{sub}</Text>:null}</Pressable>;})}
+        {offerEnabled && <View style={{ marginBottom: 8, gap: 5 }}>
+          <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 6 }}>
+            <View accessibilityLabel={`رصيدك ${loyaltyBalance} نقطة`} style={{ minWidth: 48, height: 38, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 3, paddingHorizontal: 8, borderRadius: 11, backgroundColor: c.raised, borderWidth: 1, borderColor: c.border }}><SymbolView name={{ ios: 'star.fill', android: 'stars', web: 'stars' }} tintColor={c.primary} size={12} /><Text style={{ color: c.primary, fontSize: 13, fontWeight: '900' }}>{numberFormatter.format(loyaltyBalance)}</Text></View>
+            {([{points:0 as const,top:'بدون',sub:''},{points:3 as const,top:'20%',sub:'3 نقاط'},{points:4 as const,top:'30%',sub:'4 نقاط'},{points:5 as const,top:'40%',sub:'5 نقاط'}]).map(({points,top,sub})=>{const selected=loyaltyPointsSelected===points;const disabled=sending||!!pendingOrderId||(points>0&&loyaltyBalance<points);return <Pressable key={points} disabled={disabled} onPress={()=>setLoyaltyPointsSelected(points)} accessibilityRole="radio" accessibilityLabel={points===0?'بدون استخدام النقاط':`خصم ${top} بـ ${sub}`} accessibilityState={{selected,disabled}} style={{flex:1,height:38,alignItems:'center',justifyContent:'center',borderRadius:11,borderWidth:1,borderColor:selected?c.primary:c.border,backgroundColor:selected?c.primary:c.surface,opacity:disabled?0.4:1}}><Text style={{color:selected?c.background:c.text,fontSize:points===0?12:13.5,fontWeight:'900',textAlign:'center',lineHeight:points===0?16:15}}>{top}</Text>{sub?<Text style={{color:selected?c.background:c.muted,fontSize:9,fontWeight:'700',lineHeight:11}}>{sub}</Text>:null}</Pressable>;})}
           </View>
-          {loyaltyPointsSelected>0 ? <Text style={{ color: '#F6C76A', fontSize: 11.5, fontWeight: '800', textAlign: 'right' }}>بيستهلك كامل رصيدك ({numberFormatter.format(loyaltyBalance)} نقاط). الخصم على أجرة التوصيل فقط.</Text> : loyaltyBalance<3 ? <Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>ناقصك {numberFormatter.format(3-loyaltyBalance)} {3-loyaltyBalance===1?'نقطة':'نقاط'} لأول خصم.</Text> : null}
+          {loyaltyPointsSelected>0 ? <Text style={{ color: '#F6C76A', fontSize: 11.5, fontWeight: '800', textAlign: 'right' }}>بيستهلك كامل رصيدك ({numberFormatter.format(loyaltyBalance)} نقاط). الخصم على أجرة التوصيل فقط.</Text> : null}
         </View>}
         <View style={s.photoSection}><View style={s.photoHead}><Text style={s.label}>صور تساعدنا نفهم طلبك</Text><Text style={s.photoCount}>{orderImages.length}/3</Text></View>
           <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
