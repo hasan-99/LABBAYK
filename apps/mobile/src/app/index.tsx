@@ -1,7 +1,7 @@
 import { Children, Component, Fragment, createContext, isValidElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import type { Metadata } from 'expo-router/server';
-import { AccessibilityInfo, ActivityIndicator, Alert, Animated, AppState, Easing, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, RefreshControl, ScrollView, Share, StyleSheet, TextInput, View, type ScrollViewProps } from 'react-native';
+import { AccessibilityInfo, ActivityIndicator, Alert, Animated, AppState, Easing, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Switch, TextInput, View, type ScrollViewProps } from 'react-native';
 import { SymbolView, type AndroidSymbol, type SFSymbol } from 'expo-symbols';
 import * as Notifications from 'expo-notifications';
 import { useNetworkState } from 'expo-network';
@@ -3074,6 +3074,9 @@ function AdminOrdersTab({ userId, active, onBadge, onDetail, focusOrderId, onFoc
   </SafeAreaView>;
 }
 
+/** The highest loyalty discount tier a balance can use (3/4/5 points = 20/30/40%). */
+const bestLoyaltyTier = (balance: number): 0 | 3 | 4 | 5 => balance >= 5 ? 5 : balance >= 4 ? 4 : balance >= 3 ? 3 : 0;
+
 function OffersScreen({ balance, enabled, comingSoon, onBack }: { balance: number; lifetime?: number; enabled: boolean; comingSoon: string; onBack: () => void }) {
   const { colors: c, styles: s } = useMobileTheme();
   const shimmer = useRef(new Animated.Value(0)).current;
@@ -3113,7 +3116,7 @@ function OffersScreen({ balance, enabled, comingSoon, onBack }: { balance: numbe
   </View>;
   const warning = <View style={{ flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 10, padding: 12, borderRadius: 14, borderWidth: 1, borderColor: '#F6C76A', backgroundColor: 'rgba(246,199,106,0.12)' }}>
     <SymbolView name={{ ios: 'exclamationmark.triangle.fill', android: 'warning', web: 'warning' }} tintColor="#F6C76A" size={22} />
-    <Text style={{ flex: 1, color: c.text, fontSize: 13, lineHeight: 21, textAlign: 'right' }}><Text style={{ color: '#F6C76A', fontWeight: '900' }}>انتبه: </Text>استخدام الخصم بيستهلك كامل رصيدك. مثال: عندك 5 نقاط واخترت خصم 3 نقاط: بتستهلك الـ 5 وبتاخد 20%.</Text>
+    <Text style={{ flex: 1, color: c.text, fontSize: 13, lineHeight: 21, textAlign: 'right' }}><Text style={{ color: '#F6C76A', fontWeight: '900' }}>انتبه: </Text>استخدام الخصم بيستهلك كامل رصيدك، وبيتطبق أعلى خصم متاح. مثال: عندك 5 نقاط: بتستهلك الـ 5 وبتاخد خصم 40%.</Text>
   </View>;
   if (!enabled) {
     return <View style={{ gap: 12 }}>{header}
@@ -3576,11 +3579,12 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
         <View style={s.formSection}><View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}><Text style={s.label}>تفاصيل الطلب</Text><UrgentChip on={urgent} disabled={!!pendingOrderId || sending} onPress={() => setUrgent((value) => !value)} /></View><TextInput editable={draftReady && !pendingOrderId} value={request} onChangeText={(value) => { draftDirty.current = true; setRequest(value); }} maxLength={4000} multiline textAlignVertical="top" placeholder="مثال: ربطة خبز، كيلو بندورة، وعلبة حليب." placeholderTextColor="#809087" onFocus={() => setFocusedField('request')} onBlur={() => setFocusedField((current) => current === 'request' ? null : current)} style={[s.input,s.orderRequestInput,fieldBorder('request', request.trim().length > 0),urgent&&{borderColor:'#F5A623'}]} accessibilityLabel="اكتب تفاصيل طلبك" /></View>
         <View style={s.formSection}><TextInput editable={draftReady && !pendingOrderId} value={pickup} onChangeText={(value) => setPickup(value.slice(0, 120))} maxLength={120} placeholder="عندك محلّ مفضّل نشتري منه؟ (اختياري)" placeholderTextColor="#809087" onFocus={() => setFocusedField('pickup')} onBlur={() => setFocusedField((current) => current === 'pickup' ? null : current)} style={[s.input, { minHeight: 54, paddingVertical: 0, borderRadius: 16, textAlign: 'right', writingDirection: 'rtl' }, fieldBorder('pickup', pickup.trim().length > 0)]} accessibilityLabel="مكان الشراء"/></View>
         {offerEnabled && <View style={{ marginBottom: 8, gap: 5 }}>
-          <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 6 }}>
-            <View accessibilityLabel={`رصيدك ${loyaltyBalance} نقطة`} style={{ minWidth: 48, height: 38, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 3, paddingHorizontal: 8, borderRadius: 11, backgroundColor: c.raised, borderWidth: 1, borderColor: c.border }}><SymbolView name={{ ios: 'star.fill', android: 'stars', web: 'stars' }} tintColor={c.primary} size={12} /><Text style={{ color: c.primary, fontSize: 13, fontWeight: '900' }}>{numberFormatter.format(loyaltyBalance)}</Text></View>
-            {([{points:0 as const,top:'بدون',sub:''},{points:3 as const,top:'20%',sub:'3 نقاط'},{points:4 as const,top:'30%',sub:'4 نقاط'},{points:5 as const,top:'40%',sub:'5 نقاط'}]).map(({points,top,sub})=>{const selected=loyaltyPointsSelected===points;const disabled=sending||!!pendingOrderId||(points>0&&loyaltyBalance<points);return <Pressable key={points} disabled={disabled} onPress={()=>setLoyaltyPointsSelected(points)} accessibilityRole="radio" accessibilityLabel={points===0?'بدون استخدام النقاط':`خصم ${top} بـ ${sub}`} accessibilityState={{selected,disabled}} style={{flex:1,height:38,alignItems:'center',justifyContent:'center',borderRadius:11,borderWidth:1,borderColor:selected?c.primary:c.border,backgroundColor:selected?c.primary:c.surface,opacity:disabled?0.4:1}}><Text style={{color:selected?c.background:c.text,fontSize:points===0?12:13.5,fontWeight:'900',textAlign:'center',lineHeight:points===0?16:15}}>{top}</Text>{sub?<Text style={{color:selected?c.background:c.muted,fontSize:9,fontWeight:'700',lineHeight:11}}>{sub}</Text>:null}</Pressable>;})}
-          </View>
-          {loyaltyPointsSelected>0 ? <Text style={{ color: '#F6C76A', fontSize: 11.5, fontWeight: '800', textAlign: 'right' }}>بيستهلك كامل رصيدك ({numberFormatter.format(loyaltyBalance)} نقاط). الخصم على أجرة التوصيل فقط.</Text> : null}
+          {(() => { const bestTier = bestLoyaltyTier(loyaltyBalance); const canUse = bestTier > 0; const on = loyaltyPointsSelected > 0 && canUse; const locked = sending || !!pendingOrderId; return <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 14, borderWidth: 1, borderColor: on ? c.primary : c.border, backgroundColor: c.raised }}>
+            <View accessibilityLabel={`رصيدك ${loyaltyBalance} نقطة`} style={{ minWidth: 48, height: 36, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 3, paddingHorizontal: 8, borderRadius: 11, backgroundColor: c.surface, borderWidth: 1, borderColor: c.border }}><SymbolView name={{ ios: 'star.fill', android: 'stars', web: 'stars' }} tintColor={c.primary} size={12} /><Text style={{ color: c.primary, fontSize: 13, fontWeight: '900' }}>{numberFormatter.format(loyaltyBalance)}</Text></View>
+            <View style={{ flex: 1 }}><Text style={{ color: c.text, fontSize: 13.5, fontWeight: '900', textAlign: 'right' }}>استخدم نقاطي</Text><Text style={{ color: c.muted, fontSize: 11.5, textAlign: 'right' }}>{canUse ? `خصم ${bestTier === 5 ? 40 : bestTier === 4 ? 30 : 20}% من أجرة التوصيل` : 'لازم 3 نقاط على الأقل'}</Text></View>
+            <Switch value={on} disabled={!canUse || locked} onValueChange={(value) => setLoyaltyPointsSelected(value ? bestTier : 0)} accessibilityLabel="استخدام نقاط لَبّيك لخصم أجرة التوصيل" trackColor={{ false: c.border, true: c.primary }} thumbColor="#FFFFFF" />
+          </View>; })()}
+          {loyaltyPointsSelected > 0 && bestLoyaltyTier(loyaltyBalance) > 0 ? <Text style={{ color: '#F6C76A', fontSize: 11.5, fontWeight: '800', textAlign: 'right' }}>بيستهلك كامل رصيدك ({numberFormatter.format(loyaltyBalance)} نقاط). الخصم على أجرة التوصيل فقط.</Text> : null}
         </View>}
         <View style={s.photoSection}><View style={s.photoHead}><Text style={s.label}>صور تساعدنا نفهم طلبك</Text><Text style={s.photoCount}>{orderImages.length}/3</Text></View>
           <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
