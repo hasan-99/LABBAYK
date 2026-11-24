@@ -49,6 +49,7 @@ const buildStamp = Updates.createdAt
   ? `آخر تحديث: ${new Intl.DateTimeFormat('ar-SY', { dateStyle: 'medium', timeStyle: 'short' }).format(Updates.createdAt)}`
   : 'وقت التحديث غير متاح';
 const sessionStabilityReleaseNoteKey = 'labbayk:release-note:admin-rtl-keyboard-20261123';
+const offersPageAnnouncementTitle = 'صفحة العروض الجديدة';
 const lightPalette = { ...tokens.color, background: '#F5F7F2', surface: '#FFFFFF', raised: '#EFF5E8', surfaceRaised: '#EFF5E8', border: '#DCE4D8', text: '#20241F', muted: '#5D645B', primary: '#343A32', accent: '#287A55', danger: '#B42318' } as unknown as typeof tokens.color;
 const lightColorMap: Record<string, string> = {
   '#0B1411':'#F5F7F2','#101A14':'#F5F7F2','#0F1A13':'#F5F7F2','#111c16':'#F5F7F2','#121d16':'#F5F7F2',
@@ -3908,6 +3909,32 @@ function SessionStabilityReleaseNote({ visible, theme, onDismiss }: { visible: b
   </Modal>;
 }
 
+type AppAnnouncement = Pick<Database['public']['Tables']['notifications']['Row'], 'id' | 'title' | 'body'>;
+function AppAnnouncementModal({ announcement, visible, theme, onDismiss }: { announcement: AppAnnouncement | null; visible: boolean; theme: 'dark' | 'light'; onDismiss: () => void }) {
+  const colors = theme === 'light' ? lightPalette : tokens.color;
+  const dark = theme === 'dark';
+  if (!announcement) return null;
+  return <Modal visible={visible} transparent statusBarTranslucent navigationBarTranslucent animationType="fade" onRequestClose={onDismiss}>
+    <View accessibilityViewIsModal style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 22, backgroundColor: 'rgba(5, 12, 8, 0.78)' }}>
+      <View accessibilityRole="summary" accessibilityLabel={`${announcement.title}. ${announcement.body}`} style={{ width: '100%', maxWidth: 430, padding: 21, borderRadius: 25, borderWidth: 1.5, borderColor: dark ? '#57763D' : '#B7D66C', backgroundColor: colors.surface, shadowColor: '#000', shadowOpacity: dark ? 0.4 : 0.16, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 12 }}>
+        <View style={{ alignItems: 'center' }}>
+          <View style={{ width: 66, height: 66, alignItems: 'center', justifyContent: 'center', borderRadius: 22, backgroundColor: '#B7FF30', borderWidth: 1, borderColor: '#A5E522' }}>
+            <Text style={{ color: '#0B1411', fontSize: 34, lineHeight: 40, fontWeight: '900' }}>%</Text>
+          </View>
+          <View style={{ marginTop: 16, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: dark ? '#344629' : '#EFF5E8', borderWidth: 1, borderColor: dark ? '#58753B' : '#C9D9A7' }}>
+            <Text style={{ color: dark ? '#DFFFAD' : '#385616', fontSize: 12, fontWeight: '900', textAlign: 'center' }}>جديد في لَبّيك</Text>
+          </View>
+          <Text style={{ color: colors.text, fontSize: 21, lineHeight: 30, fontWeight: '900', textAlign: 'center', marginTop: 13 }}>{announcement.title}</Text>
+          <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 25, textAlign: 'center', marginTop: 9 }}>{announcement.body}</Text>
+        </View>
+        <Pressable onPress={onDismiss} accessibilityRole="button" accessibilityLabel="إغلاق إعلان صفحة العروض" style={{ minHeight: 52, alignItems: 'center', justifyContent: 'center', marginTop: 22, borderRadius: 15, backgroundColor: '#B7FF30', borderWidth: 1, borderColor: '#A5E522' }}>
+          <Text style={{ color: '#0B1411', fontSize: 15, fontWeight: '900' }}>تمام، بتابع العروض</Text>
+        </Pressable>
+      </View>
+    </View>
+  </Modal>;
+}
+
 export default function HomeScreen() {
   const { invite: rawInvite, openOrder: rawOpenOrder } = useLocalSearchParams<{ invite?: string | string[]; openOrder?: string | string[] }>();
   const router = useRouter();
@@ -3915,6 +3942,7 @@ export default function HomeScreen() {
   const openOrderId = Array.isArray(rawOpenOrder) ? rawOpenOrder[0] : rawOpenOrder;
   const [inviteToken, setInviteToken] = useState('');
   const [session, setSession] = useState<Session | null>(null);
+  const [appAnnouncement, setAppAnnouncement] = useState<AppAnnouncement | null>(null);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [sessionReleaseNoteVisible, setSessionReleaseNoteVisible] = useState(false);
@@ -4027,6 +4055,39 @@ export default function HomeScreen() {
       .finally(() => { clearTimeout(readyTimeout); if (active) setReady(true); });
     return () => { active = false; clearTimeout(readyTimeout); subscription.unsubscribe(); appStateSubscription?.remove(); };
   }, []);
+  useEffect(() => {
+    const userId = session?.user.id;
+    if (!supabase || !userId || passwordRecovery) return;
+    const client = supabase;
+    let active = true;
+    const loadAnnouncement = async () => {
+      const { data, error } = await client.from('notifications')
+        .select('id,title,body')
+        .eq('recipient_id', userId)
+        .eq('event_type', 'app_announcement')
+        .eq('title', offersPageAnnouncementTitle)
+        .is('read_at', null)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (!active || error || !data) return;
+      const localSeen = await AsyncStorage.getItem(`labbayk:announcement-seen:${userId}:${data.id}`).catch(() => null);
+      if (active && !localSeen) setAppAnnouncement(data);
+    };
+    void loadAnnouncement();
+    const channel = client.channel(`app-announcement-${userId}-${newRequestKey()}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${userId}` }, () => { void loadAnnouncement(); })
+      .subscribe();
+    return () => { active = false; void client.removeChannel(channel); };
+  }, [passwordRecovery, session?.user.id]);
+  const dismissAppAnnouncement = () => {
+    if (!appAnnouncement || !session?.user.id) return;
+    const { id } = appAnnouncement;
+    const userId = session.user.id;
+    setAppAnnouncement(null);
+    void AsyncStorage.setItem(`labbayk:announcement-seen:${userId}:${id}`, 'seen').catch(() => {});
+    void supabase?.rpc('mark_notification_read', { p_notification_id: id });
+  };
   const screen = !supabaseConfigured
     ? <AuthScreen inviteToken={inviteToken || undefined} theme={theme} />
     : !ready
@@ -4046,7 +4107,7 @@ export default function HomeScreen() {
             await supabase?.auth.signOut({ scope: 'local' });
           } finally { setSigningOut(false); }
         }} theme={theme} onToggleTheme={() => applyTheme(theme === 'dark' ? 'light' : 'dark')} />;
-  return <MobileThemeContext.Provider value={themeContext}><ToastProvider theme={theme}><View style={{ flex: 1, backgroundColor: colors.background }}><NetworkStatusBanner />{screen}{signingOut ? <View accessibilityRole="progressbar" accessibilityLabel="جاري تسجيل الخروج" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 14, backgroundColor: 'rgba(11,20,17,0.88)', zIndex: 9999 }}><ActivityIndicator size="large" color="#B7FF30" /><Text style={{ color: '#EEF3EE', fontSize: 16, fontWeight: '800' }}>جاري تسجيل الخروج…</Text></View> : null}</View><SessionStabilityReleaseNote visible={sessionReleaseNoteVisible} theme={theme} onDismiss={dismissSessionReleaseNote} /></ToastProvider></MobileThemeContext.Provider>;
+  return <MobileThemeContext.Provider value={themeContext}><ToastProvider theme={theme}><View style={{ flex: 1, backgroundColor: colors.background }}><NetworkStatusBanner />{screen}{signingOut ? <View accessibilityRole="progressbar" accessibilityLabel="جاري تسجيل الخروج" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', gap: 14, backgroundColor: 'rgba(11,20,17,0.88)', zIndex: 9999 }}><ActivityIndicator size="large" color="#B7FF30" /><Text style={{ color: '#EEF3EE', fontSize: 16, fontWeight: '800' }}>جاري تسجيل الخروج…</Text></View> : null}</View><SessionStabilityReleaseNote visible={sessionReleaseNoteVisible} theme={theme} onDismiss={dismissSessionReleaseNote} /><AppAnnouncementModal announcement={appAnnouncement} visible={!!session && !passwordRecovery && !!appAnnouncement && !sessionReleaseNoteVisible} theme={theme} onDismiss={dismissAppAnnouncement} /></ToastProvider></MobileThemeContext.Provider>;
 }
 
 const styleDefinitions = {
