@@ -3178,7 +3178,6 @@ function OffersScreen({ balance, enabled, comingSoon, onBack }: { balance: numbe
         <View style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface }}><SymbolView name={{ ios: 'clock', android: 'schedule', web: 'schedule' }} tintColor={c.primary} size={22} /></View>
         <View style={{ flex: 1, gap: 2 }}><Text style={[heading, { fontSize: 16 }]}>عروض قادمة</Text><Text style={body}>{comingSoon}</Text></View>
       </View>
-      {how}{warning}
     </View>;
   }
   const sweepX = shimmer.interpolate({ inputRange: [0, 1], outputRange: [cardWidth, -90] });
