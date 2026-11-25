@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ComponentRef } from 'react';
-import { Pressable, ScrollView, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable, ScrollView, Text, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 import { Image, type ImageSource } from 'expo-image';
 
 const slides: { source: ImageSource; label: string }[] = [
@@ -53,6 +53,18 @@ export function HomePromoCarousel({ style }: { style?: StyleProp<ViewStyle> }) {
         <Image source={slide.source} style={{ width: '100%', height: '100%' }} contentFit="cover" contentPosition={slideIndex === 0 ? { top: '12%' } : undefined} accessibilityLabel={slide.label} />
       </View>)}
     </ScrollView>
+    <Pressable
+      onPress={() => goTo(index - 1)}
+      accessibilityRole="button"
+      accessibilityLabel="الصورة السابقة"
+      style={{ position: 'absolute', left: 8, top: '50%', marginTop: -22, width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7, 14, 10, 0.68)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)' }}
+    ><Text style={{ color: '#FFFFFF', fontSize: 27, lineHeight: 30, fontWeight: '700' }}>‹</Text></Pressable>
+    <Pressable
+      onPress={() => goTo(index + 1)}
+      accessibilityRole="button"
+      accessibilityLabel="الصورة التالية"
+      style={{ position: 'absolute', right: 8, top: '50%', marginTop: -22, width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7, 14, 10, 0.68)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)' }}
+    ><Text style={{ color: '#FFFFFF', fontSize: 27, lineHeight: 30, fontWeight: '700' }}>›</Text></Pressable>
     <View style={{ position: 'absolute', bottom: 8, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 5, height: 32, borderRadius: 16, backgroundColor: 'rgba(7, 14, 10, 0.55)' }}>
       {slides.map((slide, slideIndex) => <Pressable
         key={slide.label}
