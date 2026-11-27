@@ -13,7 +13,7 @@ export type CustomerOrderDraft = {
   images?: CustomerOrderImageDraft[];
 };
 
-type OrderSummary = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'delivery_proof_path'|'loyalty_points_redeemed'|'loyalty_discount_minor'>;
+type OrderSummary = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'accepted_at'|'delivery_proof_path'|'loyalty_points_redeemed'|'loyalty_discount_minor'>;
 export type CustomerOrderSnapshot = { schemaVersion: 1; orders: OrderSummary[]; syncedAt: string };
 
 const storageKey = (userId: string) => `labbayk:customer-order-draft:${userId}`;
@@ -73,7 +73,7 @@ export const clearCustomerOrderDraft = (userId: string) => enqueue(async () => {
 });
 
 const activeOrderStatuses = new Set(['requested','quoted','searching','accepted','assigned','shopping','awaiting_approval','purchased','delivering','delivered','disputed']);
-const summaryFields: (keyof OrderSummary)[] = ['id','status','delivery_fee_minor','delivery_quote_set_at','delivery_quote_approved_at','purchase_amount_minor','purchase_approved_at','created_at','loyalty_points_redeemed','loyalty_discount_minor'];
+const summaryFields: (keyof OrderSummary)[] = ['id','status','delivery_fee_minor','delivery_quote_set_at','delivery_quote_approved_at','purchase_amount_minor','purchase_approved_at','created_at','accepted_at','loyalty_points_redeemed','loyalty_discount_minor'];
 
 export const saveCustomerOrdersSnapshot = (userId: string, orders: OrderSummary[]) => enqueue(async () => {
   const snapshot: CustomerOrderSnapshot = {

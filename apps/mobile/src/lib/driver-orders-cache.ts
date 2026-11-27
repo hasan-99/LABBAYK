@@ -1,7 +1,7 @@
 import type { Database } from '@labbayk/shared/database.types';
 import { getOfflineItem, removeOfflineItem, setOfflineItem } from './offline-storage';
 
-type DriverOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'address_id'> & {
+type DriverOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'accepted_at'|'request_text'|'delivery_fee_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'address_id'> & {
   budget_ceiling_minor?: Database['public']['Tables']['orders']['Row']['budget_ceiling_minor'];
   address: Pick<Database['public']['Tables']['addresses']['Row'], 'id'|'label'|'street'|'city'|'neighborhood'|'contact_phone'|'building'|'landmark'> | null;
 };

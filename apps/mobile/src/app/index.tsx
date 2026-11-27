@@ -27,6 +27,8 @@ import { clearImageCaches, forgetOrderImages, imageCacheKey, listOrderImagePaths
 import { shrinkPhoto } from '@/lib/image-compress';
 import { cacheKey, clearUserCache, createRefreshScheduler, isFresh, readMemory, readPersisted, writeMemory, writePersisted } from '@/lib/data-cache';
 import { AppText as Text } from '@/components/AppText';
+import { DeliveryCountdownCard, DeliveryCountdownChip } from '@/components/DeliveryCountdown';
+import { hasCountdown } from '@/lib/delivery-countdown';
 import { ToastProvider, useAppToast, useToastMessage } from '@/components/Toast';
 
 const c: any = tokens.color;
@@ -183,9 +185,9 @@ export function generateMetadata(): Metadata {
 }
 type Address = Database['public']['Tables']['addresses']['Row'];
 type DriverOfferAddress = Pick<Address, 'id'|'label'|'street'|'city'|'neighborhood'|'building'|'landmark'>;
-type CustomerOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'delivery_proof_path'|'loyalty_points_redeemed'|'loyalty_discount_minor'> & { driver_id?: string | null; delivered_at?: string | null; is_urgent?: boolean };
+type CustomerOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'accepted_at'|'request_text'|'delivery_fee_minor'|'delivery_quote_set_at'|'delivery_quote_approved_at'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'delivery_proof_path'|'loyalty_points_redeemed'|'loyalty_discount_minor'> & { driver_id?: string | null; delivered_at?: string | null; is_urgent?: boolean };
 type DriverOfferCard = { id: string; expires_at: string; order: Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'address_id'> & { is_urgent?: boolean; address: DriverOfferAddress | null } };
-type DriverActiveOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'request_text'|'delivery_fee_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'address_id'> & { loyalty_discount_minor?: number; is_urgent?: boolean; address: Pick<Address, 'id'|'label'|'street'|'city'|'neighborhood'|'contact_phone'|'building'|'landmark'> | null };
+type DriverActiveOrder = Pick<Database['public']['Tables']['orders']['Row'], 'id'|'status'|'accepted_at'|'request_text'|'delivery_fee_minor'|'purchase_amount_minor'|'purchase_approved_at'|'created_at'|'address_id'> & { loyalty_discount_minor?: number; is_urgent?: boolean; address: Pick<Address, 'id'|'label'|'street'|'city'|'neighborhood'|'contact_phone'|'building'|'landmark'> | null };
 const newRequestKey = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => { const value = Math.random() * 16 | 0; return (char === 'x' ? value : (value & 3 | 8)).toString(16); });
 type OrderImage = CustomerOrderImageDraft & { uri: string };
 type ProfileAvatarDraft = { uri: string; mimeType: string; extension: string };
@@ -849,7 +851,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
       supabase.from('driver_profiles').select('is_online').eq('user_id', userId).single(),
       supabase.rpc('get_driver_wallet_balances'),
       supabase.from('order_offers').select('id,order_id,expires_at,order:orders(id,is_urgent,status,request_text,delivery_fee_minor,address_id,address:addresses(id,label,street,city,neighborhood,building,landmark))').eq('driver_id', userId).eq('status', 'pending').gt('expires_at', new Date().toISOString()).order('expires_at'),
-      supabase.from('orders').select('id,is_urgent,status,request_text,delivery_fee_minor,purchase_amount_minor,purchase_approved_at,created_at,address_id,loyalty_discount_minor,address:addresses(id,label,street,city,neighborhood,contact_phone,building,landmark)').eq('driver_id', userId).neq('status', 'delivered').neq('status', 'settled').neq('status', 'cancelled').order('created_at', { ascending: false }),
+      supabase.from('orders').select('id,is_urgent,status,accepted_at,request_text,delivery_fee_minor,purchase_amount_minor,purchase_approved_at,created_at,address_id,loyalty_discount_minor,address:addresses(id,label,street,city,neighborhood,contact_phone,building,landmark)').eq('driver_id', userId).neq('status', 'delivered').neq('status', 'settled').neq('status', 'cancelled').order('created_at', { ascending: false }),
     ]);
     const { data: walletRows, error: walletError } = wallet;
     if (!walletError) { setWalletBalance(walletRows?.find((row) => row.driver_id === userId)?.balance_minor ?? 0); setWalletUnavailable(false); }
@@ -1182,6 +1184,7 @@ function DriverOperations({ userId, screen = 'orders', isActive = true, profileC
         <View style={{ backgroundColor: '#26391C', borderRadius: 12, paddingHorizontal: 11, minHeight: 28, justifyContent: 'center' }}><Text style={{ color: '#B7FF30', fontSize: 12.5, fontWeight: '900' }}>{activeLabels[order.status] ?? orderStatus[order.status] ?? order.status}</Text></View>
         <Text style={{ color: c.muted, fontSize: 12 }}>#{order.id.slice(0, 6)}</Text>
       </View>
+      <DeliveryCountdownChip acceptedAt={order.accepted_at} status={order.status} online={online} audience="driver" />
       <View style={{ backgroundColor: c.background, borderColor: c.border, borderWidth: 1, borderRadius: 16, padding: 11, gap: 9 }}>
         <View style={{ gap: 3 }}>
           <Text style={{ color: c.muted, fontSize: 11.5, fontWeight: '800', textAlign: 'right' }}>🛒 المطلوب شراؤه</Text>
@@ -1672,7 +1675,7 @@ function SignedInHome({ userId, email, inviteToken, openOrderId, onSignOut, them
   return <DriverWorkspace userId={userId} email={email} onSignOut={onSignOut} theme={theme} onToggleTheme={onToggleTheme}/>;
 }
 
-type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'loyalty_discount_tier_points'|'id'|'customer_id'|'address_id'|'delivered_at'|'delivery_proof_path'|'purchase_amount_minor'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'created_at'|'cash_collected_minor'|'delivery_note'|'loyalty_points_redeemed'|'loyalty_discount_minor'|'shopping_admin_alerted_at'|'delivery_admin_alerted_at'> & { is_urgent?: boolean };
+type AdminMobileOrder = Pick<Database['public']['Tables']['orders']['Row'], 'accepted_at'|'loyalty_discount_tier_points'|'id'|'customer_id'|'address_id'|'delivered_at'|'delivery_proof_path'|'purchase_amount_minor'|'request_text'|'status'|'delivery_fee_minor'|'delivery_quote_set_at'|'driver_id'|'created_at'|'cash_collected_minor'|'delivery_note'|'loyalty_points_redeemed'|'loyalty_discount_minor'|'shopping_admin_alerted_at'|'delivery_admin_alerted_at'> & { is_urgent?: boolean };
 type AdminMobileDriver = Pick<Database['public']['Tables']['driver_profiles']['Row'], 'user_id'|'vehicle_description'>;
 
 const pickupPrefix = 'الشراء من: ';
@@ -2670,7 +2673,7 @@ function AdminOrdersTab({ userId, active, onBadge, onDetail, focusOrderId, onFoc
         void supabase.rpc('flag_unanswered_orders').then(() => undefined, () => undefined);
       }
       const [orderResult, driverResult, disputeResult, nameMap] = await Promise.all([
-        supabase.from('orders').select('id,is_urgent,customer_id,address_id,delivered_at,delivery_proof_path,purchase_amount_minor,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,created_at,cash_collected_minor,delivery_note,loyalty_points_redeemed,loyalty_discount_minor,loyalty_discount_tier_points,shopping_admin_alerted_at,delivery_admin_alerted_at').order('created_at', { ascending: false }).limit(150),
+        supabase.from('orders').select('id,is_urgent,customer_id,address_id,accepted_at,delivered_at,delivery_proof_path,purchase_amount_minor,request_text,status,delivery_fee_minor,delivery_quote_set_at,driver_id,created_at,cash_collected_minor,delivery_note,loyalty_points_redeemed,loyalty_discount_minor,loyalty_discount_tier_points,shopping_admin_alerted_at,delivery_admin_alerted_at').order('created_at', { ascending: false }).limit(150),
         supabase.from('driver_profiles').select('user_id,vehicle_description').eq('review_status', 'approved').eq('is_online', true).order('created_at'),
         supabase.from('order_disputes').select('order_id').is('resolved_at', null),
         loadAdminNames(),
@@ -2909,6 +2912,7 @@ function AdminOrdersTab({ userId, active, onBadge, onDetail, focusOrderId, onFoc
               </View>
             </View>
           </View>
+          <DeliveryCountdownChip acceptedAt={sheet.accepted_at} status={sheet.status} audience="admin" />
           <View style={[card, { gap: 9 }]}>
             <Text style={{ color: color.text, fontSize: 15, fontWeight: '700', lineHeight: 25, textAlign: 'right', writingDirection: 'rtl' }}>{body}</Text>
             <View style={{ direction: 'rtl', flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>{[...(pickup ? [tag('الشراء من', pickup)] : [])]}</View>
@@ -3436,7 +3440,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
     if (!supabase || !online) return null;
     // A customer with an order that has waited 15+ minutes also triggers the server-side check (fallback when
     // pg_cron isn't available); at most once a minute.
-    const { data, error } = await supabase.from('orders').select('id,is_urgent,status,request_text,delivery_fee_minor,delivery_quote_set_at,delivery_quote_approved_at,purchase_amount_minor,purchase_approved_at,created_at,driver_id,delivered_at,delivery_proof_path,loyalty_points_redeemed,loyalty_discount_minor').order('created_at', { ascending: false }).limit(30);
+    const { data, error } = await supabase.from('orders').select('id,is_urgent,status,accepted_at,request_text,delivery_fee_minor,delivery_quote_set_at,delivery_quote_approved_at,purchase_amount_minor,purchase_approved_at,created_at,driver_id,delivered_at,delivery_proof_path,loyalty_points_redeemed,loyalty_discount_minor').order('created_at', { ascending: false }).limit(30);
     const loyalty = await supabase.from('customer_loyalty_accounts').select('points_balance,lifetime_points_earned').eq('customer_id',userId).maybeSingle();
     if (!loyalty.error) { if (loyalty.data) { setLoyaltyBalance(loyalty.data.points_balance); setLifetimePointsEarned(loyalty.data.lifetime_points_earned); } setLoyaltyLoaded(true); }
     const offer = await supabase.from('app_offers').select('loyalty_enabled').eq('id',1).maybeSingle();
@@ -3496,6 +3500,8 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   // the list current, and a tab switch only refreshes data older than 30 s.
   useEffect(() => { if ((tab === 'home' || tab === 'orders') && ordersFetchedAt.current && Date.now() - ordersFetchedAt.current > 30 * 1000) refreshOrdersRef.current?.(); }, [tab]);
   const activeCustomerOrders = orders.filter((order) => customerGroup(order.status) === 'live');
+  // One accepted order: the home screen shows the delivery countdown. Several orders (or none accepted yet): the plain banner.
+  const countdownOrder = activeCustomerOrders.length === 1 && hasCountdown(activeCustomerOrders[0].status, activeCustomerOrders[0].accepted_at) ? activeCustomerOrders[0] : null;
   const bannerLabels: Record<string, string> = { requested: 'عم نجهّز طلبك', quoted: 'عم نفتش على سائق لطلبك', searching: 'عم نفتش على سائق لطلبك', accepted: 'قبل السائق طلبك', assigned: 'قبل السائق طلبك', shopping: 'السائق عم يجهّز طلبك', awaiting_approval: 'السائق عم يجهّز طلبك', purchased: 'طلبك جاهز للتوصيل', delivering: '🛵 طلبك بالطريق لعندك', disputed: 'طلبك قيد مراجعة الدعم' };
   const submitOrder = async () => {
     if (!draftReady) { setRequestMessage('عم نسترجع مسودتك المحفوظة. جرّب بعد لحظة.'); return; }
@@ -3644,7 +3650,8 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       <KeyboardScroll ref={bodyScrollRef} style={s.bodyScroll} contentContainerStyle={s.content} refreshControl={<RefreshControl refreshing={pullRefreshing} onRefresh={() => void pullRefresh()} tintColor={c.primary} colors={[c.primary]} progressBackgroundColor={c.surface} />}>
       <StaggeredSections transitionKey={`${tab}-${tab === 'orders' && ordersLoading ? 'loading' : 'ready'}`}>
       {tab === 'offers' ? <EntranceSection transitionKey={tab}><OffersScreen balance={loyaltyBalance} lifetime={lifetimePointsEarned} enabled={offerEnabled} onBack={goBack} /></EntranceSection> : tab === 'addresses' ? <EntranceSection transitionKey={tab}><AddressBook userId={userId} onBack={goBack} backLabel={`العودة إلى ${tabHistory[tabHistory.length - 1] === 'profile' ? 'حسابي' : 'الرئيسية'}`} onAddressSaved={(address) => { addressIdRef.current = address.id; setAddressId(address.id); setAddressSummary(`${address.label} · ${address.neighborhood}`); setSelectedAddress(address); }} /></EntranceSection> : tab === 'home' && !homeSettled ? <CustomerHomeSkeleton /> : tab === 'home' ? <>
-      {tab === 'home' && activeCustomerOrders.length > 0 && <Pressable onPress={() => { setOrderFilter('live'); navigate('orders'); }} accessibilityRole="button" accessibilityLabel={activeCustomerOrders.length === 1 ? `${bannerLabels[activeCustomerOrders[0].status] ?? 'طلبك جارٍ'}. تتبّع الطلب` : `لديك ${activeCustomerOrders.length} طلبات جارية. عرض`} style={{ backgroundColor: c.surface, borderColor: '#3F6A2E', borderWidth: 1, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, gap: 8, marginBottom: 10 }}>
+      {tab === 'home' && countdownOrder && <DeliveryCountdownCard acceptedAt={countdownOrder.accepted_at} status={countdownOrder.status} online={online} onPress={() => { setOrderFilter('live'); navigate('orders'); }} />}
+      {tab === 'home' && !countdownOrder && activeCustomerOrders.length > 0 && <Pressable onPress={() => { setOrderFilter('live'); navigate('orders'); }} accessibilityRole="button" accessibilityLabel={activeCustomerOrders.length === 1 ? `${bannerLabels[activeCustomerOrders[0].status] ?? 'طلبك جارٍ'}. تتبّع الطلب` : `لديك ${activeCustomerOrders.length} طلبات جارية. عرض`} style={{ backgroundColor: c.surface, borderColor: '#3F6A2E', borderWidth: 1, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, gap: 8, marginBottom: 10 }}>
         <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 9 }}>
           <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: '#B7FF30', shadowColor: '#B7FF30', shadowOpacity: 0.6, shadowRadius: 5, shadowOffset: { width: 0, height: 0 } }} />
           <Text style={{ flex: 1, color: c.text, fontSize: 14, fontWeight: '900', textAlign: 'right' }}>{activeCustomerOrders.length === 1 ? (bannerLabels[activeCustomerOrders[0].status] ?? 'طلبك جارٍ') : `لديك ${activeCustomerOrders.length} طلبات جارية`}</Text>

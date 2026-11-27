@@ -719,6 +719,7 @@ export type Database = {
           created_at: string
           currency: string
           customer_id: string | null
+          accepted_at: string | null
           delivered_at: string | null
           delivery_code_attempts: number
           delivery_code_expires_at: string | null
@@ -763,6 +764,7 @@ export type Database = {
           created_at?: string
           currency?: string
           customer_id: string | null
+          accepted_at?: string | null
           delivered_at?: string | null
           delivery_code_attempts?: number
           delivery_code_expires_at?: string | null
@@ -807,6 +809,7 @@ export type Database = {
           created_at?: string
           currency?: string
           customer_id?: string
+          accepted_at?: string | null
           delivered_at?: string | null
           delivery_code_attempts?: number
           delivery_code_expires_at?: string | null
@@ -937,6 +940,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      server_now: { Args: Record<PropertyKey, never>; Returns: string }
       accept_order_offer: { Args: { p_offer_id: string }; Returns: string }
       adjust_driver_wallet: {
         Args: {
