@@ -52,3 +52,22 @@ export function estimateServerOffset(serverNowIso: string, sentAtMs: number, rec
   if (!Number.isFinite(server) || receivedAtMs < sentAtMs) return null;
   return server - (sentAtMs + (receivedAtMs - sentAtMs) / 2);
 }
+
+// After delivery the home screen shows "بالهنا والشفا" for three minutes, counted from the server's delivery time.
+export const ARRIVAL_SECONDS = 3 * 60;
+export function arrivalSecondsLeft(deliveredAt: string | null | undefined, nowMs: number, serverOffsetMs = 0): number {
+  const delivered = parseAcceptedAt(deliveredAt);
+  if (delivered === null) return 0;
+  const elapsed = (nowMs + serverOffsetMs - delivered) / 1000;
+  if (elapsed < -60) return 0; // a delivery time far in the future is bad data, not a celebration
+  return Math.max(0, Math.ceil(ARRIVAL_SECONDS - Math.max(0, elapsed)));
+}
+
+// What the driver "says" on the card, by order status and countdown phase.
+export function journeyLine(status: string, phase: CountdownPhase): string {
+  if (phase === 'late') return 'آسف تأخّرت شوي، قرّبت والله';
+  if (phase === 'warn') return 'صرت بآخر الشارع';
+  if (status === 'shopping' || status === 'awaiting_approval') return 'عم تسوّقلك، ثواني وبكون عندك';
+  if (status === 'purchased' || status === 'delivering') return 'جبتلك طلبك وعم إجي';
+  return 'قبلت طلبك، عم جهّز حالي';
+}

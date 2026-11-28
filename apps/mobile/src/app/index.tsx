@@ -27,7 +27,7 @@ import { clearImageCaches, forgetOrderImages, imageCacheKey, listOrderImagePaths
 import { shrinkPhoto } from '@/lib/image-compress';
 import { cacheKey, clearUserCache, createRefreshScheduler, isFresh, readMemory, readPersisted, writeMemory, writePersisted } from '@/lib/data-cache';
 import { AppText as Text } from '@/components/AppText';
-import { DeliveryCountdownCard, DeliveryCountdownChip } from '@/components/DeliveryCountdown';
+import { DeliveryArrivalCard, DeliveryCountdownCard, DeliveryCountdownChip } from '@/components/DeliveryCountdown';
 import { hasCountdown } from '@/lib/delivery-countdown';
 import { ToastProvider, useAppToast, useToastMessage } from '@/components/Toast';
 
@@ -3502,6 +3502,10 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
   const activeCustomerOrders = orders.filter((order) => customerGroup(order.status) === 'live');
   // One accepted order: the home screen shows the delivery countdown. Several orders (or none accepted yet): the plain banner.
   const countdownOrder = activeCustomerOrders.length === 1 && hasCountdown(activeCustomerOrders[0].status, activeCustomerOrders[0].accepted_at) ? activeCustomerOrders[0] : null;
+  // Right after delivery: "بالهنا والشفا" on the newest delivered order (the card hides itself after three minutes).
+  const [seenArrivals, setSeenArrivals] = useState<string[]>([]);
+  const arrivalOrder = !countdownOrder && activeCustomerOrders.length === 0 ? orders.find((order) => ['delivered', 'settled'].includes(order.status) && !!order.delivered_at) ?? null : null;
+  const showArrival = !!arrivalOrder && !seenArrivals.includes(arrivalOrder.id);
   const bannerLabels: Record<string, string> = { requested: 'عم نجهّز طلبك', quoted: 'عم نفتش على سائق لطلبك', searching: 'عم نفتش على سائق لطلبك', accepted: 'قبل السائق طلبك', assigned: 'قبل السائق طلبك', shopping: 'السائق عم يجهّز طلبك', awaiting_approval: 'السائق عم يجهّز طلبك', purchased: 'طلبك جاهز للتوصيل', delivering: '🛵 طلبك بالطريق لعندك', disputed: 'طلبك قيد مراجعة الدعم' };
   const submitOrder = async () => {
     if (!draftReady) { setRequestMessage('عم نسترجع مسودتك المحفوظة. جرّب بعد لحظة.'); return; }
@@ -3650,6 +3654,7 @@ function CustomerHome({ onSignOut, userId, email, inviteToken, openOrderId, show
       <KeyboardScroll ref={bodyScrollRef} style={s.bodyScroll} contentContainerStyle={s.content} refreshControl={<RefreshControl refreshing={pullRefreshing} onRefresh={() => void pullRefresh()} tintColor={c.primary} colors={[c.primary]} progressBackgroundColor={c.surface} />}>
       <StaggeredSections transitionKey={`${tab}-${tab === 'orders' && ordersLoading ? 'loading' : 'ready'}`}>
       {tab === 'offers' ? <EntranceSection transitionKey={tab}><OffersScreen balance={loyaltyBalance} lifetime={lifetimePointsEarned} enabled={offerEnabled} onBack={goBack} /></EntranceSection> : tab === 'addresses' ? <EntranceSection transitionKey={tab}><AddressBook userId={userId} onBack={goBack} backLabel={`العودة إلى ${tabHistory[tabHistory.length - 1] === 'profile' ? 'حسابي' : 'الرئيسية'}`} onAddressSaved={(address) => { addressIdRef.current = address.id; setAddressId(address.id); setAddressSummary(`${address.label} · ${address.neighborhood}`); setSelectedAddress(address); }} /></EntranceSection> : tab === 'home' && !homeSettled ? <CustomerHomeSkeleton /> : tab === 'home' ? <>
+      {tab === 'home' && showArrival && arrivalOrder && <DeliveryArrivalCard deliveredAt={arrivalOrder.delivered_at} online={online} onPress={() => { setSeenArrivals((ids) => [...ids, arrivalOrder.id]); setNotificationOrderId(arrivalOrder.id); navigate('orders'); }} />}
       {tab === 'home' && countdownOrder && <DeliveryCountdownCard acceptedAt={countdownOrder.accepted_at} status={countdownOrder.status} online={online} onPress={() => { setOrderFilter('live'); navigate('orders'); }} />}
       {tab === 'home' && !countdownOrder && activeCustomerOrders.length > 0 && <Pressable onPress={() => { setOrderFilter('live'); navigate('orders'); }} accessibilityRole="button" accessibilityLabel={activeCustomerOrders.length === 1 ? `${bannerLabels[activeCustomerOrders[0].status] ?? 'طلبك جارٍ'}. تتبّع الطلب` : `لديك ${activeCustomerOrders.length} طلبات جارية. عرض`} style={{ backgroundColor: c.surface, borderColor: '#3F6A2E', borderWidth: 1, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, gap: 8, marginBottom: 10 }}>
         <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 9 }}>

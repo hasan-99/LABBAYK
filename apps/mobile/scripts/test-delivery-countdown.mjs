@@ -62,4 +62,41 @@ assert.match(sql, /event_type = 'driver_accepted'/);
 assert.match(sql, /revoke all on function public\.server_now\(\) from public, anon/);
 assert.match(sql, /grant execute on function public\.server_now\(\) to authenticated/);
 assert.match(sql, /new\.accepted_at := null/);
+
+// Arrival celebration: three minutes from the server's delivery time, then gone
+const delivered = '2026-11-28T18:00:00.000Z', dms = Date.parse(delivered);
+assert.equal(m.ARRIVAL_SECONDS, 180);
+assert.equal(m.arrivalSecondsLeft(delivered, dms), 180);
+assert.equal(m.arrivalSecondsLeft(delivered, dms + 60_000), 120);
+assert.equal(m.arrivalSecondsLeft(delivered, dms + 179_500), 1);
+assert.equal(m.arrivalSecondsLeft(delivered, dms + 180_000), 0);
+assert.equal(m.arrivalSecondsLeft(delivered, dms + 86_400_000), 0);   // an old delivery never shows
+assert.equal(m.arrivalSecondsLeft(delivered, dms + 200_000, -60_000), 40); // phone clock 60 s fast
+assert.equal(m.arrivalSecondsLeft(delivered, dms - 3_600_000), 0);    // delivery time far in the future: bad data
+assert.equal(m.arrivalSecondsLeft(null, dms), 0);
+assert.equal(m.arrivalSecondsLeft('nope', dms), 0);
+
+// What the driver says
+assert.equal(m.journeyLine('accepted', 'ok'), 'قبلت طلبك، عم جهّز حالي');
+assert.equal(m.journeyLine('shopping', 'ok'), 'عم تسوّقلك، ثواني وبكون عندك');
+assert.equal(m.journeyLine('delivering', 'ok'), 'جبتلك طلبك وعم إجي');
+assert.equal(m.journeyLine('shopping', 'warn'), 'صرت بآخر الشارع');
+assert.equal(m.journeyLine('delivering', 'late'), 'آسف تأخّرت شوي، قرّبت والله');
+
+// Scene: light follows the phone's hour, and every layer is well-formed for every time of day
+const sceneSrc = await readFile(new URL('../src/lib/delivery-scene.ts', import.meta.url), 'utf8');
+const sceneJs = ts.transpileModule(sceneSrc, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const scene = await import(`data:text/javascript;base64,${Buffer.from(sceneJs).toString('base64')}`);
+assert.deepEqual([0, 5, 6, 12, 16, 17, 18, 19, 23].map(scene.timeOfDay), ['night', 'night', 'day', 'day', 'day', 'dusk', 'dusk', 'night', 'night']);
+for (const tod of ['day', 'dusk', 'night']) {
+  const p = scene.PALETTES[tod];
+  for (const xml of [scene.skyXml(p), scene.farXml(p), scene.midXml(p), scene.nearXml(p), scene.streetXml(p), scene.cloudsXml(), scene.scooterXml(tod !== 'day'), scene.houseXml('#B7FF30', p.win), scene.BAG_XML, scene.JASMINE_XML, scene.RAIN_XML, scene.SPOKES_XML]) {
+    assert.equal((xml.match(/<svg/g) ?? []).length, 1);
+    assert.equal((xml.match(/<\/svg>/g) ?? []).length, 1);
+    assert.ok(!/NaN|undefined|var\(/.test(xml), 'no broken values in the markup');
+  }
+}
+assert.ok(scene.midXml(scene.PALETTES.night).includes('a13 13 0 0 1 26 0z'), 'the skyline has a dome');
+assert.equal(scene.farXml(scene.PALETTES.day), scene.farXml(scene.PALETTES.day), 'layers are deterministic');
+assert.ok(scene.scooterXml(true).includes('id="bm"') && !scene.scooterXml(false).includes('id="bm"'), 'headlight only after dark');
 console.log('delivery countdown tests passed');
